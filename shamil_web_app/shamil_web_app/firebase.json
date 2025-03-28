@@ -1,0 +1,20 @@
+{
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "shamilapp-shamiltechnologies",
+          "configurations": {
+            "macos": "1:1062952966879:ios:be2d47896a88848006a76a",
+            "web": "1:1062952966879:web:482921d7ec5aa3f906a76a",
+            "windows": "1:1062952966879:web:7a9f8ffa8de53dae06a76a"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}
