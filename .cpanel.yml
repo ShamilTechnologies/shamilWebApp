@@ -1,5 +1,7 @@
-deployment:
-  tasks:
-    - echo "Starting deployment..."
-    - /usr/local/cpanel/3rdparty/bin/git pull origin main
-    - echo "Deployment completed."
+tasks:
+  - echo "Pulling latest code..."
+  - git pull origin main
+  - echo "Fetching dependencies and building Flutter web project..."
+  - flutter pub get && flutter build web --release
+  - echo "Deploying to public_html/shamil..."
+  - rsync -av --delete build/web/ /home/shamilte/public_html/shamil/
