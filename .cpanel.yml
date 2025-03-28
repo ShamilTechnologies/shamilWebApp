@@ -1,6 +1,12 @@
 tasks:
   - echo "Pulling latest code..."
   - git pull origin main
+  - echo "Adding any local changes..."
+  - git add .
+  - echo "Committing changes (if any)..."
+  - git commit -m "Deploy commit" || echo "No changes to commit"
+  - echo "Pushing changes to remote repository..."
+  - git push origin main
   - echo "Fetching dependencies and building Flutter web project..."
   - flutter pub get && flutter build web --release
   - echo "Deploying to public_html/shamil..."
