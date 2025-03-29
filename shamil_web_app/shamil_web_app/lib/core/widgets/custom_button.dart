@@ -12,7 +12,7 @@ class CustomButton extends StatelessWidget {
       this.textStyle,
       this.color = AppColors.primaryColor,
       this.radius = 8,
-      this.isOutline = false});
+      this.isOutline = false, IconData? icon, required int iconSize, required int borderRadius});
   final double width;
   final double height;
   final String text;

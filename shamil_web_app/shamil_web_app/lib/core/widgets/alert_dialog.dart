@@ -19,7 +19,7 @@ showAlertDialog(BuildContext context,
               children: [
                 Text(
                   title,
-                  style: getTitleStyle(color: AppColors.primaryColor),
+                  style: getTitleStyle(color: AppColors.primaryColor, height: 1.5),
                 ),
                 const SizedBox(height: 20),
                 Row(

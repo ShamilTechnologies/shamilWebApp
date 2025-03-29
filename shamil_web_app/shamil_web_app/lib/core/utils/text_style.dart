@@ -13,11 +13,12 @@ TextStyle getHeadlineTextStyle(
 // title
 
 TextStyle getTitleStyle(
-    {double fontSize = 18, fontWeight = FontWeight.bold, Color? color}) {
+    {double fontSize = 18, fontWeight = FontWeight.bold, Color? color, required double height}) {
   return TextStyle(
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color ?? AppColors.primaryColor,
+    height: height,
   );
 }
 
