@@ -22,4 +22,5 @@ class AssetsIcons {
   static const String registerAnimation = 'assets/images/register.json';
   static const String successAnimation = 'assets/images/success.json';
   static const String blockAnimation = 'assets/images/block.json';
+  static const String WaitingAnimation = 'assets/images/waiting.json';
 }

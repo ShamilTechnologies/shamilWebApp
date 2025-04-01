@@ -8,7 +8,7 @@ class StepIndicator extends StatelessWidget {
   final double dotSize;
   final double spacing;
 
-  const StepIndicator({
+  const StepIndicator({super.key, 
     required this.currentPage,
     required this.totalPages,
     required this.activeColor,

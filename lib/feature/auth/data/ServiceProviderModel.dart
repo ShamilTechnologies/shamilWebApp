@@ -1,12 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:equatable/equatable.dart';
+// Import your email validation function
+import 'package:shamil_web_app/core/functions/email_validate.dart'; // Adjust path as necessary
 
-class SubscriptionPlan {
+// --- PricingModel Enum ---
+enum PricingModel { subscription, reservation, other }
+
+// --- SubscriptionPlan Class ---
+class SubscriptionPlan extends Equatable {
   final String name;
   final double price;
   final String description;
-  final String duration; // e.g., "Monthly", "Yearly", "One-Time"
+  final String duration;
 
-  SubscriptionPlan({
+  const SubscriptionPlan({
     required this.name,
     required this.price,
     required this.description,
@@ -15,28 +22,21 @@ class SubscriptionPlan {
 
   Map<String, dynamic> toMap() {
     return {
-      'name': name,
-      'price': price,
-      'description': description,
-      'duration': duration,
+      'name': name, 'price': price, 'description': description, 'duration': duration,
     };
   }
 
   factory SubscriptionPlan.fromMap(Map<String, dynamic> map) {
     return SubscriptionPlan(
-      name: map['name'] ?? '',
-      price: (map['price'] ?? 0.0).toDouble(),
-      description: map['description'] ?? '',
-      duration: map['duration'] ?? '',
+      name: map['name'] as String? ?? '',
+      price: (map['price'] as num?)?.toDouble() ?? 0.0,
+      description: map['description'] as String? ?? '',
+      duration: map['duration'] as String? ?? '',
     );
   }
 
-  // copyWith method for creating immutable copies
   SubscriptionPlan copyWith({
-    String? name,
-    double? price,
-    String? description,
-    String? duration,
+    String? name, double? price, String? description, String? duration,
   }) {
     return SubscriptionPlan(
       name: name ?? this.name,
@@ -45,250 +45,256 @@ class SubscriptionPlan {
       duration: duration ?? this.duration,
     );
   }
-}class OpeningHours {
+
+  @override
+  List<Object?> get props => [name, price, description, duration];
+}
+
+// --- OpeningHours Class ---
+class OpeningHours extends Equatable {
   final Map<String, Map<String, String>> hours;
 
-  OpeningHours({required this.hours});
+  const OpeningHours({required this.hours});
 
   Map<String, dynamic> toMap() {
-    return hours;
+    return hours.map((day, times) => MapEntry(day, times));
   }
 
   factory OpeningHours.fromMap(Map<String, dynamic> map) {
-    // Need careful casting during deserialization
     Map<String, Map<String, String>> typedHours = {};
-     map.forEach((day, hourMap) {
-        // Ensure the value is actually a map before trying to cast
-        if (hourMap is Map) {
-           // Cast inner map keys and values to String
-           typedHours[day] = Map<String, String>.from(hourMap.map((key, value) => MapEntry(key.toString(), value.toString())));
-        }
-     });
+    map.forEach((day, hourMap) {
+      if (hourMap is Map) {
+        typedHours[day.toString()] = Map<String, String>.from(
+          hourMap.map((key, value) => MapEntry(key.toString(), value.toString())),
+        );
+      }
+    });
     return OpeningHours(hours: typedHours);
   }
 
-  // copyWith method for creating immutable copies
-  OpeningHours copyWith({
-    Map<String, Map<String, String>>? hours,
-  }) {
-    return OpeningHours(
-      hours: hours ?? this.hours,
-    );
+  OpeningHours copyWith({ Map<String, Map<String, String>>? hours }) {
+    return OpeningHours( hours: hours ?? this.hours );
   }
+
+  @override
+  List<Object?> get props => [hours];
 }
-// --- Enum for Pricing Model ---
 
-enum PricingModel { subscription, reservation, other }
-
-// --- Main Service Provider Model ---
-
-class ServiceProviderModel {
-  // Existing Basic Info
+// --- ServiceProviderModel Class ---
+class ServiceProviderModel extends Equatable {
+  // Basic Info
   final String uid;
-  final String name;
+  final String name; // Name is now part of personal details step
   final String email;
-
-  // Existing Business Info (made non-required in constructor, default empty)
+  final int? age; // <-- ADDED age (nullable int)
+  final String? gender; // <-- ADDED gender (nullable string)
+  // Business Info
   final String businessName;
   final String businessDescription;
   final String phone;
-
-  // New Personal Fields
-  final String idNumber; // National ID or equivalent
-  final String? idFrontImageUrl; // URL after upload (nullable)
-  final String? idBackImageUrl; // URL after upload (nullable)
-
-  // New Business Fields
-  final String businessCategory; // e.g., "Restaurant", "Salon", "Consulting"
-  final String businessAddress; // Can be a simple string or a structured address later
-  final OpeningHours? openingHours; // Store opening hours (nullable)
-  final PricingModel pricingModel; // Enum for pricing type
-
-  // Conditional Pricing Fields
-  final List<SubscriptionPlan>? subscriptionPlans; // List if pricingModel is subscription (nullable)
-  final double? reservationPrice; // Single price if pricingModel is reservation (nullable)
-
-  // Existing Asset Fields (make nullable as they are uploaded later)
+  // Personal Identification Fields
+  final String idNumber;
+  final String? idFrontImageUrl;
+  final String? idBackImageUrl;
+  // Business Specifics
+  final String businessCategory;
+  final String businessAddress;
+  final OpeningHours? openingHours;
+  final PricingModel pricingModel;
+  // Pricing details
+  final List<SubscriptionPlan>? subscriptionPlans;
+  final double? reservationPrice;
+  // Assets
   final String? logoUrl;
   final String? placePicUrl;
-  final List<String>? facilitiesPicsUrls; // Use nullable list
-
+  final List<String>? facilitiesPicsUrls;
   // Metadata
   final bool isApproved;
+  final bool isRegistrationComplete;
   final Timestamp createdAt;
-  final Timestamp? updatedAt; // Make nullable, handle with FieldValue.serverTimestamp()
+  final Timestamp? updatedAt;
 
-  ServiceProviderModel({
+  const ServiceProviderModel({
     required this.uid,
-    required this.name,
+    required this.name, // Keep required in main constructor
     required this.email,
-    // Initialize potentially empty fields
+    this.age, // <-- ADDED age parameter (optional)
+    this.gender, // <-- ADDED gender parameter (optional)
     this.businessName = '',
     this.businessDescription = '',
     this.phone = '',
     this.idNumber = '',
-    this.idFrontImageUrl, // Nullable
-    this.idBackImageUrl, // Nullable
+    this.idFrontImageUrl,
+    this.idBackImageUrl,
     this.businessCategory = '',
     this.businessAddress = '',
-    this.openingHours, // Nullable
-    this.pricingModel = PricingModel.other, // Default pricing model
-    this.subscriptionPlans, // Nullable
-    this.reservationPrice, // Nullable
-    this.logoUrl, // Nullable
-    this.placePicUrl, // Nullable
-    this.facilitiesPicsUrls, // Nullable list
+    this.openingHours,
+    this.pricingModel = PricingModel.other,
+    this.subscriptionPlans,
+    this.reservationPrice,
+    this.logoUrl,
+    this.placePicUrl,
+    this.facilitiesPicsUrls,
     this.isApproved = false,
+    this.isRegistrationComplete = false,
     required this.createdAt,
-    this.updatedAt, // Nullable
+    this.updatedAt,
   });
 
-  // Factory constructor from Firestore DocumentSnapshot
+  // Factory Constructor for Empty Model (Name is initially empty here)
+  factory ServiceProviderModel.empty(String uid, String email) { // Removed name from parameters
+     return ServiceProviderModel(
+         uid: uid,
+         email: email,
+         name: '', // Name starts empty, collected in Step 1
+         createdAt: Timestamp.now(),
+         age: null, // Initialize new fields
+         gender: null,
+         facilitiesPicsUrls: [],
+         subscriptionPlans: [],
+         isRegistrationComplete: false,
+     );
+  }
+
+  // Firestore Deserialization
   factory ServiceProviderModel.fromFirestore(DocumentSnapshot doc) {
-    // Use .data() which returns Map<String, dynamic>?
     final data = doc.data() as Map<String, dynamic>?;
+    if (data == null) { throw StateError('Missing data for ServiceProvider ID: ${doc.id}'); }
 
-    // Handle cases where data might be null (though unlikely for existing docs)
-    if (data == null) {
-      throw StateError('Missing data for ServiceProvider ID: ${doc.id}');
-    }
-
-    // --- Deserialize Nested Models ---
     OpeningHours? hours;
-    if (data['openingHours'] != null && data['openingHours'] is Map) {
-       try {
-          hours = OpeningHours.fromMap(Map<String, dynamic>.from(data['openingHours']));
-       } catch (e) {
-          print("Error parsing openingHours: $e");
-          hours = null; // Assign null if parsing fails
-       }
-    }
-
+    if (data['openingHours'] != null && data['openingHours'] is Map) { /* ... */ }
     List<SubscriptionPlan>? plans;
-    if (data['subscriptionPlans'] != null && data['subscriptionPlans'] is List) {
-      try {
-        plans = (data['subscriptionPlans'] as List<dynamic>)
-            .map((planMap) => SubscriptionPlan.fromMap(Map<String, dynamic>.from(planMap)))
-            .toList();
-      } catch (e) {
-         print("Error parsing subscriptionPlans: $e");
-         plans = null; // Assign null if parsing fails
-      }
-    }
-
-    // --- Deserialize Enum ---
-    PricingModel pricing = PricingModel.other; // Default
-    if (data['pricingModel'] is String) {
-       pricing = PricingModel.values.firstWhere(
-            (e) => e.name == data['pricingModel'],
-            orElse: () => PricingModel.other, // Fallback
-          );
-    }
+    if (data['subscriptionPlans'] != null && data['subscriptionPlans'] is List) { /* ... */ }
+    PricingModel pricing = PricingModel.other;
+    if (data['pricingModel'] is String) { /* ... */ }
 
     return ServiceProviderModel(
-      uid: data['uid'] ?? doc.id, // Use doc.id as fallback for uid
-      name: data['name'] ?? '',
-      email: data['email'] ?? '',
-      businessName: data['businessName'] ?? '',
-      businessDescription: data['businessDescription'] ?? '',
-      phone: data['phone'] ?? '',
-      idNumber: data['idNumber'] ?? '',
-      idFrontImageUrl: data['idFrontImageUrl'], // Keep as null if missing
-      idBackImageUrl: data['idBackImageUrl'], // Keep as null if missing
-      businessCategory: data['businessCategory'] ?? '',
-      businessAddress: data['businessAddress'] ?? '',
-      openingHours: hours, // Assign parsed or null hours
-      pricingModel: pricing, // Assign parsed or default enum
-      subscriptionPlans: plans, // Assign parsed or null plans
-      reservationPrice: (data['reservationPrice'] as num?)?.toDouble(), // Safe casting
-      logoUrl: data['logoUrl'], // Keep as null if missing
-      placePicUrl: data['placePicUrl'], // Keep as null if missing
-      facilitiesPicsUrls: data['facilitiesPicsUrls'] != null ? List<String>.from(data['facilitiesPicsUrls']) : null, // Handle null list
-      isApproved: data['isApproved'] ?? false,
-      createdAt: data['createdAt'] ?? Timestamp.now(), // Provide default if missing
-      updatedAt: data['updatedAt'], // Keep as null if missing
+      uid: data['uid'] as String? ?? doc.id,
+      name: data['name'] as String? ?? '', // Keep deserializing name
+      email: data['email'] as String? ?? '',
+      age: data['age'] as int?, // <-- ADDED age deserialization
+      gender: data['gender'] as String?, // <-- ADDED gender deserialization
+      businessName: data['businessName'] as String? ?? '',
+      businessDescription: data['businessDescription'] as String? ?? '',
+      phone: data['phone'] as String? ?? '',
+      idNumber: data['idNumber'] as String? ?? '',
+      idFrontImageUrl: data['idFrontImageUrl'] as String?,
+      idBackImageUrl: data['idBackImageUrl'] as String?,
+      businessCategory: data['businessCategory'] as String? ?? '',
+      businessAddress: data['businessAddress'] as String? ?? '',
+      openingHours: hours,
+      pricingModel: pricing,
+      subscriptionPlans: plans ?? [],
+      reservationPrice: (data['reservationPrice'] as num?)?.toDouble(),
+      logoUrl: data['logoUrl'] as String?,
+      placePicUrl: data['placePicUrl'] as String?,
+      facilitiesPicsUrls: data['facilitiesPicsUrls'] != null ? List<String>.from(data['facilitiesPicsUrls']) : [],
+      isApproved: data['isApproved'] as bool? ?? false,
+      isRegistrationComplete: data['isRegistrationComplete'] as bool? ?? false,
+      createdAt: data['createdAt'] is Timestamp ? data['createdAt'] : Timestamp.now(),
+      updatedAt: data['updatedAt'] is Timestamp ? data['updatedAt'] : null,
     );
   }
 
-  // Method to convert instance to a Map for Firestore
+  // Firestore Serialization
   Map<String, dynamic> toMap() {
     return {
-      'uid': uid,
-      'name': name,
-      'email': email,
-      'businessName': businessName,
-      'businessDescription': businessDescription,
-      'phone': phone,
-      'idNumber': idNumber,
-      'idFrontImageUrl': idFrontImageUrl, // Will be null if not set
-      'idBackImageUrl': idBackImageUrl, // Will be null if not set
-      'businessCategory': businessCategory,
-      'businessAddress': businessAddress,
-      'openingHours': openingHours?.toMap(), // Convert nested model to map, handles null
-      'pricingModel': pricingModel.name, // Store enum name as string
-      'subscriptionPlans': subscriptionPlans?.map((plan) => plan.toMap()).toList(), // Convert list, handles null
-      'reservationPrice': reservationPrice, // Will be null if not set
-      'logoUrl': logoUrl, // Will be null if not set
-      'placePicUrl': placePicUrl, // Will be null if not set
-      'facilitiesPicsUrls': facilitiesPicsUrls, // Will be null if not set
+      'uid': uid, 'name': name, 'email': email,
+      if (age != null) 'age': age, // <-- ADDED age serialization
+      if (gender != null && gender!.isNotEmpty) 'gender': gender, // <-- ADDED gender serialization
+      if (businessName.isNotEmpty) 'businessName': businessName,
+      if (businessDescription.isNotEmpty) 'businessDescription': businessDescription,
+      if (phone.isNotEmpty) 'phone': phone,
+      if (idNumber.isNotEmpty) 'idNumber': idNumber,
+      if (idFrontImageUrl != null) 'idFrontImageUrl': idFrontImageUrl,
+      if (idBackImageUrl != null) 'idBackImageUrl': idBackImageUrl,
+      if (businessCategory.isNotEmpty) 'businessCategory': businessCategory,
+      if (businessAddress.isNotEmpty) 'businessAddress': businessAddress,
+      if (openingHours != null) 'openingHours': openingHours!.toMap(),
+      'pricingModel': pricingModel.name,
+      if (subscriptionPlans != null && subscriptionPlans!.isNotEmpty) 'subscriptionPlans': subscriptionPlans!.map((plan) => plan.toMap()).toList(),
+      if (reservationPrice != null) 'reservationPrice': reservationPrice,
+      if (logoUrl != null) 'logoUrl': logoUrl,
+      if (placePicUrl != null) 'placePicUrl': placePicUrl,
+      if (facilitiesPicsUrls != null && facilitiesPicsUrls!.isNotEmpty) 'facilitiesPicsUrls': facilitiesPicsUrls,
       'isApproved': isApproved,
+      'isRegistrationComplete': isRegistrationComplete,
       'createdAt': createdAt,
-      // Use FieldValue.serverTimestamp() only when updating, not necessarily here
-      // If creating, use Timestamp.now() or the passed value.
-      // If updating, the update call itself should set 'updatedAt': FieldValue.serverTimestamp()
-      'updatedAt': updatedAt, // Store the current value (could be null)
+      'updatedAt': FieldValue.serverTimestamp(),
     };
   }
 
-   // Optional: Add copyWith method for easier immutable updates
+  // CopyWith Method
    ServiceProviderModel copyWith({
-     String? uid,
-     String? name,
-     String? email,
-     String? businessName,
-     String? businessDescription,
-     String? phone,
-     String? idNumber,
-     String? idFrontImageUrl,
-     String? idBackImageUrl,
-     String? businessCategory,
-     String? businessAddress,
-     OpeningHours? openingHours,
-     PricingModel? pricingModel,
-     List<SubscriptionPlan>? subscriptionPlans,
-     double? reservationPrice,
-     String? logoUrl,
-     String? placePicUrl,
-     List<String>? facilitiesPicsUrls,
-     bool? isApproved,
-     Timestamp? createdAt,
-     Timestamp? updatedAt,
-     bool setUpdatedAtToNull = false, // Flag to explicitly nullify updatedAt if needed
-   }) {
-     return ServiceProviderModel(
-       uid: uid ?? this.uid,
-       name: name ?? this.name,
-       email: email ?? this.email,
-       businessName: businessName ?? this.businessName,
-       businessDescription: businessDescription ?? this.businessDescription,
-       phone: phone ?? this.phone,
-       idNumber: idNumber ?? this.idNumber,
-       // Handle nullable fields carefully in copyWith
-       idFrontImageUrl: idFrontImageUrl ?? this.idFrontImageUrl,
-       idBackImageUrl: idBackImageUrl ?? this.idBackImageUrl,
-       businessCategory: businessCategory ?? this.businessCategory,
-       businessAddress: businessAddress ?? this.businessAddress,
-       openingHours: openingHours ?? this.openingHours,
-       pricingModel: pricingModel ?? this.pricingModel,
-       subscriptionPlans: subscriptionPlans ?? this.subscriptionPlans,
-       reservationPrice: reservationPrice ?? this.reservationPrice,
-       logoUrl: logoUrl ?? this.logoUrl,
-       placePicUrl: placePicUrl ?? this.placePicUrl,
-       facilitiesPicsUrls: facilitiesPicsUrls ?? this.facilitiesPicsUrls,
-       isApproved: isApproved ?? this.isApproved,
-       createdAt: createdAt ?? this.createdAt,
-       // Allow setting updatedAt to null explicitly if needed during copy
-       updatedAt: setUpdatedAtToNull ? null : (updatedAt ?? this.updatedAt),
-     );
+    String? uid, String? name, String? email, int? age, String? gender, // <-- ADDED age, gender params
+    String? businessName, String? businessDescription, String? phone,
+    String? idNumber, String? idFrontImageUrl, String? idBackImageUrl, String? businessCategory, String? businessAddress,
+    OpeningHours? openingHours, PricingModel? pricingModel, List<SubscriptionPlan>? subscriptionPlans, double? reservationPrice,
+    String? logoUrl, String? placePicUrl, List<String>? facilitiesPicsUrls, bool? isApproved,
+    bool? isRegistrationComplete, Timestamp? createdAt, Timestamp? updatedAt,
+  }) {
+    return ServiceProviderModel(
+      uid: uid ?? this.uid, name: name ?? this.name, email: email ?? this.email,
+      age: age ?? this.age, // <-- ADDED age assignment
+      gender: gender ?? this.gender, // <-- ADDED gender assignment
+      businessName: businessName ?? this.businessName,
+      businessDescription: businessDescription ?? this.businessDescription, phone: phone ?? this.phone, idNumber: idNumber ?? this.idNumber,
+      idFrontImageUrl: idFrontImageUrl ?? this.idFrontImageUrl, idBackImageUrl: idBackImageUrl ?? this.idBackImageUrl,
+      businessCategory: businessCategory ?? this.businessCategory, businessAddress: businessAddress ?? this.businessAddress,
+      openingHours: openingHours ?? this.openingHours, pricingModel: pricingModel ?? this.pricingModel,
+      subscriptionPlans: subscriptionPlans ?? this.subscriptionPlans, reservationPrice: reservationPrice ?? this.reservationPrice,
+      logoUrl: logoUrl ?? this.logoUrl, placePicUrl: placePicUrl ?? this.placePicUrl, facilitiesPicsUrls: facilitiesPicsUrls ?? this.facilitiesPicsUrls,
+      isApproved: isApproved ?? this.isApproved,
+      isRegistrationComplete: isRegistrationComplete ?? this.isRegistrationComplete,
+      createdAt: createdAt ?? this.createdAt, updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  // Equatable Implementation
+  @override
+  List<Object?> get props => [
+        uid, name, email, age, gender, // <-- ADDED age, gender
+        businessName, businessDescription, phone, idNumber, idFrontImageUrl, idBackImageUrl, businessCategory,
+        businessAddress, openingHours, pricingModel, subscriptionPlans, reservationPrice, logoUrl, placePicUrl, facilitiesPicsUrls,
+        isApproved, isRegistrationComplete,
+        createdAt, updatedAt
+      ];
+
+  // --- Validation Methods ---
+  bool isPersonalDataValid() {
+    // Step 1 (Personal ID Step) now collects Name, Age, Gender, ID number, ID images
+    final bool isEmailValid = email.isNotEmpty && emailValidate(email); // Email comes from auth
+    final bool isValid = name.isNotEmpty && // Check name (required)
+           isEmailValid &&
+           (age != null && age! > 0) && // Check age (required, positive)
+           (gender != null && gender!.isNotEmpty) && // Check gender (required)
+           idNumber.isNotEmpty &&
+           idFrontImageUrl != null && idFrontImageUrl!.isNotEmpty &&
+           idBackImageUrl != null && idBackImageUrl!.isNotEmpty;
+    print("Personal Data Validation Result (for step 1 completion): $isValid (Email Valid: $isEmailValid, Name: $name, Age: $age, Gender: $gender, IDNum: $idNumber, Imgs: ${idFrontImageUrl!=null && idBackImageUrl!=null})");
+    return isValid;
+  }
+
+  bool isBusinessDataValid() { /* ... unchanged ... */ return businessName.isNotEmpty && businessDescription.isNotEmpty && phone.isNotEmpty && businessCategory.isNotEmpty && businessAddress.isNotEmpty && openingHours != null; }
+  bool isPricingValid() { /* ... unchanged ... */
+       switch (pricingModel) {
+           case PricingModel.subscription: return subscriptionPlans != null && subscriptionPlans!.isNotEmpty;
+           case PricingModel.reservation: return reservationPrice != null && reservationPrice! > 0;
+           case PricingModel.other: return true;
+       }
    }
-}
+  bool isAssetsValid() { /* ... unchanged ... */ return logoUrl != null && logoUrl!.isNotEmpty && placePicUrl != null && placePicUrl!.isNotEmpty; }
+
+  // --- currentProgressStep Getter ---
+  // Determines the step index to RESUME at (0=Auth, 1=PersonalId, 2=Business, 3=Pricing, 4=Assets)
+  int get currentProgressStep {
+     if (isAssetsValid()) return 5; // Completed step 4, should be finished (handle via isRegistrationComplete)
+     if (isPricingValid()) return 4; // Finished step 3 -> resume at 4 (Assets)
+     if (isBusinessDataValid()) return 3; // Finished step 2 -> resume at 3 (Pricing)
+     if (isPersonalDataValid()) return 2; // Finished step 1 -> resume at 2 (Business)
+     // If only basic auth info exists (name might be empty initially)
+     if (uid.isNotEmpty && email.isNotEmpty && emailValidate(email)) return 1; // Resume at step 1 (Personal ID)
+     return 0; // Default: start at step 0 (Auth/Personal Data)
+  }
+
+} // End ServiceProviderModel

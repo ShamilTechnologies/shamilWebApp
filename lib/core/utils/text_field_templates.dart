@@ -3,6 +3,11 @@ import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Import base text styles
 
 /// A global custom text form field with a modern look for light backgrounds.
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // <-- Import for TextInputFormatter
+import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
+import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
+
 class GlobalTextFormField extends StatefulWidget {
   final String? hintText;
   final String? labelText; // Label text to display above the field
@@ -21,7 +26,8 @@ class GlobalTextFormField extends StatefulWidget {
   final VoidCallback? onTap;
   final int? maxLines;
   final int? minLines;
-  final AutovalidateMode? autovalidateMode; // Added autovalidateMode
+  final AutovalidateMode? autovalidateMode;
+  final List<TextInputFormatter>? inputFormatters; // <-- ADDED inputFormatters
 
   const GlobalTextFormField({
     super.key,
@@ -42,7 +48,8 @@ class GlobalTextFormField extends StatefulWidget {
     this.onTap,
     this.maxLines = 1,
     this.minLines,
-    this.autovalidateMode, // Added autovalidateMode
+    this.autovalidateMode,
+    this.inputFormatters, // <-- ADDED to constructor
   });
 
   @override
@@ -82,95 +89,60 @@ class _GlobalTextFormFieldState extends State<GlobalTextFormField> {
     }
   }
 
-  // Modern Input Decoration
+  // Modern Input Decoration (no changes needed here for this fix)
   InputDecoration _buildDecoration(BuildContext context) {
-    final bool isEnabled = widget.enabled;
-    final Color borderColor = AppColors.mediumGrey.withOpacity(0.4); // Softer border
-    final Color focusedBorderColor = AppColors.primaryColor; // Use primary for focus
-    final Color errorColor = AppColors.redColor; // Standard error color
-    final Color disabledBorderColor = AppColors.mediumGrey.withOpacity(0.2);
-    final Color iconColor = AppColors.darkGrey.withOpacity(0.7);
+   final bool isEnabled = widget.enabled;
+   final Color borderColor = AppColors.mediumGrey.withOpacity(0.4); // Softer border
+   const Color focusedBorderColor = AppColors.primaryColor; // Use primary for focus
+   const Color errorColor = AppColors.redColor; // Standard error color
+   final Color disabledBorderColor = AppColors.mediumGrey.withOpacity(0.2);
+   final Color iconColor = AppColors.darkGrey.withOpacity(0.7);
 
-    return InputDecoration(
-      // Use labelText as the floating label
-      labelText: widget.labelText,
-      labelStyle: TextStyle(
-        // Label color changes based on focus/error state
-        color: _isFocused ? focusedBorderColor : AppColors.darkGrey.withOpacity(0.8),
-        fontSize: 14,
-        fontWeight: FontWeight.w400,
-      ),
-      hintText: widget.hintText,
-      hintStyle: TextStyle(color: AppColors.mediumGrey, fontSize: 15),
-      // Keep label always floating for consistency in modern UI
-      floatingLabelBehavior: FloatingLabelBehavior.always,
-
-      // Icons
-      prefixIcon: widget.prefixIcon != null
-          ? Padding(
-              padding: const EdgeInsets.only(left: 12.0, right: 8.0), // Adjust padding
-              child: IconTheme(
-                data: IconThemeData(color: iconColor, size: 20),
-                child: widget.prefixIcon!,
-              ),
-            )
-          : null,
-      suffixIcon: widget.suffixIcon != null
-          ? Padding(
-              padding: const EdgeInsets.only(right: 12.0), // Adjust padding
-              child: IconTheme(
-                data: IconThemeData(color: iconColor, size: 20),
-                child: widget.suffixIcon!,
-              ),
-            )
-          : null,
-
-      // Borders
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: borderColor),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: focusedBorderColor, width: 1.5),
-      ),
-      disabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: disabledBorderColor),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: errorColor, width: 1.0), // Slightly thinner error border
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: errorColor, width: 1.5),
-      ),
-      errorStyle: TextStyle(color: errorColor, fontSize: 12, height: 1.2), // Adjust error text style
-
-      // Background and Padding
-      filled: true,
-      // Use white or a very subtle off-white based on the app's background
-      fillColor: isEnabled ? AppColors.white : AppColors.lightGrey.withOpacity(0.3),
-      contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12), // Slightly taller padding
-      isDense: false, // Set to false for slightly more vertical space
-    );
+   return InputDecoration(
+     labelText: widget.labelText,
+     labelStyle: TextStyle(
+       color: _isFocused ? focusedBorderColor : AppColors.darkGrey.withOpacity(0.8),
+       fontSize: 14,
+       fontWeight: FontWeight.w400,
+     ),
+     hintText: widget.hintText,
+     hintStyle: const TextStyle(color: AppColors.mediumGrey, fontSize: 15),
+     floatingLabelBehavior: FloatingLabelBehavior.always,
+     prefixIcon: widget.prefixIcon != null
+         ? Padding(
+             padding: const EdgeInsets.only(left: 12.0, right: 8.0),
+             child: IconTheme( data: IconThemeData(color: iconColor, size: 20), child: widget.prefixIcon!),
+           ) : null,
+     suffixIcon: widget.suffixIcon != null
+         ? Padding(
+             padding: const EdgeInsets.only(right: 12.0),
+             child: IconTheme( data: IconThemeData(color: iconColor, size: 20), child: widget.suffixIcon!),
+            ) : null,
+     enabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: borderColor), ),
+     focusedBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: focusedBorderColor, width: 1.5), ),
+     disabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: disabledBorderColor), ),
+     errorBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: errorColor, width: 1.0), ),
+     focusedErrorBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: errorColor, width: 1.5), ),
+     errorStyle: const TextStyle(color: errorColor, fontSize: 12, height: 1.2),
+     filled: true,
+     fillColor: isEnabled ? AppColors.white : AppColors.lightGrey.withOpacity(0.3),
+     contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+     isDense: false,
+   );
   }
 
   @override
   Widget build(BuildContext context) {
     final currentFocusNode = widget.focusNode ?? _focusNode;
 
-    // Wrap with Column to include label text above the field if provided
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Removed the separate label Text widget as InputDecoration handles it better with floatingLabelBehavior
-        TextFormField(
-          style: getbodyStyle( // Use base body style for input text
+        TextFormField( // Use TextFormField here
+          style: getbodyStyle(
             fontSize: 15,
-             color: widget.enabled ? AppColors.darkGrey : AppColors.secondaryColor,
+            color: widget.enabled ? AppColors.darkGrey : AppColors.secondaryColor,
           ),
           enabled: widget.enabled,
           controller: _controller,
@@ -186,7 +158,8 @@ class _GlobalTextFormFieldState extends State<GlobalTextFormField> {
           onTap: widget.onTap,
           maxLines: widget.obscureText ? 1 : widget.maxLines,
           minLines: widget.obscureText ? 1 : widget.minLines,
-          autovalidateMode: widget.autovalidateMode ?? AutovalidateMode.onUserInteraction, // Default validation mode
+          autovalidateMode: widget.autovalidateMode ?? AutovalidateMode.onUserInteraction,
+          inputFormatters: widget.inputFormatters, // <-- PASS inputFormatters HERE
         ),
       ],
     );
@@ -196,57 +169,63 @@ class _GlobalTextFormFieldState extends State<GlobalTextFormField> {
 // --- Specific Templates ---
 
 /// Template for an email input field.
+/// Template for an email input field.
 class EmailTextFormField extends StatelessWidget {
-  final TextEditingController? controller;
-  final FocusNode? focusNode;
-  final ValueChanged<String>? onChanged;
-  final ValueChanged<String>? onFieldSubmitted;
-  final bool enabled;
-  final String labelText;
-  final String hintText;
-  final AutovalidateMode? autovalidateMode;
+ final TextEditingController? controller;
+ final FocusNode? focusNode;
+ final ValueChanged<String>? onChanged;
+ final ValueChanged<String>? onFieldSubmitted;
+ final bool enabled;
+ final String labelText;
+ final String hintText;
+ final FormFieldValidator<String>? validator; // <-- Added validator parameter
+ final AutovalidateMode? autovalidateMode;
 
-  const EmailTextFormField({
-    super.key,
-    this.controller,
-    this.focusNode,
-    this.onChanged,
-    this.onFieldSubmitted,
-    this.enabled = true,
-    this.labelText = 'Email Address',
-    this.hintText = 'Enter your email',
-    this.autovalidateMode,
-  });
+ const EmailTextFormField({
+   super.key,
+   this.controller,
+   this.focusNode,
+   this.onChanged,
+   this.onFieldSubmitted,
+   this.enabled = true,
+   this.labelText = 'Email Address',
+   this.hintText = 'Enter your email',
+   this.validator, // <-- Added to constructor
+   this.autovalidateMode,
+ });
 
-  String? _emailValidator(String? value) {
-    if (value == null || value.trim().isEmpty) {
-      return 'Please enter your email';
-    }
-    final emailRegex = RegExp(
-        r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+$");
-    if (!emailRegex.hasMatch(value.trim())) {
-      return 'Please enter a valid email address';
-    }
-    return null;
-  }
+ // Internal default validator (used if no external one is provided)
+ String? _internalEmailValidator(String? value) {
+   if (value == null || value.trim().isEmpty) {
+     return 'Please enter your email';
+   }
+   // Consider using a more robust regex or package like `email_validator`
+   final emailRegex = RegExp(
+       r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+$");
+   if (!emailRegex.hasMatch(value.trim())) {
+     return 'Please enter a valid email address';
+   }
+   return null;
+ }
 
-  @override
-  Widget build(BuildContext context) {
-    return GlobalTextFormField(
-      hintText: hintText,
-      labelText: labelText,
-      keyboardType: TextInputType.emailAddress,
-      controller: controller,
-      focusNode: focusNode,
-      textInputAction: TextInputAction.next,
-      validator: _emailValidator,
-      onChanged: onChanged,
-      onFieldSubmitted: onFieldSubmitted,
-      enabled: enabled,
-      prefixIcon: const Icon(Icons.email_outlined), // Pass icon widget
-      autovalidateMode: autovalidateMode,
-    );
-  }
+ @override
+ Widget build(BuildContext context) {
+   return GlobalTextFormField(
+     hintText: hintText,
+     labelText: labelText,
+     keyboardType: TextInputType.emailAddress,
+     controller: controller,
+     focusNode: focusNode,
+     textInputAction: TextInputAction.next,
+     // Use the external validator if provided, otherwise use the internal one
+     validator: validator ?? _internalEmailValidator, // <-- Pass the validator correctly
+     onChanged: onChanged,
+     onFieldSubmitted: onFieldSubmitted,
+     enabled: enabled,
+     prefixIcon: const Icon(Icons.email_outlined), // Pass icon widget
+     autovalidateMode: autovalidateMode,
+   );
+ }
 }
 
 /// Template for a password input field.
@@ -534,8 +513,8 @@ class _GlobalDropdownFormFieldState<T> extends State<GlobalDropdownFormField<T>>
   InputDecoration _buildDecoration(BuildContext context) {
      final bool isEnabled = widget.enabled;
      final Color borderColor = AppColors.mediumGrey.withOpacity(0.4);
-     final Color focusedBorderColor = AppColors.primaryColor; // Focus color for dropdown border
-     final Color errorColor = AppColors.redColor;
+     const Color focusedBorderColor = AppColors.primaryColor; // Focus color for dropdown border
+     const Color errorColor = AppColors.redColor;
      final Color disabledBorderColor = AppColors.mediumGrey.withOpacity(0.2);
      final Color iconColor = AppColors.darkGrey.withOpacity(0.7);
 
@@ -545,7 +524,7 @@ class _GlobalDropdownFormFieldState<T> extends State<GlobalDropdownFormField<T>>
      return InputDecoration(
        hintText: widget.hintText,
        // labelText: widget.labelText, // Label handled by FormField, not visually inside like TextFormField
-       hintStyle: TextStyle(color: AppColors.mediumGrey, fontSize: 15),
+       hintStyle: const TextStyle(color: AppColors.mediumGrey, fontSize: 15),
 
        prefixIcon: widget.prefixIcon != null
            ? Padding(
@@ -564,7 +543,7 @@ class _GlobalDropdownFormFieldState<T> extends State<GlobalDropdownFormField<T>>
        // Focused border might not be visually distinct unless the dropdown itself changes appearance on focus.
        focusedBorder: OutlineInputBorder(
          borderRadius: BorderRadius.circular(10),
-         borderSide: BorderSide(color: focusedBorderColor, width: 1.5),
+         borderSide: const BorderSide(color: focusedBorderColor, width: 1.5),
        ),
        disabledBorder: OutlineInputBorder(
          borderRadius: BorderRadius.circular(10),
@@ -572,13 +551,13 @@ class _GlobalDropdownFormFieldState<T> extends State<GlobalDropdownFormField<T>>
        ),
        errorBorder: OutlineInputBorder(
          borderRadius: BorderRadius.circular(10),
-         borderSide: BorderSide(color: errorColor, width: 1.0),
+         borderSide: const BorderSide(color: errorColor, width: 1.0),
        ),
        focusedErrorBorder: OutlineInputBorder(
          borderRadius: BorderRadius.circular(10),
-         borderSide: BorderSide(color: errorColor, width: 1.5),
+         borderSide: const BorderSide(color: errorColor, width: 1.5),
        ),
-       errorStyle: TextStyle(color: errorColor, fontSize: 12, height: 1.2),
+       errorStyle: const TextStyle(color: errorColor, fontSize: 12, height: 1.2),
 
        filled: true,
        fillColor: isEnabled ? AppColors.white : AppColors.lightGrey.withOpacity(0.3),

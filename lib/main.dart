@@ -1,37 +1,43 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:provider/provider.dart';
+import 'package:shamil_web_app/controllers/registration_controller.dart';
 import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart';
 import 'package:shamil_web_app/feature/auth/views/page/registration_flow.dart';
 import 'package:shamil_web_app/firebase_options.dart';
 
 Future<void> main() async {
+  // Load environment variables from the .env file.
+  await dotenv.load(fileName: "assets/env/.env");
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  
-  runApp(const MainApp());
+  runApp(const MyApp());
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
-
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return MultiBlocProvider(
+    return MultiProvider(
       providers: [
-        // Provide the ServiceProviderBloc globally.
-        BlocProvider<ServiceProviderBloc>(
-          create: (_) => ServiceProviderBloc(),
+        ChangeNotifierProvider<RegistrationController>(
+          create: (_) => RegistrationController(),
         ),
-        // Add other global blocs here if needed.
       ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Service Provider Registration',
-        theme: ThemeData(
-          primaryColor: Colors.blue, // Replace with your theme settings.
+      child: MultiBlocProvider(
+        providers: [
+          BlocProvider<ServiceProviderBloc>(
+            create: (_) => ServiceProviderBloc(),
+          ),
+        ],
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Service Provider Registration',
+          theme: ThemeData(primaryColor: Colors.blue),
+          home: const RegistrationFlow(),
         ),
-        home: const RegistrationStoryFlow(),
       ),
     );
   }
