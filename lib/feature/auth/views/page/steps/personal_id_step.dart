@@ -1,5 +1,5 @@
-import 'dart:io';
-import 'dart:typed_data';
+import 'dart:io'; // Keep for File type check
+import 'dart:typed_data'; // Keep for Uint8List type check
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -8,32 +8,37 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_selector/file_selector.dart';
 
 // Import Bloc, State, Event, Model
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart';
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart'; // Adjust path
+import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart'; // Adjust path
+import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart'; // Adjust path
+import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path
 
 // Import UI utils & Widgets
-import 'package:shamil_web_app/core/utils/colors.dart';
-import 'package:shamil_web_app/core/utils/text_style.dart';
+import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
+import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Assuming templates defined here
 // Assuming ModernUploadField is moved to a shared location or defined elsewhere now
-// Or import from AssetsUploadStep if kept there
-import 'package:shamil_web_app/feature/auth/views/page/steps/assets_upload_step.dart' show ModernUploadField; // Adjust import as needed
-import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart';
-import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart';
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart';
-import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
+// Import the shared ModernUploadField (ensure path is correct)
+import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart'; // Import the shared widget
+// REMOVED: import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Removed button import
+import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
+import 'package:shamil_web_app/core/functions/snackbar_helper.dart'; // For showing errors
 
 class PersonalIdStep extends StatefulWidget {
   // Removed initial props and callback
+  // This step now collects Name, Age, Gender, ID Number, ID Images
+  // It NO LONGER has its own navigation buttons.
+
+  // Key is passed in RegistrationFlow when creating the instance
   const PersonalIdStep({Key? key}) : super(key: key);
 
   @override
-  State<PersonalIdStep> createState() => _PersonalIdStepState();
+  // Use the public state name here
+  State<PersonalIdStep> createState() => PersonalIdStepState(); // <-- FIXED: Use public state name
 }
 
-class _PersonalIdStepState extends State<PersonalIdStep> {
+// *** Made State Class Public ***
+class PersonalIdStepState extends State<PersonalIdStep> { // <-- FIXED: Removed underscore
   // Form Key for Validation
   final _formKey = GlobalKey<FormState>();
 
@@ -115,11 +120,12 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
   void _removeUploadedIdImage(String targetField) { context.read<ServiceProviderBloc>().add( RemoveAssetUrlEvent(targetField) ); }
   void _removePickedIdImage(Function clearPickedState) { setState(() { clearPickedState(); }); }
 
-  // --- Navigation Logic ---
-  void _handleNext(int currentStep) {
+  // --- Submission Logic (called by RegistrationFlow via GlobalKey) ---
+  // Made public and added parameter as expected by RegistrationFlow
+  void handleNext(int currentStep) {
     // 1. Validate the form (includes Name, Age, Gender, ID Number)
     if (_formKey.currentState?.validate() ?? false) {
-      print("Personal ID Step form is valid.");
+      print("Personal ID Step form is valid. Dispatching update and navigation.");
       // 2. Gather data for the Update event
       final event = UpdatePersonalIdDataEvent(
           idNumber: _idNumberController.text.trim(),
@@ -129,10 +135,12 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
       );
 
       // 3. Dispatch update event to Bloc (saves Name, Age, Gender, ID Number)
-      // Note: Image URLs are saved separately via UploadAssetAndUpdateEvent
       context.read<ServiceProviderBloc>().add(event);
 
-      // 4. Dispatch navigation event
+      // 4. Dispatch navigation event (AFTER saving attempt)
+      // Note: Bloc's _onUpdateAndValidateStepData saves data and re-emits DataLoaded state.
+      // The _onNavigateToStep handler then validates before actually moving page.
+      // So, we dispatch NavigateToStep here, relying on Bloc to handle sequence.
       context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep + 1));
 
     } else {
@@ -141,20 +149,11 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
     }
   }
 
-  void _handlePrevious(int currentStep) {
-    // If coming back from Step 2 to Step 1, no validation needed
-    // If coming back from Step 1 to Step 0 (Auth/Verification), that's okay too
-    context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep - 1));
-  }
-
+  // REMOVED: _handlePrevious - Previous navigation is handled directly by RegistrationFlow
 
   @override
   Widget build(BuildContext context) {
-    final bool isDesktop = MediaQuery.of(context).size.width > 600;
-    // Assuming this is now Step 1 (index 1) after Auth (Step 0)
-    const int thisStepIndex = 1;
-    // Adjust total steps if needed (still 5 steps 0-4?)
-    const int totalSteps = 5;
+    // Removed unused layout variables
 
     return BlocConsumer<ServiceProviderBloc, ServiceProviderState>(
       listener: (context, state) {
@@ -176,32 +175,38 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
              if (_isUploadingFront && (model.idFrontImageUrl == null || model.idFrontImageUrl!.isEmpty)) setState(() => _isUploadingFront = false);
              if (_isUploadingBack && (model.idBackImageUrl == null || model.idBackImageUrl!.isEmpty)) setState(() => _isUploadingBack = false);
           }
+          // Update controllers if model data changed externally (e.g., on initial load/resume)
+          // Only update if the text doesn't match to avoid losing user input
+           WidgetsBinding.instance.addPostFrameCallback((_) {
+             if (mounted) {
+               if (_nameController.text != (model.name)) _nameController.text = model.name;
+               if (_idNumberController.text != (model.idNumber)) _idNumberController.text = model.idNumber;
+               if (_ageController.text != (model.age?.toString() ?? '')) _ageController.text = model.age?.toString() ?? '';
+               if (_selectedGender != model.gender && model.gender != null && _genders.contains(model.gender)) {
+                   setState(() => _selectedGender = model.gender);
+               } else if (_selectedGender != null && model.gender == null) {
+                   // Handle case where model resets gender
+                   setState(() => _selectedGender = null);
+               }
+             }
+           });
         }
       },
       builder: (context, state) {
-        int currentStep = thisStepIndex; // Default to this step index
         ServiceProviderModel? currentModel;
         bool isLoadingState = state is ServiceProviderLoading;
         bool enableInputs = false;
 
         if (state is ServiceProviderDataLoaded) {
           currentModel = state.model;
-          currentStep = state.currentStep; // Get actual current step from Bloc
+          // currentStep = state.currentStep; // Step index not needed directly here
           enableInputs = true;
-          // Update controllers if model data changed externally (optional, use with caution)
-          // WidgetsBinding.instance.addPostFrameCallback((_) {
-          //   if (mounted) {
-          //     if (_nameController.text != currentModel?.name) _nameController.text = currentModel?.name ?? '';
-          //     if (_idNumberController.text != currentModel?.idNumber) _idNumberController.text = currentModel?.idNumber ?? '';
-          //     if (_ageController.text != currentModel?.age?.toString()) _ageController.text = currentModel?.age?.toString() ?? '';
-          //     if (_selectedGender != currentModel?.gender && currentModel?.gender != null && _genders.contains(currentModel!.gender)) {
-          //         setState(() => _selectedGender = currentModel.gender);
-          //     }
-          //   }
-          // });
         } else if (state is ServiceProviderError) {
+          // Attempt to get model from previous state if possible? Or use last known good model?
+          // For simplicity, disable inputs on error.
           enableInputs = false;
         }
+        // Inputs also disabled during global loading or initial state
 
         final String? idFrontUrl = currentModel?.idFrontImageUrl;
         final String? idBackUrl = currentModel?.idBackImageUrl;
@@ -209,9 +214,9 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
         return StepContainer(
           child: Form(
             key: _formKey,
-            child: Column(
+            child: Column( // Changed to Column for button placement later if needed
               children: [
-                Expanded(
+                Expanded( // Make ListView scrollable within the Column
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
@@ -240,12 +245,12 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                          controller: _ageController,
                          enabled: enableInputs,
                          keyboardType: TextInputType.number,
-                         inputFormatters: [FilteringTextInputFormatter.digitsOnly], // Allow only numbers
+                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                          validator: (value) {
                            if (value == null || value.trim().isEmpty) return 'Age is required';
                            final age = int.tryParse(value);
                            if (age == null) return 'Please enter a valid age';
-                           if (age < 18 || age > 100) return 'Please enter a valid age'; // Example age range
+                           if (age < 18 || age > 100) return 'Please enter a valid age';
                            return null;
                          },
                        ),
@@ -263,7 +268,7 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                            if (value == null || value.isEmpty) return 'Please select your gender';
                            return null;
                          },
-                         decoration: InputDecoration( // Assuming standard InputDecoration
+                         decoration: InputDecoration(
                            labelText: "Gender*",
                            labelStyle: getbodyStyle(fontSize: 14, color: AppColors.darkGrey),
                            floatingLabelBehavior: FloatingLabelBehavior.always,
@@ -274,7 +279,6 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                        ),
                        const SizedBox(height: 20),
 
-
                       // --- ID Number Field ---
                       GlobalTextFormField(
                         labelText: "ID Number*",
@@ -284,7 +288,6 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                         keyboardType: TextInputType.text,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) return 'ID number is required';
-                          // Add specific format validation if needed
                           return null;
                         },
                       ),
@@ -297,10 +300,7 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                          file: _pickedIdFrontImage ?? idFrontUrl,
                          onTap: enableInputs && !_isUploadingFront ? _pickAndUploadIdFront : null,
                          onRemove: enableInputs && (_pickedIdFrontImage != null || (idFrontUrl != null && idFrontUrl.isNotEmpty))
-                             ? () {
-                                 if (_pickedIdFrontImage != null) { _removePickedIdImage(() => _pickedIdFrontImage = null); }
-                                 else if (idFrontUrl != null) { _removeUploadedIdImage('idFrontImageUrl'); }
-                                } : null,
+                             ? () { if (_pickedIdFrontImage != null) { _removePickedIdImage(() => _pickedIdFrontImage = null); } else if (idFrontUrl != null) { _removeUploadedIdImage('idFrontImageUrl'); } } : null,
                          isLoading: _isUploadingFront,
                       ),
                       const SizedBox(height: 20),
@@ -312,29 +312,26 @@ class _PersonalIdStepState extends State<PersonalIdStep> {
                          file: _pickedIdBackImage ?? idBackUrl,
                          onTap: enableInputs && !_isUploadingBack ? _pickAndUploadIdBack : null,
                          onRemove: enableInputs && (_pickedIdBackImage != null || (idBackUrl != null && idBackUrl.isNotEmpty))
-                             ? () {
-                                 if (_pickedIdBackImage != null) { _removePickedIdImage(() => _pickedIdBackImage = null); }
-                                 else if (idBackUrl != null) { _removeUploadedIdImage('idBackImageUrl'); }
-                                } : null,
+                             ? () { if (_pickedIdBackImage != null) { _removePickedIdImage(() => _pickedIdBackImage = null); } else if (idBackUrl != null) { _removeUploadedIdImage('idBackImageUrl'); } } : null,
                          isLoading: _isUploadingBack,
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 20), // Spacer at end
 
-                    ],
-                  ),
-                ), // End Expanded ListView
+                    ], // End ListView children
+                  ), // End ListView
+                ), // End Expanded
 
-                // --- Navigation ---
-             
+                // *** REMOVED NavigationButtons Section ***
+                // Navigation is handled globally by RegistrationFlow
 
-              ],
-            ),
-          ),
-        );
+              ], // End Column children
+            ), // End Form
+          ), // End StepContainer
+        ); // End BlocConsumer builder
       },
-    );
+    ); // End BlocConsumer
   }
 }
 
-// Ensure the shared ModernUploadField is imported or defined elsewhere
-// Remove local definition if it exists here
+// Ensure the shared ModernUploadField is imported correctly
+// Remove any local definition if it exists here

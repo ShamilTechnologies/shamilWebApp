@@ -13,12 +13,12 @@ import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dar
 import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart';
 import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart';
 import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Needed for model access in AlreadyCompleted state
-// Import Step Widgets with Aliases where needed
+// Import Step Widgets with Aliases where needed AND THEIR STATE CLASSES
+// *** IMPORTANT: Ensure the State classes in these files are made PUBLIC (e.g., PersonalDataStepState) ***
 import 'package:shamil_web_app/feature/auth/views/page/steps/assets_upload_step.dart';
 import 'package:shamil_web_app/feature/auth/views/page/steps/business_data_step.dart';
-// Import PersonalDataStep using its State for the GlobalKey
 import 'package:shamil_web_app/feature/auth/views/page/steps/personal_data_step.dart' as pd_step;
-import 'package:shamil_web_app/feature/auth/views/page/steps/personal_id_step.dart' as personal_id;   // Alias for Step 1
+import 'package:shamil_web_app/feature/auth/views/page/steps/personal_id_step.dart' as pi_step;
 import 'package:shamil_web_app/feature/auth/views/page/steps/pricing_step.dart';
 // Import Layout Widgets
 import 'package:shamil_web_app/feature/auth/views/page/widgets/desktop_layout.dart';
@@ -45,146 +45,214 @@ class _RegistrationFlowState extends State<RegistrationFlow> {
   // Timer for email verification check
   Timer? _verificationTimer;
 
-  // --- GlobalKey for Step 0 ---
-  // Use the State type associated with PersonalDataStep
-  final GlobalKey<pd_step.PersonalDataStepState> _personalDataStepKey = GlobalKey<pd_step.PersonalDataStepState>();
+  // --- GlobalKeys for Step States ---
+  // NOTE: The State classes for each step MUST be made public (remove leading '_')
+  // AND they must expose a public method like 'submitStepData()' or 'handleNext()'
+  final GlobalKey<pd_step.PersonalDataStepState> _step0Key = GlobalKey<pd_step.PersonalDataStepState>();
+  final GlobalKey<pi_step.PersonalIdStepState> _step1Key = GlobalKey<pi_step.PersonalIdStepState>();
+  // *** Assuming public state names for the rest - VERIFY in your files ***
+  final GlobalKey<BusinessDetailsStepState> _step2Key = GlobalKey<BusinessDetailsStepState>();
+  final GlobalKey<PricingStepState> _step3Key = GlobalKey<PricingStepState>();
+  final GlobalKey<AssetsUploadStepState> _step4Key = GlobalKey<AssetsUploadStepState>();
 
-// Narrative displayed for each step
-final List<String> _storyNarrative = [
-  "Welcome! Let's get started.", // Step 0: Auth (Email/Password)
-  "Tell us about yourself.", // Step 1: Personal Details & ID
-  "Describe your business.", // Step 2: Business Details
-  "Set up your pricing.", // Step 3: Pricing
-  "Showcase your work." // Step 4: Assets
-];
 
-// List of step widgets, using aliases where necessary
-// Assign the key to PersonalDataStep
-late final List<Widget> _steps; // Make late final
+  // Narrative displayed for each step
+  final List<String> _storyNarrative = [
+    "Welcome! Let's get started.", // Step 0: Auth (Email/Password)
+    "Tell us about yourself.", // Step 1: Personal Details & ID
+    "Describe your business.", // Step 2: Business Details
+    "Set up your pricing.", // Step 3: Pricing
+    "Showcase your work." // Step 4: Assets
+  ];
+
+  // List of step widgets, assigning keys
+  // These widgets should NOT contain their own NavigationButtons internally anymore
+  late final List<Widget> _steps;
 
   @override
   void initState() {
     super.initState();
-    // Initialize _steps here where the key is available
+    // Initialize _steps here where the keys are available
     _steps = [
-       pd_step.PersonalDataStep(key: _personalDataStepKey), // Step 0 - Assign key
-       const personal_id.PersonalIdStep(),     // Step 1 - Use alias
-       const BusinessDetailsStep(),            // Step 2
-       const PricingStep(),                    // Step 3
-       const AssetsUploadStep(),               // Step 4
+       pd_step.PersonalDataStep(key: _step0Key),   // Step 0 - Assign key
+       pi_step.PersonalIdStep(key: _step1Key),     // Step 1 - Assign key & use alias
+       BusinessDetailsStep(key: _step2Key),        // Step 2 - Assign key
+       PricingStep(key: _step3Key),                // Step 3 - Assign key
+       AssetsUploadStep(key: _step4Key),           // Step 4 - Assign key
     ];
     // Trigger initial data loading or start flow from Bloc
     context.read<ServiceProviderBloc>().add(LoadInitialData());
   }
 
-  // --- Timer Management ---
-  void _startVerificationTimer() { /* ... implementation unchanged ... */
-     _cancelVerificationTimer(); print("Starting email verification timer...");
-     _verificationTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-         print("Timer Tick: Dispatching CheckEmailVerificationStatusEvent");
-         if (mounted && context.read<ServiceProviderBloc>().state is ServiceProviderAwaitingVerification) {
-            if (FirebaseAuth.instance.currentUser != null) {
-               context.read<ServiceProviderBloc>().add(CheckEmailVerificationStatusEvent());
-            } else { print("Timer Tick: User logged out, cancelling timer."); timer.cancel(); }
-         } else { print("Timer Tick: State is no longer AwaitingVerification or widget unmounted, cancelling timer."); timer.cancel(); }
-     });
-   }
-  void _cancelVerificationTimer() { /* ... implementation unchanged ... */
-     if (_verificationTimer?.isActive ?? false) { print("Cancelling email verification timer."); _verificationTimer!.cancel(); } _verificationTimer = null;
-   }
+  // --- Timer Management for Email Verification ---
+  void _startVerificationTimer() {
+    _cancelVerificationTimer(); // Ensure no duplicate timers
+    print("Starting email verification timer...");
+    _verificationTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      print("Timer Tick: Dispatching CheckEmailVerificationStatusEvent");
+      if (mounted && context.read<ServiceProviderBloc>().state is ServiceProviderAwaitingVerification) {
+         if (FirebaseAuth.instance.currentUser != null) {
+             context.read<ServiceProviderBloc>().add(CheckEmailVerificationStatusEvent());
+         } else { print("Timer Tick: User logged out, cancelling timer."); timer.cancel(); }
+      } else { print("Timer Tick: State is no longer AwaitingVerification or widget unmounted, cancelling timer."); timer.cancel(); }
+    });
+  }
+
+  void _cancelVerificationTimer() {
+    if (_verificationTimer?.isActive ?? false) { print("Cancelling email verification timer."); _verificationTimer!.cancel(); }
+    _verificationTimer = null;
+  }
 
   @override
   void dispose() {
     _pageController.dispose();
-    _cancelVerificationTimer();
+    _cancelVerificationTimer(); // Important: Cancel timer when widget is disposed
     super.dispose();
   }
 
-  // --- Updated Navigation Handlers ---
-  void _nextPage(int currentStep) {
-    final currentState = context.read<ServiceProviderBloc>().state;
+  // --- Navigation Handler: Triggers Step Submission ---
+  void _triggerStepSubmission(int currentStep) {
+    // Call the appropriate submission method on the current step's state using its key
+    // Ensure these method names exist and are PUBLIC in your State classes
+    switch (currentStep) {
+      case 0:
+        print("Triggering Step 0 submission (submitAuthenticationDetails)");
+        _step0Key.currentState?.submitAuthenticationDetails(); // Calls method in PersonalDataStepState
+        break;
+      case 1:
+        print("Triggering Step 1 submission (handleNext)");
+        _step1Key.currentState?.handleNext(currentStep); // Calls method in PersonalIdStepState
+        break;
+      case 2:
+         print("Triggering Step 2 submission (handleNext)");
+         _step2Key.currentState?.handleNext(currentStep); // Calls method in BusinessDetailsStepState
+         break;
+      case 3:
+         print("Triggering Step 3 submission (handleNext)");
+         _step3Key.currentState?.handleNext(currentStep); // Calls method in PricingStepState
+         break;
+      case 4:
+         print("Triggering Step 4 submission (handleNext / Finish)");
+         _step4Key.currentState?.handleNext(currentStep); // Calls method in AssetsUploadStepState
+         break;
+      default:
+        print("Error: Tried to trigger submission for unknown step $currentStep");
+    }
+    // NOTE: The actual navigation (dispatching NavigateToStep or CompleteRegistration)
+    // should happen *inside* the handleNext/submitAuthenticationDetails methods
+    // of the respective step widgets, AFTER they have validated and dispatched
+    // their data update events (if any).
+  }
 
-    if (currentStep == 0) {
-        // --- Special Handling for Step 0 (Auth) ---
-        print("Next called on Step 0. Triggering submitAuthenticationDetails.");
-        // Use the key to access the state and call the submit method
-        _personalDataStepKey.currentState?.submitAuthenticationDetails();
-        // Don't dispatch NavigateToStep here; the Bloc handles state change after auth attempt
-    }
-    else if (currentStep < _totalPages - 1) {
-      // --- Handling for Steps 1, 2, 3 ---
-      print("Dispatching NavigateToStep to ${currentStep + 1}");
-      // Dispatch event to Bloc; Bloc handles validation before changing state
-      context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep + 1));
-    } else {
-      // --- Handle Final Submission (Last Step, index 4) ---
-      print("Finish Setup Triggered on step $currentStep!");
-      if (currentState is ServiceProviderDataLoaded) {
-        final finalModel = currentState.model;
-        // Dispatch completion event to Bloc
-        context.read<ServiceProviderBloc>().add(CompleteRegistration(finalModel));
-      } else {
-        showGlobalSnackBar(context, "Cannot submit, data not loaded correctly.", isError: true);
-      }
-    }
+  // --- Navigation Handlers Called by Buttons ---
+  void _nextPage(int currentStep) {
+      // Trigger the current step's validation and submission logic
+      _triggerStepSubmission(currentStep);
+      // The step's own handler will dispatch NavigateToStep or CompleteRegistration if valid
   }
 
   void _previousPage(int currentStep) {
     print("Dispatching NavigateToStep to ${currentStep - 1}");
     if (currentStep > 0) {
-      // Dispatch event to Bloc; Bloc handles state change
+      // Dispatch event to Bloc; Bloc handles state change for backward nav
       context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep - 1));
     }
   }
   // --- END Navigation Handlers ---
+
 
   @override
   Widget build(BuildContext context) {
     // Use BlocConsumer to listen to state changes and build UI
     return BlocConsumer<ServiceProviderBloc, ServiceProviderState>(
       listener: (context, state) {
-        // --- Listener Logic (Unchanged) ---
+        // --- Listener Logic ---
+
+        // Cancel/Start timer based on AwaitingVerification state
         if (state is! ServiceProviderAwaitingVerification) { _cancelVerificationTimer(); }
         if (state is ServiceProviderAwaitingVerification) { _startVerificationTimer(); }
+
+        // Show errors via Snackbar
         if (state is ServiceProviderError) { showGlobalSnackBar(context, state.message, isError: true); }
+
+        // Animate PageView when step changes in loaded state
         if (state is ServiceProviderDataLoaded) {
+           // Ensure currentStep from state is within valid range for PageView
            final validStep = state.currentStep.clamp(0, _steps.length - 1);
            if (_pageController.hasClients && _pageController.page?.round() != validStep) {
               print("Bloc state changed step to ${state.currentStep}. Animating PageView to $validStep.");
-               _pageController.animateToPage( validStep, duration: const Duration(milliseconds: 400), curve: Curves.easeInOutCubic );
+               _pageController.animateToPage(
+                 validStep, // Use clamped value
+                 duration: const Duration(milliseconds: 400),
+                 curve: Curves.easeInOutCubic
+               );
            }
         }
+
+        // Trigger LoadInitialData after Verification Success animation finishes
         if (state is ServiceProviderVerificationSuccess) {
              print("Listener: Verification Success detected. Will trigger data load after delay.");
-              Future.delayed(const Duration(seconds: 3), () {
+              Future.delayed(const Duration(seconds: 3), () { // Duration of success animation
                   if (mounted && context.read<ServiceProviderBloc>().state is ServiceProviderVerificationSuccess) {
                      print("Dispatching LoadInitialData after verification success delay.");
                      context.read<ServiceProviderBloc>().add(LoadInitialData());
                   }
               });
         }
+
+        // Handle navigation for already completed users (UI handled in builder)
+        // if (state is ServiceProviderAlreadyCompleted) { ... } // Handled in builder now
       },
       builder: (context, state) {
         // --- Builder Logic ---
 
         // Handle Non-Step States First (Loading, Final Success, Already Completed, Verification)
-        if (state is ServiceProviderLoading || state is ServiceProviderInitial) { /* ... LoadingScreen ... */ }
-        if (state is ServiceProviderRegistrationComplete) { /* ... SuccessScreen ... */ }
-        if (state is ServiceProviderAlreadyCompleted) { /* ... Completed/Pending UI ... */ }
-        if (state is ServiceProviderAwaitingVerification) { return EmailVerificationScreen(email: state.email); }
-        if (state is ServiceProviderVerificationSuccess) { return const Scaffold(backgroundColor: AppColors.lightGrey, body: SuccessScreen()); }
+        if (state is ServiceProviderLoading || state is ServiceProviderInitial) {
+           _cancelVerificationTimer(); // Ensure timer off
+           return const Scaffold(backgroundColor: AppColors.lightGrey, body: LoadingScreen());
+        }
+        if (state is ServiceProviderRegistrationComplete) {
+             _cancelVerificationTimer(); // Ensure timer off
+             return const Scaffold(backgroundColor: AppColors.lightGrey, body: SuccessScreen());
+        }
+        if (state is ServiceProviderAlreadyCompleted) {
+            _cancelVerificationTimer(); // Ensure timer off
+            final bool isApproved = state.model.isApproved;
+            // Return a specific screen based on approval status
+            return Scaffold(
+                backgroundColor: AppColors.lightGrey,
+                body: Center( child: Padding( padding: const EdgeInsets.all(20.0),
+                        child: Column( mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Icon( isApproved ? Icons.check_circle_outline_rounded : Icons.hourglass_top_rounded, size: 60, color: isApproved ? Colors.green : AppColors.primaryColor ),
+                                const SizedBox(height: 20), Text( isApproved ? "Registration Approved!" : "Registration Submitted", style: getTitleStyle(fontSize: 20, height: 1.5)),
+                                const SizedBox(height: 15), Text( isApproved ? "Your account is approved. You can now access partner features." : "Your registration is awaiting admin review. Please check back later.", textAlign: TextAlign.center, style: getbodyStyle(),),
+                                const SizedBox(height: 30),
+                                if (isApproved) ElevatedButton( onPressed: () { print("Navigate to approved area/dashboard..."); /* TODO: Implement Nav */ }, child: const Text("Go to Dashboard"))
+                                else ElevatedButton( onPressed: () { print("Logout or close app..."); /* Optional: Implement Logout */ }, style: ElevatedButton.styleFrom(backgroundColor: AppColors.mediumGrey), child: const Text("Okay"))
+                            ], ), ), ), );
+        }
+        if (state is ServiceProviderAwaitingVerification) {
+            // Timer is started/managed by the listener
+            return EmailVerificationScreen(email: state.email); // Show verification screen
+        }
+        if (state is ServiceProviderVerificationSuccess) {
+              // Timer should be off here
+              return const Scaffold(backgroundColor: AppColors.lightGrey, body: SuccessScreen()); // Show success animation
+         }
 
 
         // --- Determine current step for Loaded/Error states ---
         int currentStep = 0; // Default
         if (state is ServiceProviderDataLoaded) {
-           currentStep = state.currentStep.clamp(0, _steps.length - 1);
+           currentStep = state.currentStep.clamp(0, _steps.length - 1); // Clamp step to valid range
         } else if (state is ServiceProviderError) {
+            // On error, default to showing step 0. Buttons should be disabled by logic below.
             print("Bloc is in Error state: ${state.message}. Displaying UI potentially for step 0.");
             currentStep = 0;
         }
 
         // --- Build Main Step Layout (Loaded or Error state) ---
+        // This layout NOW passes the global Nav buttons down
         return Scaffold(
           backgroundColor: AppColors.lightGrey,
           body: LayoutBuilder(
@@ -192,15 +260,15 @@ late final List<Widget> _steps; // Make late final
               final bool isDesktop = constraints.maxWidth > 900;
 
                // Define NavigationButtons based on current state
+               // Pass the MODIFIED _nextPage and _previousPage handlers
                final navButtons = NavigationButtons(
                   isDesktop: isDesktop,
-                  // Use the updated _nextPage and _previousPage handlers
                   onNext: (state is ServiceProviderError || state is ServiceProviderLoading)
-                      ? null
-                      : () => _nextPage(currentStep),
+                      ? null // Disable Next on Error or Loading
+                      : () => _nextPage(currentStep), // Calls _triggerStepSubmission
                   onPrevious: (state is ServiceProviderLoading || currentStep == 0)
-                      ? null
-                      : () => _previousPage(currentStep),
+                      ? null // Disable Previous on Loading or First Step
+                      : () => _previousPage(currentStep), // Directly dispatches NavigateToStep
                   currentPage: currentStep,
                   totalPages: _totalPages,
               );
@@ -233,9 +301,21 @@ late final List<Widget> _steps; // Make late final
 
 
 // --- Placeholder Email Verification Screen Widget ---
+// Ensure this is defined (or imported) and uses correct Asset path
 class EmailVerificationScreen extends StatelessWidget {
-  // ... (Implementation unchanged) ...
   final String email;
   const EmailVerificationScreen({super.key, required this.email});
-   @override Widget build(BuildContext context) { return Scaffold( /* ... UI ... */ ); }
+
+  @override
+  Widget build(BuildContext context) {
+    // Build the UI for the verification screen as provided in response #60
+    return Scaffold( backgroundColor: AppColors.lightGrey, body: Center( child: Padding( padding: const EdgeInsets.all(20.0),
+            child: Column( mainAxisAlignment: MainAxisAlignment.center, children: [
+                 LottieBuilder.asset( AssetsIcons.WaitingAnimation, width: 300, height: 300,), // Use correct asset path
+                 const SizedBox(height: 30), Text("Verify Your Email", style: getTitleStyle(fontSize: 20, height: 1.5)),
+                 const SizedBox(height: 15), Text( "We've sent a verification link to $email. Please check your inbox (and spam folder) and click the link to activate your account.", textAlign: TextAlign.center, style: getbodyStyle(),),
+                 
+                 const SizedBox(height: 15), Text( "Checking automatically...", style: getSmallStyle(color: AppColors.mediumGrey),),
+            ], ), ), ), );
+  }
 }

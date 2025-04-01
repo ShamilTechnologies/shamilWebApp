@@ -17,21 +17,23 @@ import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // 
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart';
-// REMOVED: import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Removed import
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
 // Import the shared ModernUploadField (ensure path is correct)
-import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Assuming ModernUploadField is here now, or import from actual location
+import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart'; // Import the shared widget
+// REMOVED: import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Removed button import
+import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
 
 
 class AssetsUploadStep extends StatefulWidget {
-  const AssetsUploadStep({super.key}); // Simplified constructor
+  // Key is passed in RegistrationFlow when creating the instance
+  const AssetsUploadStep({super.key});
 
   @override
-  _AssetsUploadStepState createState() => _AssetsUploadStepState();
+  // Use the public state name here
+  State<AssetsUploadStep> createState() => AssetsUploadStepState(); // <-- Made public
 }
 
-class _AssetsUploadStepState extends State<AssetsUploadStep> {
+// *** Made State Class Public ***
+class AssetsUploadStepState extends State<AssetsUploadStep> { // <-- Made public
   // Local state to hold *newly picked* files for preview before upload completes.
   dynamic _pickedLogo;
   dynamic _pickedPlacePic;
@@ -42,80 +44,39 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
   bool _isUploadingPlacePic = false;
   bool _isUploadingFacilityPic = false;
 
+  // No initState needed to read from Bloc here as previews are based on URLs in build
+
+  @override
+  void dispose() {
+    // Dispose controllers if any were added
+    super.dispose();
+  }
+
   /// Picks a single image using file_selector.
   Future<dynamic> _pickImage() async {
-    // (Implementation as provided by user)
-     if (kIsWeb) print("Opening file selector for web...");
+    // (Implementation remains the same - returns path or bytes)
+    if (kIsWeb) print("Opening file selector for web...");
     if (!kIsWeb) print("Opening file selector for desktop/mobile...");
-
     try {
-      const XTypeGroup typeGroup = XTypeGroup(
-        label: 'Images',
-        extensions: <String>['jpg', 'jpeg', 'png', 'gif', 'webp'],
-      );
-      final XFile? file = await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
-
-      if (file != null) {
-        if (kIsWeb) {
-          final bytes = await file.readAsBytes();
-          print("File picked on web: ${file.name} (${bytes.lengthInBytes} bytes)");
-          return bytes; // Return Uint8List on web.
-        } else {
-          print("File picked on desktop/mobile: ${file.path}");
-           return file.path; // Return path string
-        }
-      } else {
-        print("No file selected.");
-        return null;
-      }
-    } catch (e) {
-      print("Error picking file: $e");
-      if (mounted) {
-        showGlobalSnackBar(context, "Error picking file: $e", isError: true);
-      }
-      return null;
-    }
+      const XTypeGroup typeGroup = XTypeGroup(label: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp']);
+      final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
+      if (file != null) { return kIsWeb ? await file.readAsBytes() : file.path; }
+      else { print("No file selected."); return null; }
+    } catch (e) { print("Error picking file: $e"); if (mounted) showGlobalSnackBar(context, "Error picking file: $e", isError: true); return null; }
   }
 
   /// Picks multiple images using file_selector.
   Future<List<dynamic>> _pickMultiImage() async {
-    // (Implementation as provided by user)
+    // (Implementation remains the same - returns paths or bytes)
      if (kIsWeb) print("Opening multi-file selector for web...");
     if (!kIsWeb) print("Opening multi-file selector for desktop/mobile...");
-
     try {
-      const XTypeGroup typeGroup = XTypeGroup(
-        label: 'Images',
-        extensions: <String>['jpg', 'jpeg', 'png', 'gif', 'webp'],
-      );
-      final List<XFile> files = await openFiles(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
-
-      if (files.isNotEmpty) {
-        if (kIsWeb) {
-          final List<Uint8List> byteList = [];
-          for (final file in files) {
-            byteList.add(await file.readAsBytes());
-            print("Multi-picked on web: ${file.name}");
-          }
-          return byteList;
-        } else {
-          final List<String> pathList = files.map((file) { // Return list of paths
-            print("Multi-picked on desktop/mobile: ${file.path}");
-            return file.path;
-          }).toList();
-          return pathList;
-        }
-      } else {
-        print("No files selected for multi-pick.");
-        return [];
-      }
-    } catch (e) {
-      print("Error picking multiple files: $e");
-      if (mounted) {
-        showGlobalSnackBar(context, "Error picking files: $e", isError: true);
-      }
-      return [];
-    }
+      const XTypeGroup typeGroup = XTypeGroup(label: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp']);
+      final List<XFile> files = await openFiles(acceptedTypeGroups: [typeGroup]);
+      if (files.isNotEmpty) { if (kIsWeb) { final List<Uint8List> byteList = []; for (final file in files) { byteList.add(await file.readAsBytes()); print("Multi-picked on web: ${file.name}"); } return byteList; }
+        else { final List<String> pathList = files.map((file) { print("Multi-picked on desktop/mobile: ${file.path}"); return file.path; }).toList(); return pathList; }
+      } else { print("No files selected for multi-pick."); return []; }
+    } catch (e) { print("Error picking multiple files: $e"); if (mounted) showGlobalSnackBar(context, "Error picking files: $e", isError: true); return []; }
   }
 
 
@@ -173,13 +134,36 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
   // Function to remove a newly picked single asset
   void _removePickedSingleAsset(Function clearPickedState) { setState(() { clearPickedState(); }); }
 
-  // --- REMOVED Navigation Handlers ---
-  // void _goToNextStep(int currentStep) { ... }
-  // void _goToPreviousStep(int currentStep) { ... }
+
+  // --- Submission Logic (called by RegistrationFlow via GlobalKey) ---
+  // Made public and added parameter as expected by RegistrationFlow
+  // For Assets step, "Next" means "Finish"
+  void handleNext(int currentStep) {
+     // 1. Validation (Check if required images are uploaded)
+     final currentState = context.read<ServiceProviderBloc>().state;
+     if (currentState is ServiceProviderDataLoaded) {
+         final model = currentState.model;
+         // Use the model's validation method (which checks logoUrl and placePicUrl)
+         if (model.isAssetsValid()) {
+             print("Assets Step form is valid. Dispatching CompleteRegistration.");
+             // 2. Dispatch completion event
+             context.read<ServiceProviderBloc>().add(CompleteRegistration(model));
+         } else {
+             print("Assets Step validation failed.");
+             showGlobalSnackBar(context, "Please upload the required images (Logo and Main Photo).", isError: true);
+         }
+     } else {
+          // Should not be able to reach here if state is not loaded, but handle defensively
+          print("Assets Step Error: Cannot submit, data not loaded.");
+          showGlobalSnackBar(context, "Cannot submit, data not loaded correctly.", isError: true);
+     }
+  }
+
+  // REMOVED: _handlePrevious - Previous navigation is handled globally
 
   @override
   Widget build(BuildContext context) {
-    // Removed unused layout variables (isDesktop, totalSteps)
+    // Removed unused layout variables
 
     return BlocConsumer<ServiceProviderBloc, ServiceProviderState>(
       listener: (context, state) {
@@ -192,49 +176,43 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
               final model = state.model;
               bool logoJustUploaded = _isUploadingLogo && model.logoUrl != null && model.logoUrl!.isNotEmpty;
               bool placePicJustUploaded = _isUploadingPlacePic && model.placePicUrl != null && model.placePicUrl!.isNotEmpty;
-              // Check if facilities count increased to clear local facilities pics
-              int uploadedFacilitiesCount = model.facilitiesPicsUrls?.length ?? 0;
-              bool facilitiesProcessed = _isUploadingFacilityPic && _pickedFacilitiesPics.isNotEmpty; // Add more robust check if needed
+              int uploadedFacilitiesCount = model.facilitiesPicsUrls?.length ?? 0; // Example check
+              bool facilitiesProcessed = _isUploadingFacilityPic && _pickedFacilitiesPics.isNotEmpty;
 
               if (logoJustUploaded || placePicJustUploaded || facilitiesProcessed) {
                  setState(() {
                      if (logoJustUploaded) { _pickedLogo = null; _isUploadingLogo = false; }
                      if (placePicJustUploaded) { _pickedPlacePic = null; _isUploadingPlacePic = false; }
                      if (facilitiesProcessed) {
-                        // Clear local pics after attempting upload, rely on model for truth
                         _pickedFacilitiesPics.clear();
                         _isUploadingFacilityPic = false;
                      }
                  });
               } else {
-                   // Reset loading flags if they were true but URL still missing/empty
                    if (_isUploadingLogo && (model.logoUrl == null || model.logoUrl!.isEmpty)) setState(() => _isUploadingLogo = false);
                    if (_isUploadingPlacePic && (model.placePicUrl == null || model.placePicUrl!.isEmpty)) setState(() => _isUploadingPlacePic = false);
-                   if (_isUploadingFacilityPic) setState(() => _isUploadingFacilityPic = false); // Reset general flag
+                   if (_isUploadingFacilityPic) setState(() => _isUploadingFacilityPic = false);
               }
          }
       },
       builder: (context, state) {
-        // Get current model from loaded state
         ServiceProviderModel? currentModel;
         bool isLoadingState = state is ServiceProviderLoading;
-        bool enableActions = false; // Enable picking/removing only when loaded
+        bool enableActions = false;
 
         if (state is ServiceProviderDataLoaded) {
           currentModel = state.model;
-          enableActions = true; // Enable actions when data is loaded
+          enableActions = true;
         } else if (state is ServiceProviderError) {
-           // Decide if actions should be enabled on error
-           enableActions = false; // Example: disable on error
+          enableActions = false;
         }
 
-        // Display URLs from model if available
         final String? logoUrl = currentModel?.logoUrl;
         final String? placePicUrl = currentModel?.placePicUrl;
         final List<String> facilitiesUrls = currentModel?.facilitiesPicsUrls ?? [];
 
-        return StepContainer( // Use your wrapper
-          child: ListView( // Use ListView for scrollability
+        return StepContainer(
+          child: ListView(
             padding: const EdgeInsets.all(16.0),
             children: [
               Text( "Showcase Your Business", style: getTitleStyle(fontSize: 22, fontWeight: FontWeight.w600, height: 1.5),),
@@ -244,7 +222,7 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
 
               // --- Logo Upload ---
               ModernUploadField(
-                title: "Business Logo*", // Mark as required if needed by validation
+                title: "Business Logo*", // Mark as required
                 description: "Upload your company logo.",
                 file: _pickedLogo ?? logoUrl,
                 onTap: enableActions && !_isUploadingLogo ? _pickAndUploadLogo : null,
@@ -256,7 +234,7 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
 
               // --- Place Picture Upload ---
               ModernUploadField(
-                title: "Main Business Photo*", // Mark as required if needed by validation
+                title: "Main Business Photo*", // Mark as required
                 description: "Upload a primary photo of your location.",
                 file: _pickedPlacePic ?? placePicUrl,
                 onTap: enableActions && !_isUploadingPlacePic ? _pickAndUploadPlacePic : null,
@@ -301,6 +279,7 @@ class _AssetsUploadStepState extends State<AssetsUploadStep> {
                const SizedBox(height: 40), // Add space at the bottom
 
                // *** REMOVED NavigationButtons Section ***
+               // Navigation is handled globally by RegistrationFlow
 
             ], // End ListView children
           ), // End ListView

@@ -12,22 +12,25 @@ import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // 
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/page/widgets/subscription_widget_plan.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Adjust path
+// Import SubscriptionPlansWidget (ensure path is correct)
+// REMOVED: import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Removed button import
 import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
-import 'package:shamil_web_app/core/functions/snackbar_helper.dart'; // For showing errors
+import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
+import 'package:shamil_web_app/feature/auth/views/page/widgets/subscription_widget_plan.dart'; // For showing errors
 
 
 class PricingStep extends StatefulWidget {
   // Removed initial props and callback
-
+  // Key is passed in RegistrationFlow when creating the instance
   const PricingStep({Key? key}) : super(key: key);
 
   @override
-  State<PricingStep> createState() => _PricingStepState();
+  // Use the public state name here
+  State<PricingStep> createState() => PricingStepState(); // <-- Made public
 }
 
-class _PricingStepState extends State<PricingStep> {
+// *** Made State Class Public ***
+class PricingStepState extends State<PricingStep> { // <-- Made public
   // Form Key for Validation
   final _formKey = GlobalKey<FormState>();
 
@@ -58,7 +61,9 @@ class _PricingStepState extends State<PricingStep> {
 
     // Initialize controller for reservation price
     _reservationPriceController = TextEditingController(
-      text: _currentReservationPrice?.toString() ?? '',
+      text: _currentReservationPrice != null && _currentReservationPrice! > 0
+            ? _currentReservationPrice!.toStringAsFixed(2) // Format existing price
+            : '', // Start empty if no price or zero
     );
   }
 
@@ -69,22 +74,27 @@ class _PricingStepState extends State<PricingStep> {
   }
 
 
-  // --- Navigation Logic ---
-  void _handleNext(int currentStep, int totalSteps) {
+  // --- Submission Logic (called by RegistrationFlow via GlobalKey) ---
+  // Made public and added parameter as expected by RegistrationFlow
+  void handleNext(int currentStep) {
+     // Define total steps locally or get from parent if needed
+     const int totalSteps = 5; // Assuming 5 steps total (0-4)
+
     // 1. Validate the form
     if (_formKey.currentState?.validate() ?? false) {
       print("Pricing Step form is valid.");
 
-      // Additional check based on model (e.g., ensure plans exist if subscription model selected)
+      // Additional check based on model
       bool modelSpecificValidation = true;
       if (_pricingModel == PricingModel.subscription && _currentSubscriptionPlans.isEmpty) {
            modelSpecificValidation = false;
            showGlobalSnackBar(context, "Please add at least one subscription plan.", isError: true);
-      } else if (_pricingModel == PricingModel.reservation && _currentReservationPrice == null) {
-          // The form validator should already catch this if the field is required
-          modelSpecificValidation = false; // Redundant if validator works, but safe check
-           showGlobalSnackBar(context, "Please enter a reservation price.", isError: true);
       }
+      // Reservation price null check is handled by validator, but positive check can be here or validator
+      // else if (_pricingModel == PricingModel.reservation && (_currentReservationPrice == null || _currentReservationPrice! <= 0)) {
+      //     modelSpecificValidation = false;
+      //     showGlobalSnackBar(context, "Please enter a valid positive reservation price.", isError: true);
+      // }
 
        if (!modelSpecificValidation) {
            print("Pricing Step model-specific validation failed.");
@@ -94,19 +104,22 @@ class _PricingStepState extends State<PricingStep> {
       // 2. Gather data from local state
       final event = UpdatePricingDataEvent(
         pricingModel: _pricingModel,
-        // Pass the locally managed list/price
         subscriptionPlans: (_pricingModel == PricingModel.subscription) ? _currentSubscriptionPlans : null,
         reservationPrice: (_pricingModel == PricingModel.reservation) ? _currentReservationPrice : null,
       );
 
-      // 3. Dispatch update event to Bloc (saves the data)
+      // 3. Dispatch update event to Bloc
       context.read<ServiceProviderBloc>().add(event);
 
       // 4. Dispatch navigation event OR handle Finish
        if (currentStep == totalSteps - 1) {
            print("Finish Setup Triggered on Step $currentStep (Pricing)!");
-           // TODO: Implement final action (e.g., navigate to dashboard)
-            showGlobalSnackBar(context, "Registration Complete!", isError: false);
+           // If this IS the last step, dispatch CompleteRegistration
+           // Need final model state for this, read it again? Or assume Bloc state is updated?
+           // Best practice: Let Bloc handle completion after saving this step's data.
+           // For now, just navigate, Bloc handles completion trigger later.
+           // context.read<ServiceProviderBloc>().add(CompleteRegistration(finalModel)); // Move this trigger
+            context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep + 1)); // Navigate first
        } else {
           context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep + 1));
        }
@@ -117,160 +130,136 @@ class _PricingStepState extends State<PricingStep> {
     }
   }
 
-  void _handlePrevious(int currentStep) {
-    context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep - 1));
-  }
-
+  // REMOVED: _handlePrevious - Previous navigation is handled globally
 
   @override
   Widget build(BuildContext context) {
-    final bool isDesktop = MediaQuery.of(context).size.width > 600;
-    const int totalSteps = 5; // Adjust as needed
+    // Removed unused layout variables
 
-    return BlocBuilder<ServiceProviderBloc, ServiceProviderState>(
-      builder: (context, state) {
-        int currentStep = 0;
-        bool enableInputs = false;
-        bool isLoadingState = state is ServiceProviderLoading;
-        // Get initial data for child widgets directly from state if needed
-        List<SubscriptionPlan> initialPlansFromState = [];
-        double? initialReservationPriceFromState;
+    return BlocListener<ServiceProviderBloc, ServiceProviderState>(
+       listener: (context, state) {
+         // Update local fields if the model in the Bloc state changes
+         if (state is ServiceProviderDataLoaded) {
+             final model = state.model;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                    // Update pricing model if different
+                    if (_pricingModel != model.pricingModel) {
+                       setState(() => _pricingModel = model.pricingModel);
+                    }
+                    // Update reservation price controller if different
+                    final priceFromState = model.reservationPrice;
+                    final currentPriceText = priceFromState != null && priceFromState > 0
+                                              ? priceFromState.toStringAsFixed(2)
+                                              : '';
+                    if(_reservationPriceController.text != currentPriceText) {
+                        _reservationPriceController.text = currentPriceText;
+                        // Also update local double value
+                        _currentReservationPrice = priceFromState;
+                    }
+                    // Update subscription plans (careful not to overwrite edits)
+                    // This simple update replaces local edits if external state changes.
+                    // A more complex diffing logic might be needed if required.
+                    if (_currentSubscriptionPlans != model.subscriptionPlans) { // Basic list comparison
+                        setState(() => _currentSubscriptionPlans = List<SubscriptionPlan>.from(model.subscriptionPlans ?? []));
+                        // TODO: Re-initialize controllers if plans list changes drastically? Complex.
+                    }
+                }
+             });
+         }
+       },
+      child: BlocBuilder<ServiceProviderBloc, ServiceProviderState>(
+        builder: (context, state) {
+          // Determine enabled state
+          bool enableInputs = false;
+          List<SubscriptionPlan> initialPlansFromState = []; // For child widget
 
-        if (state is ServiceProviderDataLoaded) {
-          currentStep = state.currentStep;
-          enableInputs = true;
-          initialPlansFromState = state.model.subscriptionPlans ?? [];
-          initialReservationPriceFromState = state.model.reservationPrice;
+          if (state is ServiceProviderDataLoaded) {
+            enableInputs = true;
+            initialPlansFromState = state.model.subscriptionPlans ?? [];
+            // Update local pricing model if needed (also handled in listener)
+            // if (_pricingModel != state.model.pricingModel) {
+            //   _pricingModel = state.model.pricingModel;
+            // }
+          } else if (state is ServiceProviderError) {
+            enableInputs = false;
+          }
 
-          // Update local state if model changes externally (e.g., on load)
-          // This needs careful handling to avoid overwriting user input
-          // Maybe only update if the widget is first built or data is significantly different
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted && state.model.pricingModel != _pricingModel) {
-                  setState(() => _pricingModel = state.model.pricingModel);
-              }
-               // Potentially update local price/plans based on state ONLY IF they haven't been edited locally? Complex.
-               // It's often better to rely on initState and let local state manage edits.
-          });
+          return StepContainer(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        Text( "Pricing Information", style: getTitleStyle(fontSize: 22, fontWeight: FontWeight.w600, height: 1.5), ),
+                        const SizedBox(height: 8),
+                        Text( "Define your pricing model and details.", style: getbodyStyle(fontSize: 15, color: AppColors.darkGrey), ),
+                        const SizedBox(height: 30),
 
-        } else if (state is ServiceProviderError) {
-           enableInputs = false; // Disable on error
-        }
-
-        return StepContainer(
-          child: Form( // Wrap in Form
-            key: _formKey,
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      Text(
-                        "Pricing Information",
-                        style: getTitleStyle(fontSize: 22, fontWeight: FontWeight.w600, height: 1.5),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        "Define your pricing model and details.",
-                        style: getbodyStyle(fontSize: 15, color: AppColors.darkGrey),
-                      ),
-                      const SizedBox(height: 30),
-
-                      // --- Pricing Model Dropdown ---
-                      DropdownButtonFormField<PricingModel>(
-                        value: _pricingModel,
-                        items: PricingModel.values.map((model) {
-                          // Simple name capitalization for display
-                          String displayName = model.name[0].toUpperCase() + model.name.substring(1);
-                          return DropdownMenuItem<PricingModel>(value: model, child: Text(displayName));
-                        }).toList(),
-                        onChanged: enableInputs ? (value) {
-                          if (value != null) {
-                            setState(() { _pricingModel = value; });
-                            // Don't dispatch event here
-                          }
-                        } : null,
-                        validator: (value) {
-                           if (value == null) { // Should not happen if initialized
-                               return 'Please select a pricing model';
-                           }
-                           return null;
-                        },
-                        decoration: InputDecoration( // Assuming standard InputDecoration
-                          labelText: "Pricing Model",
-                           labelStyle: getbodyStyle(fontSize: 14, color: AppColors.darkGrey),
-                           floatingLabelBehavior: FloatingLabelBehavior.always,
-                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.mediumGrey.withOpacity(0.7))),
-                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryColor, width: 1.5)),
-                           enabled: enableInputs,
+                        // --- Pricing Model Dropdown ---
+                        DropdownButtonFormField<PricingModel>(
+                          value: _pricingModel,
+                          items: PricingModel.values.map((model) {
+                            String displayName = model.name[0].toUpperCase() + model.name.substring(1);
+                            return DropdownMenuItem<PricingModel>(value: model, child: Text(displayName));
+                          }).toList(),
+                          onChanged: enableInputs ? (value) { if (value != null) { setState(() { _pricingModel = value; }); } } : null,
+                          validator: (value) { if (value == null) { return 'Please select a pricing model'; } return null; },
+                          decoration: InputDecoration(
+                            labelText: "Pricing Model*",
+                             labelStyle: getbodyStyle(fontSize: 14, color: AppColors.darkGrey),
+                             floatingLabelBehavior: FloatingLabelBehavior.always,
+                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.mediumGrey.withOpacity(0.7))),
+                             focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryColor, width: 1.5)),
+                             enabled: enableInputs,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 20),
+                        const SizedBox(height: 20),
 
-                      // --- Conditional Fields ---
+                        // --- Conditional Fields ---
+                        if (_pricingModel == PricingModel.subscription)
+                          SubscriptionPlansWidget(
+                            initialPlans: _currentSubscriptionPlans, // Pass local state which is updated by listener
+                            onPlansChanged: (updatedPlans) { setState(() { _currentSubscriptionPlans = updatedPlans; }); },
+                            enabled: enableInputs,
+                          )
+                        else if (_pricingModel == PricingModel.reservation)
+                          GlobalTextFormField(
+                            key: const ValueKey('reservation_price_field'),
+                            labelText: "Reservation Price*",
+                            hintText: "Enter the reservation price (e.g., 50.00)",
+                            controller: _reservationPriceController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))],
+                            enabled: enableInputs,
+                            onChanged: (value) { setState(() { _currentReservationPrice = double.tryParse(value); }); },
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) { return 'Reservation price is required'; }
+                              final price = double.tryParse(value);
+                              if (price == null) { return 'Please enter a valid number'; }
+                              if (price <= 0) { return 'Price must be positive'; }
+                              return null;
+                            },
+                          )
+                         else
+                            Container(), // Show nothing for 'Other'
 
-                      // Subscription Plans Section
-                      if (_pricingModel == PricingModel.subscription)
-                        SubscriptionPlansWidget(
-                          // Pass initial plans from the *loaded state* for initialization
-                          initialPlans: initialPlansFromState,
-                          // Callback updates the *local state variable*
-                          onPlansChanged: (updatedPlans) {
-                            setState(() {
-                              _currentSubscriptionPlans = updatedPlans ?? [];
-                            });
-                           // Don't dispatch event here
-                          },
-                          enabled: enableInputs, // Pass enabled state down
-                        )
-                      // Reservation Price Section
-                      else if (_pricingModel == PricingModel.reservation)
-                        GlobalTextFormField(
-                           key: const ValueKey('reservation_price_field'), // Add key for state preservation if needed
-                          labelText: "Reservation Price",
-                          hintText: "Enter the reservation price (e.g., 50.00)",
-                          controller: _reservationPriceController, // Use controller
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))], // Allow numbers and up to 2 decimal places
-                          enabled: enableInputs,
-                          onChanged: (value) {
-                              // Update local state variable on change
-                              setState(() {
-                                  _currentReservationPrice = double.tryParse(value);
-                              });
-                              // Don't dispatch event here
-                          },
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'Reservation price is required';
-                            }
-                            final price = double.tryParse(value);
-                            if (price == null) {
-                               return 'Please enter a valid number';
-                            }
-                            if (price <= 0) {
-                               return 'Price must be positive';
-                            }
-                            return null;
-                          },
-                        )
-                       else // Case for PricingModel.other or null (handled by validator)
-                          Container(), // Show nothing or a message if needed
+                         const SizedBox(height: 20),
+                      ],
+                    ),
+                  ), // End Expanded ListView
 
-                       const SizedBox(height: 20), // Space at end
-                    ],
-                  ),
-                ), // End Expanded ListView
+                  // *** REMOVED NavigationButtons Section ***
 
-                // --- Navigation ---
-              
-
-              ], // End Column Children
-            ), // End Form
-          ), // End StepContainer
-        ); // End BlocBuilder
-      },
-    ); // End BlocBuilder
+                ], // End Column children
+              ), // End Form
+            ), // End StepContainer
+          ); // End BlocBuilder
+        },
+      ), // End BlocBuilder
+    ); // End BlocListener
   }
 }
