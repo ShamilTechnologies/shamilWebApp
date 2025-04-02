@@ -285,16 +285,46 @@ class ServiceProviderModel extends Equatable {
    }
   bool isAssetsValid() { /* ... unchanged ... */ return logoUrl != null && logoUrl!.isNotEmpty && placePicUrl != null && placePicUrl!.isNotEmpty; }
 
-  // --- currentProgressStep Getter ---
-  // Determines the step index to RESUME at (0=Auth, 1=PersonalId, 2=Business, 3=Pricing, 4=Assets)
+ // --- Corrected currentProgressStep Getter ---
+  // Determines the step index the user should RESUME at.
   int get currentProgressStep {
-     if (isAssetsValid()) return 5; // Completed step 4, should be finished (handle via isRegistrationComplete)
-     if (isPricingValid()) return 4; // Finished step 3 -> resume at 4 (Assets)
-     if (isBusinessDataValid()) return 3; // Finished step 2 -> resume at 3 (Pricing)
-     if (isPersonalDataValid()) return 2; // Finished step 1 -> resume at 2 (Business)
-     // If only basic auth info exists (name might be empty initially)
-     if (uid.isNotEmpty && email.isNotEmpty && emailValidate(email)) return 1; // Resume at step 1 (Personal ID)
-     return 0; // Default: start at step 0 (Auth/Personal Data)
-  }
+    // Step indices: 0=Auth, 1=PersonalId, 2=Business, 3=Pricing, 4=Assets
+    print("Calculating currentProgressStep...");
 
+    // Basic check: If user/email doesn't exist (shouldn't happen if called post-auth/verify)
+    // This check might be redundant if called after successful LoadInitialData finds a user.
+    if (!(uid.isNotEmpty && email.isNotEmpty && emailValidate(email))) {
+        print("Resume Step: 0 (Basic auth info missing or invalid)");
+        return 0; // Default to step 0 if basic info is somehow invalid
+    }
+
+    // Find the first step whose data is NOT valid according to the Model's validation methods
+    if (!isPersonalDataValid()) {
+        // Personal data (Step 1 content: Name, Age, Gender, ID Num, ID Images) is invalid
+        print("Resume Step: 1 (Personal data invalid)");
+        return 1; // Resume at Step 1 (PersonalIdStep)
+    }
+    if (!isBusinessDataValid()) {
+        // Business data (Step 2 content) is invalid
+         print("Resume Step: 2 (Business data invalid)");
+        return 2; // Resume at Step 2 (BusinessDetailsStep)
+    }
+    if (!isPricingValid()) {
+        // Pricing data (Step 3 content) is invalid
+         print("Resume Step: 3 (Pricing data invalid)");
+        return 3; // Resume at Step 3 (PricingStep)
+    }
+    if (!isAssetsValid()) {
+        // Assets data (Step 4 content) is invalid
+         print("Resume Step: 4 (Assets data invalid)");
+        return 4; // Resume at Step 4 (AssetsUploadStep)
+    }
+
+    // If all steps above are valid, registration should be marked complete by the Bloc.
+    // The isRegistrationComplete flag check in _onLoadInitialData handles this.
+    // If we reach here, it means all data is valid, so technically they are on the "last" step
+    // or ready for completion. Returning the index of the last step (4) is reasonable.
+    print("Resume Step: All steps seem valid, returning 4 (Assets step). Completion flag should handle next action.");
+    return 4;
+  }
 } // End ServiceProviderModel
