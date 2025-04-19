@@ -73,7 +73,7 @@ class MobileLayout extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 25),
-            navigationButtons ?? SizedBox.shrink(),
+            navigationButtons ?? const SizedBox.shrink(),
             const SizedBox(height: 15),
           ],
         ),

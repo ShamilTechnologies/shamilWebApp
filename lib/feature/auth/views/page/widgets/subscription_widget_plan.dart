@@ -74,7 +74,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
   void _addPlan() {
     // Add a new plan with default values and corresponding controllers/keys
     setState(() {
-      _plans.add(SubscriptionPlan(
+      _plans.add(const SubscriptionPlan(
         name: '',
         price: 0.0,
         description: '',

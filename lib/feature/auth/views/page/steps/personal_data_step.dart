@@ -19,7 +19,7 @@ class PersonalDataStep extends StatefulWidget {
   // This step now only handles initial Auth (Login or Trigger Register)
   // It NO LONGER has its own navigation buttons.
 
-  const PersonalDataStep({Key? key}) : super(key: key);
+  const PersonalDataStep({super.key});
 
   @override
   State<PersonalDataStep> createState() => PersonalDataStepState(); // Made state public for key access

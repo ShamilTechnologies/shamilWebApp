@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class StepContainer extends StatelessWidget {
   final Widget child; // The actual step widget content (e.g., PersonalDataStep)
 
-  const StepContainer({Key? key, required this.child}) : super(key: key);
+  const StepContainer({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {

@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Import base text styles
 
-/// A global custom text form field with a modern look for light backgrounds.
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // <-- Import for TextInputFormatter
-import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
-import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
+// Adjust path
+// Adjust path
 
 class GlobalTextFormField extends StatefulWidget {
   final String? hintText;

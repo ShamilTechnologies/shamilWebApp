@@ -22,7 +22,7 @@ import 'package:shamil_web_app/feature/auth/views/page/widgets/subscription_widg
 class PricingStep extends StatefulWidget {
   // Removed initial props and callback
   // Key is passed in RegistrationFlow when creating the instance
-  const PricingStep({Key? key}) : super(key: key);
+  const PricingStep({super.key});
 
   @override
   // Use the public state name here
