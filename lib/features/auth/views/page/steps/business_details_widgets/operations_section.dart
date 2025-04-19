@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 // Import UI utils & Widgets (adjust paths as needed)
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // For OpeningHours
-import 'package:shamil_web_app/feature/auth/views/page/widgets/opening_hours_widget.dart'; // OpeningHoursWidget
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // For OpeningHours
+import 'package:shamil_web_app/features/auth/views/page/widgets/opening_hours_widget.dart'; // OpeningHoursWidget
 
 // Typedef for helper functions passed from parent
 typedef SectionHeaderBuilder = Widget Function(String title);

@@ -3,10 +3,10 @@ import 'package:flutter/services.dart'; // For input formatters
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 // Import Bloc, State, Event, Model
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // Adjust path
 
 // Import UI utils & Widgets
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
@@ -14,9 +14,9 @@ import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Adjust path
 // Import SubscriptionPlansWidget (ensure path is correct)
 // REMOVED: import 'package:shamil_web_app/feature/auth/views/page/widgets/navigation_buttons.dart'; // Removed button import
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart'; // Adjust path
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
-import 'package:shamil_web_app/feature/auth/views/page/widgets/subscription_widget_plan.dart'; // For showing errors
+import 'package:shamil_web_app/features/auth/views/page/widgets/subscription_widget_plan.dart'; // For showing errors
 
 
 class PricingStep extends StatefulWidget {

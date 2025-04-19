@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
 
 // --- Base State Class ---
 /// Base abstract class for all states related to the ServiceProviderBloc.

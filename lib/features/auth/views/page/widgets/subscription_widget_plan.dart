@@ -3,7 +3,7 @@ import 'package:flutter/services.dart'; // For input formatters
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Adjust path if needed
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
 
 class SubscriptionPlansWidget extends StatefulWidget {
   final List<SubscriptionPlan>? initialPlans;

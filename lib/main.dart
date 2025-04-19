@@ -4,8 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
 import 'package:shamil_web_app/controllers/registration_controller.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart';
-import 'package:shamil_web_app/feature/auth/views/page/registration_flow.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
+import 'package:shamil_web_app/features/auth/views/page/registration_flow.dart';
 import 'package:shamil_web_app/firebase_options.dart';
 
 Future<void> main() async {

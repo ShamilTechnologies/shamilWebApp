@@ -9,20 +9,20 @@ import 'package:file_selector/file_selector.dart';
 
 // Import Bloc, State, Event, Model
 // Ensure these paths are correct for your project structure
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
 // Ensure this path points to the file with the UPDATED events (service_provider_event_update_02 / service_provider_event_full_code_02)
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart';
 // Ensure this path points to the file with the UPDATED ServiceProviderModel (service_provider_model_fix_04 / service_provider_model_full_code_01)
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
 
 // Import UI utils
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 // Import the shared ModernUploadField
-import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart';
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart';
+import 'package:shamil_web_app/features/auth/views/page/widgets/modern_upload_field_widget.dart';
+import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart';
 // Import Cloudinary Service (Assuming static upload method or accessible instance)
 import 'package:shamil_web_app/cloudinary_service.dart';
 

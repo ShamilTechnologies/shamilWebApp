@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart'; // Needed for GeoPoint
 import 'package:equatable/equatable.dart';
 // Import the model and potentially other needed types
 // Ensure this path points to the file with the UPDATED ServiceProviderModel (service_provider_model_fix_04 / service_provider_model_full_code_01)
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
 
 // --- Base Event Class ---
 /// Base abstract class for all events processed by the ServiceProviderBloc.

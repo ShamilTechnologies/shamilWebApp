@@ -10,20 +10,20 @@ import 'package:intl/intl.dart'; // <-- ADDED for DateFormat
 import 'package:country_code_picker/country_code_picker.dart'; // <-- ADDED for phone prefix
 
 // Import Bloc, State, Event, Model
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart'; // Adjust path
 // Ensure this path points to the file with the UPDATED UploadAssetAndUpdateEvent
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart'; // Adjust path
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart'; // Adjust path
 // Ensure this path points to the file with the UPDATED ServiceProviderModel
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path (uses updated model)
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // Adjust path (uses updated model)
 
 // Import UI utils & Widgets
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Assuming templates defined here
 // Import the shared ModernUploadField (ensure path is correct)
-import 'package:shamil_web_app/feature/auth/views/page/widgets/modern_upload_field_widget.dart'; // Import the shared widget
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/page/widgets/modern_upload_field_widget.dart'; // Import the shared widget
+import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart'; // Adjust path
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart'; // For showing errors
 
 class PersonalIdStep extends StatefulWidget {

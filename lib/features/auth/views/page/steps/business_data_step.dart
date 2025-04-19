@@ -6,16 +6,16 @@ import 'package:flutter/services.dart'; // For input formatters
 import 'package:latlong2/latlong.dart'; // For LatLng object used by Map Picker
 
 // Import Bloc, State, Event, Model
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_bloc.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_event.dart';
-import 'package:shamil_web_app/feature/auth/views/bloc/service_provider_state.dart';
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart';
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
 
 // Import UI utils & Widgets
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
-import 'package:shamil_web_app/feature/auth/views/page/widgets/step_container.dart';
+import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart';
 // Import Helpers
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
 import 'package:shamil_web_app/core/functions/email_validate.dart';
@@ -27,7 +27,7 @@ import 'business_details_widgets/address_location_section.dart';
 import 'business_details_widgets/operations_section.dart';
 import 'business_details_widgets/services_offered_section.dart';
 // Import the new Map Picker Screen
-import 'package:shamil_web_app/feature/auth/views/page/widgets/map_picker_screen.dart'; // Adjust path
+import 'package:shamil_web_app/features/auth/views/page/widgets/map_picker_screen.dart'; // Adjust path
 
 // Import Constants (Move placeholders here)
 // import 'package:shamil_web_app/core/constants/constants.dart';

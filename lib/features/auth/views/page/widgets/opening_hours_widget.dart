@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
-import 'package:shamil_web_app/feature/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
+import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path if needed
 // Import AppColors if needed for styling disabled state
 // import 'package:shamil_web_app/core/utils/colors.dart';
