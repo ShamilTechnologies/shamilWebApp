@@ -1,14 +1,15 @@
 import 'dart:async'; // Required for Future
+import 'dart:typed_data'; // Required for Uint8List check
 
 import 'package:bloc/bloc.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:equatable/equatable.dart'; // Assuming base event/state use Equatable
-import 'package:shamil_web_app/cloudinary_service.dart';
 
 // --- Import Project Specific Files ---
-// Adjust paths based on your project structure (using suggested structure)
-import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
+// Adjust paths based on your project structure
+import 'package:shamil_web_app/cloudinary_service.dart';
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 // Import Event and State definitions (assuming they are in separate files in the same directory)
 import 'service_provider_event.dart';
 import 'service_provider_state.dart';
@@ -29,11 +30,13 @@ class ServiceProviderBloc
 
   /// Constructor: Initializes the BLoC and registers event handlers.
   ServiceProviderBloc() : super(ServiceProviderInitial()) {
-    // Register event handlers
+    // Register event handlers using the modern 'on' syntax
     on<LoadInitialData>(_onLoadInitialData);
     on<SubmitAuthDetailsEvent>(_onSubmitAuthDetails);
     on<CheckEmailVerificationStatusEvent>(_onCheckEmailVerificationStatus);
-    on<UpdateAndValidateStepData>(_onUpdateAndValidateStepData);
+    on<UpdateAndValidateStepData>(
+      _onUpdateAndValidateStepData,
+    ); // Handles all step data updates
     on<NavigateToStep>(_onNavigateToStep);
     on<UploadAssetAndUpdateEvent>(_onUploadAssetAndUpdate);
     on<RemoveAssetUrlEvent>(_onRemoveAssetUrl);
@@ -52,10 +55,6 @@ class ServiceProviderBloc
     LoadInitialData event,
     Emitter<ServiceProviderState> emit,
   ) async {
-    // --- FIX: Removed the 'if (state is ServiceProviderLoading) return;' check ---
-    // This allows LoadInitialData dispatched immediately after login/verification to proceed.
-    // The handlers themselves will emit Loading state if appropriate.
-
     // Only emit loading state when starting from the absolute initial state
     if (state is ServiceProviderInitial) {
       print(
@@ -66,6 +65,10 @@ class ServiceProviderBloc
       print(
         "ServiceProviderBloc [LoadInitial]: State is ${state.runtimeType}, proceeding without emitting Loading again initially.",
       );
+      // Optionally emit loading if coming from certain states like VerificationSuccess
+      if (state is ServiceProviderVerificationSuccess) {
+        emit(ServiceProviderLoading(message: "Loading registration data..."));
+      }
     }
 
     final user = _currentUser;
@@ -75,6 +78,7 @@ class ServiceProviderBloc
       print(
         "ServiceProviderBloc [LoadInitial]: No authenticated user. Starting at Step 0.",
       );
+      // Emit DataLoaded with an empty model for Step 0 UI
       emit(
         ServiceProviderDataLoaded(
           ServiceProviderModel.empty('temp_uid', 'temp_email'),
@@ -90,8 +94,10 @@ class ServiceProviderBloc
         "ServiceProviderBloc [LoadInitial]: User ${user.uid} authenticated. Reloading...",
       );
       await user.reload();
-      final freshUser = _auth.currentUser;
+      final freshUser =
+          _auth.currentUser; // Get the potentially updated user object
 
+      // Handle case where user becomes null after reload
       if (freshUser == null) {
         print(
           "ServiceProviderBloc [LoadInitial]: User became null after reload. Starting at Step 0.",
@@ -124,6 +130,7 @@ class ServiceProviderBloc
 
       if (docSnapshot.exists) {
         print("ServiceProviderBloc [LoadInitial]: Firestore document found.");
+        // Use the updated model's fromFirestore which handles bookableServices etc.
         final model = ServiceProviderModel.fromFirestore(docSnapshot);
 
         if (model.isRegistrationComplete) {
@@ -137,6 +144,7 @@ class ServiceProviderBloc
             ),
           );
         } else {
+          // Use the updated model's getter to determine where to resume
           final resumeStep = model.currentProgressStep;
           print(
             "ServiceProviderBloc [LoadInitial]: Registration incomplete. Resuming at step: $resumeStep",
@@ -144,20 +152,30 @@ class ServiceProviderBloc
           emit(ServiceProviderDataLoaded(model, resumeStep));
         }
       } else {
+        // First time login after email verification, or doc deleted? Start new registration.
         print(
           "ServiceProviderBloc [LoadInitial]: No Firestore document found. Starting new registration at Step 1.",
         );
+        // Use the updated model's empty factory
         final initialModel = ServiceProviderModel.empty(
           freshUser.uid,
           freshUser.email!,
         );
-        await _saveProviderData(initialModel, emit);
+        // Save this initial empty document to Firestore
+        await _saveProviderData(
+          initialModel,
+          emit,
+        ); // Uses updated _saveProviderData
 
+        // Check if saving caused an error before emitting DataLoaded
         if (state is! ServiceProviderError) {
-          emit(ServiceProviderDataLoaded(initialModel, 1));
+          emit(
+            ServiceProviderDataLoaded(initialModel, 1),
+          ); // Start at Step 1 (Personal Data)
         }
       }
     } on FirebaseAuthException catch (e) {
+      // Handle specific Firebase Auth errors during reload
       print(
         "ServiceProviderBloc [LoadInitial]: FirebaseAuthException during user.reload: ${e.code}",
       );
@@ -167,6 +185,7 @@ class ServiceProviderBloc
         ),
       );
     } catch (e, s) {
+      // Handle generic errors (Firestore read, model parsing, etc.)
       print("ServiceProviderBloc [LoadInitial]: Generic error: $e\n$s");
       emit(
         ServiceProviderError(
@@ -181,13 +200,12 @@ class ServiceProviderBloc
     SubmitAuthDetailsEvent event,
     Emitter<ServiceProviderState> emit,
   ) async {
-    emit(ServiceProviderLoading()); // Emit Loading state *before* async calls
+    emit(ServiceProviderLoading(message: "Authenticating..."));
     try {
       final signInMethods = await _auth.fetchSignInMethodsForEmail(event.email);
       print(
         'ServiceProviderBloc [SubmitAuth]: Sign In Methods for ${event.email}: $signInMethods',
       );
-
       if (signInMethods.isEmpty) {
         await _performRegistration(event.email, event.password, emit);
       } else {
@@ -216,7 +234,6 @@ class ServiceProviderBloc
   ) async {
     print("ServiceProviderBloc [Register]: Attempting registration: $email");
     try {
-      // State is already Loading from _onSubmitAuthDetails
       final userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
@@ -224,7 +241,6 @@ class ServiceProviderBloc
       final User? user = userCredential.user;
       if (user == null)
         throw Exception("Firebase user creation returned null.");
-
       print(
         "ServiceProviderBloc [Register]: User created: ${user.uid}. Sending verification email.",
       );
@@ -237,11 +253,12 @@ class ServiceProviderBloc
         );
       }
 
+      // Use the updated model's empty factory
       final initialModel = ServiceProviderModel.empty(user.uid, user.email!);
       await _saveProviderData(
         initialModel,
         emit,
-      ); // This might emit ServiceProviderError
+      ); // Uses updated _saveProviderData
 
       if (state is! ServiceProviderError) {
         print(
@@ -254,11 +271,7 @@ class ServiceProviderBloc
         print(
           "ServiceProviderBloc [Register]: Registration failed (email-already-in-use), attempting login fallback...",
         );
-        await _performLogin(
-          email,
-          password,
-          emit,
-        ); // Fallback keeps Loading state
+        await _performLogin(email, password, emit);
       } else {
         print(
           "ServiceProviderBloc [Register]: FirebaseAuthException: ${e.code}",
@@ -283,19 +296,18 @@ class ServiceProviderBloc
   ) async {
     print("ServiceProviderBloc [Login]: Attempting login: $email");
     try {
-      // State is already Loading from _onSubmitAuthDetails or _performRegistration fallback
       final userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
       final User? user = userCredential.user;
       if (user == null) throw Exception("Firebase login returned null user.");
-
       print(
         "ServiceProviderBloc [Login]: Login successful: ${user.uid}. Triggering LoadInitialData.",
       );
-      // Dispatch LoadInitialData. The state remains Loading until _onLoadInitialData completes.
-      add(LoadInitialData());
+      add(
+        LoadInitialData(),
+      ); // Triggers check for verification and data loading
     } on FirebaseAuthException catch (e) {
       print("ServiceProviderBloc [Login]: FirebaseAuthException: ${e.code}");
       emit(ServiceProviderError(_handleAuthError(e)));
@@ -316,7 +328,6 @@ class ServiceProviderBloc
   ) async {
     final user = _currentUser;
     if (user == null || state is! ServiceProviderAwaitingVerification) return;
-
     print(
       "ServiceProviderBloc [VerifyCheck]: Checking email status for ${user.email}...",
     );
@@ -327,13 +338,13 @@ class ServiceProviderBloc
         add(LoadInitialData());
         return;
       }
-
       if (refreshedUser.emailVerified) {
         print(
           "ServiceProviderBloc [VerifyCheck]: Email verified. Emitting VerificationSuccess.",
         );
-        emit(ServiceProviderVerificationSuccess());
-        // UI Layer MUST react to VerificationSuccess by dispatching LoadInitialData
+        emit(
+          ServiceProviderVerificationSuccess(),
+        ); // UI layer should dispatch LoadInitialData
       } else {
         print("ServiceProviderBloc [VerifyCheck]: Email still not verified.");
       }
@@ -344,14 +355,15 @@ class ServiceProviderBloc
     }
   }
 
-  /// Handles updates from step widgets. Saves data and re-emits DataLoaded.
+  /// Handles updates from step widgets using the UpdateAndValidateStepData pattern.
+  /// Applies updates locally and saves data. Does NOT emit DataLoaded here.
   Future<void> _onUpdateAndValidateStepData(
     UpdateAndValidateStepData event,
     Emitter<ServiceProviderState> emit,
   ) async {
     if (state is! ServiceProviderDataLoaded) {
       print(
-        "ServiceProviderBloc [UpdateData]: Warning - Event received but state is not DataLoaded.",
+        "ServiceProviderBloc [UpdateData]: Warning - Event ${event.runtimeType} received but state is not DataLoaded.",
       );
       return;
     }
@@ -361,23 +373,24 @@ class ServiceProviderBloc
     );
 
     try {
+      // Apply the updates from the specific event (which uses the updated model structure)
       final updatedModel = event.applyUpdates(currentState.model);
-      print("ServiceProviderBloc [UpdateData]: Updates applied locally.");
+      print(
+        "ServiceProviderBloc [UpdateData]: Updates applied locally to model.",
+      );
+
+      // Save the updated model (which uses the updated toMap)
       await _saveProviderData(updatedModel, emit);
 
-      if (state is! ServiceProviderError) {
-        print(
-          "ServiceProviderBloc [UpdateData]: Save successful. Re-emitting DataLoaded for step ${currentState.currentStep}.",
-        );
-        emit(ServiceProviderDataLoaded(updatedModel, currentState.currentStep));
-      }
+      // ** No emit here - Navigation is handled by NavigateToStep **
     } catch (e, s) {
       print(
-        "ServiceProviderBloc [UpdateData]: Error applying/saving updates: $e\n$s",
+        "ServiceProviderBloc [UpdateData]: Error applying/saving updates for ${event.runtimeType}: $e\n$s",
       );
       emit(
         ServiceProviderError("Failed to process step data: ${e.toString()}"),
       );
+      emit(currentState); // Re-emit previous state on error
     }
   }
 
@@ -390,23 +403,22 @@ class ServiceProviderBloc
       print(
         "ServiceProviderBloc [Navigate]: Cannot navigate, state is not DataLoaded.",
       );
-      add(LoadInitialData()); // Attempt to recover state
+      add(LoadInitialData());
       return;
     }
     final currentState = state as ServiceProviderDataLoaded;
     final targetStep = event.targetStep;
-    const totalSteps = 5; // 0-4
-
+    const totalSteps = 5;
     if (targetStep < 0 || targetStep >= totalSteps) {
       print(
         "ServiceProviderBloc [Navigate]: Error - Invalid target step $targetStep",
       );
       return;
     }
-
     print(
       "ServiceProviderBloc [Navigate]: Navigating from step ${currentState.currentStep} to $targetStep",
     );
+    // Emit DataLoaded with the *current* model data but the *new* step index
     emit(ServiceProviderDataLoaded(currentState.model, targetStep));
   }
 
@@ -420,7 +432,11 @@ class ServiceProviderBloc
         "ServiceProviderBloc [Upload]: Cannot upload, state not DataLoaded.",
       );
       if (state is! ServiceProviderError)
-        emit(const ServiceProviderError("Cannot upload file now."));
+        emit(
+          const ServiceProviderError(
+            "Cannot upload file now. Please try again.",
+          ),
+        );
       return;
     }
     final currentState = state as ServiceProviderDataLoaded;
@@ -428,30 +444,41 @@ class ServiceProviderBloc
     final user = _currentUser;
     if (user == null) {
       if (state is! ServiceProviderError)
-        emit(const ServiceProviderError("Authentication error during upload."));
+        emit(
+          const ServiceProviderError(
+            "Authentication error during upload. Please log in again.",
+          ),
+        );
       return;
     }
 
     print(
       "ServiceProviderBloc [Upload]: Uploading asset for field '${event.targetField}'...",
     );
-    // UI should show its own loading indicator for the specific upload field
     try {
       String folder = 'serviceProviders/${user.uid}/${event.assetTypeFolder}';
+      // Ensure CloudinaryService is correctly implemented
       final imageUrl = await CloudinaryService.uploadFile(
         event.assetData,
         folder: folder,
       );
-
       if (imageUrl == null || imageUrl.isEmpty)
-        throw Exception("Upload service returned empty URL.");
+        throw Exception("Upload service returned empty or null URL.");
       print("ServiceProviderBloc [Upload]: Upload successful. URL: $imageUrl");
 
+      // Apply updates using the event's method (which uses the updated model structure)
       final updatedModel = event.applyUpdatesToModel(currentModel, imageUrl);
-      print("ServiceProviderBloc [Upload]: Model updated with URL.");
+      print(
+        "ServiceProviderBloc [Upload]: Model updated with URL and optional data.",
+      );
 
-      await _saveProviderData(updatedModel, emit);
+      // Save the updated model
+      await _saveProviderData(
+        updatedModel,
+        emit,
+      ); // Uses updated _saveProviderData
 
+      // If saving didn't cause an error, emit the updated DataLoaded state
       if (state is! ServiceProviderError) {
         print(
           "ServiceProviderBloc [Upload]: Save successful. Emitting DataLoaded.",
@@ -459,13 +486,15 @@ class ServiceProviderBloc
         emit(ServiceProviderDataLoaded(updatedModel, currentState.currentStep));
       }
     } catch (e, s) {
-      print("ServiceProviderBloc [Upload]: Error: $e\n$s");
+      print(
+        "ServiceProviderBloc [Upload]: Error uploading/saving asset for ${event.targetField}: $e\n$s",
+      );
       emit(
         ServiceProviderError(
           "Failed to upload ${event.targetField}: ${e.toString()}",
         ),
       );
-      emit(currentState); // Re-emit previous state after error
+      emit(currentState); // Re-emit previous state on error
     }
   }
 
@@ -479,18 +508,28 @@ class ServiceProviderBloc
         "ServiceProviderBloc [RemoveAsset]: Cannot remove, state not DataLoaded.",
       );
       if (state is! ServiceProviderError)
-        emit(const ServiceProviderError("Cannot remove file now."));
+        emit(
+          const ServiceProviderError(
+            "Cannot remove file now. Please try again.",
+          ),
+        );
       return;
     }
     final currentState = state as ServiceProviderDataLoaded;
     print(
       "ServiceProviderBloc [RemoveAsset]: Removing asset for field: ${event.targetField}",
     );
-
     try {
+      // Apply removal using the event's method (which uses the updated model structure)
       final updatedModel = event.applyRemoval(currentState.model);
-      await _saveProviderData(updatedModel, emit);
 
+      // Save the updated model
+      await _saveProviderData(
+        updatedModel,
+        emit,
+      ); // Uses updated _saveProviderData
+
+      // If saving didn't cause an error, emit the updated DataLoaded state
       if (state is! ServiceProviderError) {
         print(
           "ServiceProviderBloc [RemoveAsset]: Save successful. Emitting DataLoaded.",
@@ -499,7 +538,7 @@ class ServiceProviderBloc
       }
     } catch (e, s) {
       print(
-        "ServiceProviderBloc [RemoveAsset]: Error removing/saving asset: $e\n$s",
+        "ServiceProviderBloc [RemoveAsset]: Error removing/saving asset for ${event.targetField}: $e\n$s",
       );
       emit(ServiceProviderError("Failed to remove asset: ${e.toString()}"));
       emit(currentState); // Re-emit previous state on error
@@ -516,36 +555,47 @@ class ServiceProviderBloc
         "ServiceProviderBloc [CompleteReg]: Cannot complete, state not DataLoaded.",
       );
       if (state is! ServiceProviderError)
-        emit(const ServiceProviderError("Cannot complete registration now."));
+        emit(
+          const ServiceProviderError(
+            "Cannot complete registration now. Invalid state.",
+          ),
+        );
       return;
     }
     final currentState = state as ServiceProviderDataLoaded;
     print(
       "ServiceProviderBloc [CompleteReg]: Completing registration for UID: ${event.finalModel.uid}",
     );
-    emit(ServiceProviderLoading());
-
+    emit(ServiceProviderLoading(message: "Finalizing registration..."));
     try {
+      // Use the updated model's copyWith
       final completedModel = event.finalModel.copyWith(
         isRegistrationComplete: true,
       );
-      await _saveProviderData(completedModel, emit);
+
+      // Save the final model state
+      await _saveProviderData(
+        completedModel,
+        emit,
+      ); // Uses updated _saveProviderData
 
       if (state is! ServiceProviderError) {
-        await Future.delayed(const Duration(milliseconds: 200));
         print(
           "ServiceProviderBloc [CompleteReg]: Registration complete. Emitting ServiceProviderRegistrationComplete.",
         );
-        // *** THIS STATE TRIGGERS DASHBOARD NAVIGATION IN THE UI LISTENER ***
-        emit(ServiceProviderRegistrationComplete());
+        emit(ServiceProviderRegistrationComplete()); // Final success state
       } else {
-        print("ServiceProviderBloc [CompleteReg]: Final save failed.");
+        print(
+          "ServiceProviderBloc [CompleteReg]: Final save failed. Reverting to previous state.",
+        );
         emit(
           ServiceProviderDataLoaded(event.finalModel, 4),
-        ); // Revert to last step UI
+        ); // Revert to Assets step
       }
     } catch (e, s) {
-      print("ServiceProviderBloc [CompleteReg]: Error: $e\n$s");
+      print(
+        "ServiceProviderBloc [CompleteReg]: Error completing registration: $e\n$s",
+      );
       emit(
         ServiceProviderError(
           "Failed to finalize registration: ${e.toString()}",
@@ -553,7 +603,7 @@ class ServiceProviderBloc
       );
       emit(
         ServiceProviderDataLoaded(event.finalModel, 4),
-      ); // Revert to last step UI
+      ); // Revert to Assets step
     }
   }
 
@@ -570,15 +620,12 @@ class ServiceProviderBloc
     final user = _currentUser;
     if (user == null) {
       if (state is! ServiceProviderError) {
-        emit(
-          const ServiceProviderError(
-            "User became unauthenticated. Cannot save progress.",
-          ),
-        );
+        emit(const ServiceProviderError("User unauthenticated. Cannot save."));
       }
       return;
     }
     try {
+      // Ensure core IDs are correct
       final modelToSave = model.copyWith(
         uid: user.uid,
         ownerUid:
@@ -590,13 +637,12 @@ class ServiceProviderBloc
                 ? (user.email ?? model.email)
                 : model.email,
       );
-
-      print(
-        "ServiceProviderBloc [_saveData]: Saving data to Firestore doc: ${user.uid}",
-      );
+      // Use the updated model's toMap method
+      final mapToSave = modelToSave.toMap();
+      print("Data being saved to Firestore: $mapToSave"); // Log data
       await _providersCollection
           .doc(user.uid)
-          .set(modelToSave.toMap(), SetOptions(merge: true));
+          .set(mapToSave, SetOptions(merge: true));
       print("ServiceProviderBloc [_saveData]: Firestore save successful.");
     } catch (e, s) {
       print(
@@ -609,33 +655,30 @@ class ServiceProviderBloc
   /// Converts Firebase Auth errors into user-friendly messages.
   String _handleAuthError(FirebaseAuthException e) {
     String message = "An authentication error occurred.";
-    print(
-      "ServiceProviderBloc [_handleAuthError]: Code: ${e.code}, Message: ${e.message}",
-    );
+    print("Bloc AuthError: Code: ${e.code}, Msg: ${e.message}");
     switch (e.code) {
       case 'weak-password':
-        message = "The password provided is too weak (at least 6 characters).";
+        message = "Password too weak (min 6 chars).";
         break;
       case 'email-already-in-use':
-        message = "An account already exists for this email address.";
+        message = "Email already in use.";
         break;
       case 'invalid-email':
-        message = "The email address format is not valid.";
+        message = "Invalid email format.";
         break;
       case 'operation-not-allowed':
-        message = "Email/password accounts are not enabled.";
+        message = "Email/password auth not enabled.";
         break;
       case 'user-not-found':
       case 'wrong-password':
       case 'invalid-credential':
-        message = "Incorrect email or password provided.";
+        message = "Incorrect email or password.";
         break;
       case 'user-disabled':
-        message = "This user account has been disabled by an administrator.";
+        message = "Account disabled.";
         break;
       case 'too-many-requests':
-        message =
-            "Too many unsuccessful login attempts. Please try again later or reset your password.";
+        message = "Too many attempts. Try later.";
         break;
       default:
         message = e.message ?? message;
@@ -645,7 +688,9 @@ class ServiceProviderBloc
   }
 
   /// Optional internal validation helper (can be removed if validation is purely in UI steps).
+  /// Uses the validation methods defined within ServiceProviderModel.
   bool _validateStep(int stepIndex, ServiceProviderModel model) {
+    // Uses updated validation methods in model
     try {
       switch (stepIndex) {
         case 0:
@@ -662,7 +707,7 @@ class ServiceProviderBloc
           return false;
       }
     } catch (e) {
-      print("Error during internal step validation ($stepIndex): $e");
+      print("Internal validation error ($stepIndex): $e");
       return false;
     }
   }

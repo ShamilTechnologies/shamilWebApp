@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
-import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 
 // --- 1. Provider Info Card ---
 /// Displays basic information about the logged-in service provider.

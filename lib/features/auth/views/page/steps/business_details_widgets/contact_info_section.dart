@@ -1,38 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For input formatters
+import 'package:shamil_web_app/core/constants/registration_constants.dart';
 
 // Import UI utils & Widgets (adjust paths as needed)
-import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
-import 'package:shamil_web_app/core/utils/colors.dart'; // Needed for InputDecoration helper
-import 'package:shamil_web_app/core/functions/email_validate.dart'; // For email validation
+import 'package:shamil_web_app/core/functions/email_validate.dart';
 
-// Typedef for helper functions passed from parent
-typedef InputDecorationBuilder = InputDecoration Function({required String label, bool enabled, String? hint});
-typedef SectionHeaderBuilder = Widget Function(String title);
-typedef UrlValidator = bool Function(String url);
 
-/// Section for Contact Information (Phone, Email, Website).
+/// Renders the form fields for business contact information.
 class ContactInfoSection extends StatelessWidget {
   final TextEditingController phoneController;
   final TextEditingController emailController;
   final TextEditingController websiteController;
   final bool enabled;
-  // Helper functions passed from parent state
-  final InputDecorationBuilder inputDecorationBuilder;
+  final UrlValidator urlValidator; // Use typedef for validator function
+  // Accept builder functions matching typedefs
   final SectionHeaderBuilder sectionHeaderBuilder;
-  final UrlValidator urlValidator;
-
+  final InputDecorationBuilder inputDecorationBuilder; // Added for consistency
 
   const ContactInfoSection({
-    super.key, // Add key
+    super.key,
     required this.phoneController,
     required this.emailController,
     required this.websiteController,
     required this.enabled,
-    required this.inputDecorationBuilder, // Require helpers
-    required this.sectionHeaderBuilder, // Require helpers
-    required this.urlValidator, // Require helpers
+    required this.urlValidator, // Require validator function
+    required this.sectionHeaderBuilder, // Require builder function
+    required this.inputDecorationBuilder, // Require builder function
   });
 
   @override
@@ -40,38 +34,54 @@ class ContactInfoSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        sectionHeaderBuilder("Contact Information"), // Use helper from parent
-        GlobalTextFormField(
+        // Use the passed builder function for the header
+        sectionHeaderBuilder("Contact Information"),
+
+        // Business Contact Phone
+        PhoneTextFormField( // Use Phone template
           labelText: "Business Contact Phone*",
-          hintText: "Enter primary contact number",
-          keyboardType: TextInputType.phone,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          hintText: "Enter main contact number",
           controller: phoneController,
           enabled: enabled,
-          validator: (value) => (value == null || value.trim().isEmpty) ? 'Contact phone is required' : null,
+          // Assumes PhoneTextFormField uses GlobalTextFormField internally
+          // Default validator ensures non-empty and basic format
         ),
         const SizedBox(height: 20),
-        GlobalTextFormField(
-          labelText: "Business Contact Email", // Optional?
-          hintText: "Enter contact email address",
-          keyboardType: TextInputType.emailAddress,
+
+        // Business Contact Email
+        EmailTextFormField( // Use Email template
+          labelText: "Business Contact Email*",
+          hintText: "Enter primary contact email",
           controller: emailController,
           enabled: enabled,
-          validator: (value) => (value != null && value.isNotEmpty && !emailValidate(value)) ? 'Please enter a valid email address' : null,
+           // Assumes EmailTextFormField uses GlobalTextFormField internally
+           // Pass specific validator if needed, otherwise uses default
+           validator: (value) { // Example of passing specific validator
+              if (value == null || value.trim().isEmpty) { return 'Business email is required'; }
+              if (!emailValidate(value)) { return 'Please enter a valid business email'; }
+              return null;
+           },
         ),
         const SizedBox(height: 20),
-        GlobalTextFormField(
+
+        // Website (Optional)
+        GlobalTextFormField( // Use base template as it's optional
           labelText: "Website (Optional)",
-          hintText: "https://yourbusiness.com",
-          keyboardType: TextInputType.url,
+          hintText: "e.g., https://www.yourbusiness.com",
           controller: websiteController,
           enabled: enabled,
-          validator: (value) { // Use URL validator helper passed from parent
-              if (value != null && value.isNotEmpty && !urlValidator(value)) {
-                  return 'Please enter a valid website URL';
-              }
-              return null;
+          keyboardType: TextInputType.url,
+          prefixIcon: const Icon(Icons.language_outlined),
+          validator: (value) { // Custom validation for URL format using passed function
+             if (value != null && value.isNotEmpty && !urlValidator(value)) {
+                return 'Please enter a valid website URL (starting with http/https)';
+             }
+             return null; // Allow empty or valid URL
           },
+          textInputAction: TextInputAction.next,
+          // If needed, override decoration using inputDecorationBuilder,
+          // but GlobalTextFormField has its own internal styling.
+          // decoration: inputDecorationBuilder(label: "Website (Optional)", enabled: enabled, hint: "e.g., https://..."),
         ),
       ],
     );

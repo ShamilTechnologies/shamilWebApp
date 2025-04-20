@@ -4,7 +4,6 @@ part of 'dashboard_bloc.dart'; // Use part of directive for BLoC file
 // Adjust path if your models file is located elsewhere
 // Import the ServiceProviderModel as well
 
-
 //----------------------------------------------------------------------------//
 // Dashboard States                                                           //
 //----------------------------------------------------------------------------//
@@ -25,7 +24,7 @@ class DashboardLoading extends DashboardState {}
 
 /// State indicating data was successfully loaded. UI can display the data.
 class DashboardLoadSuccess extends DashboardState {
-  final ServiceProviderModel providerModel;
+  final ServiceProviderModel providerInfo; // Changed name for clarity
   // Use actual data models imported from dashboard_models.dart
   final List<Subscription> subscriptions;
   final List<Reservation> reservations;
@@ -33,7 +32,7 @@ class DashboardLoadSuccess extends DashboardState {
   final DashboardStats stats;
 
   const DashboardLoadSuccess({
-    required this.providerModel,
+    required this.providerInfo, // Changed name
     required this.subscriptions,
     required this.reservations,
     required this.accessLogs,
@@ -42,14 +41,14 @@ class DashboardLoadSuccess extends DashboardState {
 
   /// Creates a copy of the current state with optional updated values.
   DashboardLoadSuccess copyWith({
-    ServiceProviderModel? providerModel,
+    ServiceProviderModel? providerInfo, // Changed name
     List<Subscription>? subscriptions,
     List<Reservation>? reservations,
     List<AccessLog>? accessLogs,
     DashboardStats? stats,
   }) {
     return DashboardLoadSuccess(
-      providerModel: providerModel ?? this.providerModel,
+      providerInfo: providerInfo ?? this.providerInfo, // Changed name
       subscriptions: subscriptions ?? this.subscriptions,
       reservations: reservations ?? this.reservations,
       accessLogs: accessLogs ?? this.accessLogs,
@@ -59,12 +58,18 @@ class DashboardLoadSuccess extends DashboardState {
 
   @override
   List<Object?> get props => [
-        providerModel,
+        providerInfo, // Changed name
         subscriptions,
         reservations,
         accessLogs,
         stats
       ];
+
+  // Optional: Add a toString for easier debugging
+  @override
+  String toString() {
+    return 'DashboardLoadSuccess(providerInfo: ${providerInfo.businessName}, subscriptions: ${subscriptions.length}, reservations: ${reservations.length}, accessLogs: ${accessLogs.length}, stats: $stats)';
+  }
 }
 
 /// State indicating an error occurred during data loading. UI should show an error message.
@@ -75,4 +80,7 @@ class DashboardLoadFailure extends DashboardState {
 
   @override
   List<Object?> get props => [errorMessage];
+
+  @override
+  String toString() => 'DashboardLoadFailure(errorMessage: $errorMessage)';
 }

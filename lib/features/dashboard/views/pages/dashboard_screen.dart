@@ -7,18 +7,16 @@ import 'package:intl/intl.dart'; // Needed for formatting in this file now
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 // Import Auth/Provider Model
-import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/dashboard_widgets.dart';
-// Dashboard Specific Imports
-// !! Ensure these point to the correct files from previous steps !!
 
 //----------------------------------------------------------------------------//
-// Dashboard Screen Widget (Tailored Layout V2)                               //
+// Dashboard Screen Widget (Smart Combination Layout)                         //
 // - Provides BLoC & builds UI based on state.                                //
-// - Uses tailored widgets and placeholders relevant to service providers.    //
+// - Conditionally renders sections based on ServiceProviderModel.pricingModel//
+// - Passes pricingModel to sections for internal tailoring.                  //
 // - Includes placeholder sidebar and header actions.                         //
-// - Fixed avatar overflow using Stack.                                       //
 //----------------------------------------------------------------------------//
 
 class DashboardScreen extends StatelessWidget {
@@ -26,32 +24,27 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Provide the BLoC at the screen level
+    // Provide the BLoC at the screen level (Consider providing higher up if needed)
     return BlocProvider(
-      // Ensure DashboardBloc exists and LoadDashboardData event is defined
       create: (context) => DashboardBloc()..add(LoadDashboardData()),
       child: Scaffold(
-        // No AppBar in this design
-        backgroundColor: AppColors.lightGrey, // Overall background for the screen
+        backgroundColor: AppColors.lightGrey, // Overall background
         body: Row( // Main structure: Sidebar | Content
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // --- Sidebar Placeholder ---
-            // TODO: Implement a real NavigationRail or custom sidebar widget here.
-            // This requires state management for selected items and navigation logic.
-            _buildSidebarPlaceholder(), // Extracted to helper method below
+            // TODO: Implement a real NavigationRail or custom sidebar widget.
+            // Pass the actual pricingModel from the state to conditionally show items.
+            _buildSidebarPlaceholder(), // Placeholder for now
 
             // --- Main Content Area ---
             Expanded(
               child: BlocConsumer<DashboardBloc, DashboardState>(
                 listener: (context, state) {
-                  // Optional: Handle side-effects like showing snackbars on error/success
+                  // Optional: Handle side-effects
                   if (state is DashboardLoadFailure) {
-                    // Example: Show error snackbar (consider if needed with error UI)
-                    // ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    //   content: Text('Error: ${state.errorMessage}'),
-                    //   backgroundColor: AppColors.redColor,
-                    // ));
+                    // Maybe show snackbar, though error UI is also shown
+                    print("Dashboard Listener: Load Failure - ${state.errorMessage}");
                   }
                 },
                 builder: (context, state) {
@@ -61,7 +54,6 @@ class DashboardScreen extends StatelessWidget {
                   }
                   // --- Error State ---
                   else if (state is DashboardLoadFailure) {
-                    // Use helper to build error UI
                     return _buildErrorStateUI(context, state.errorMessage);
                   }
                   // --- Success State ---
@@ -71,7 +63,6 @@ class DashboardScreen extends StatelessWidget {
                   }
                   // --- Fallback ---
                   else {
-                    // Handle any unexpected states
                     return const Center(child: Text("An unexpected state occurred. Please refresh."));
                   }
                 },
@@ -85,22 +76,29 @@ class DashboardScreen extends StatelessWidget {
 
   /// Builds the main content area layout for the success state using Slivers.
   Widget _buildSuccessLayoutUI(BuildContext context, DashboardLoadSuccess state) {
-    // Determine pricing model for conditional rendering
-    final pricingModel = state.providerModel.pricingModel;
+    // Get provider model and pricing model for conditional rendering
+    final ServiceProviderModel providerModel = state.providerInfo; // Use correct state field name
+    final PricingModel pricingModel = providerModel.pricingModel;
+
+    // Determine which sections to show
+    bool showSubscriptions = pricingModel == PricingModel.subscription || pricingModel == PricingModel.hybrid;
+    bool showReservations = pricingModel == PricingModel.reservation || pricingModel == PricingModel.hybrid;
+    bool showSchedule = pricingModel == PricingModel.reservation || pricingModel == PricingModel.hybrid || pricingModel == PricingModel.other; // Example logic
+    bool showCapacity = pricingModel == PricingModel.subscription || pricingModel == PricingModel.reservation || pricingModel == PricingModel.hybrid; // Example logic
 
     return RefreshIndicator( // Enable pull-to-refresh
       color: AppColors.primaryColor,
       onRefresh: () async {
-         // Dispatch refresh event to the BLoC
          context.read<DashboardBloc>().add(RefreshDashboardData());
          // Wait until the loading state is finished before completing the refresh animation
+         // This ensures the indicator stays until data is potentially updated.
          await context.read<DashboardBloc>().stream.firstWhere((s) => s is! DashboardLoading);
       },
       child: CustomScrollView( // Use CustomScrollView for sliver-based layout
         slivers: [
           // --- Header Area Sliver ---
           SliverPadding(
-            padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 24.0, bottom: 8.0), // Padding for header section
+            padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 24.0, bottom: 8.0),
             sliver: SliverToBoxAdapter(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -110,74 +108,27 @@ class DashboardScreen extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Text("Dashboard Overview", style: getTitleStyle(fontSize: 24, fontWeight: FontWeight.bold)), // Main screen title
+                      Text("Dashboard Overview", style: getTitleStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                       // --- Header Actions Placeholder ---
                       // TODO: Implement functional Search, User Avatars, Filters
                       Row(
                         children: [
                           // Placeholder Search Field
-                          SizedBox(
-                             width: 200, height: 36,
-                             child: TextField(
-                                style: getbodyStyle(fontSize: 13), // Define text style
-                                decoration: InputDecoration(
-                                   hintText: "Search Members/Bookings...",
-                                   prefixIcon: Icon(Icons.search, size: 18, color: AppColors.mediumGrey),
-                                   contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 10),
-                                   filled: true, fillColor: AppColors.white, // White background for search
-                                   border: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.lightGrey)),
-                                   enabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.lightGrey)),
-                                   focusedBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.primaryColor)), // Highlight on focus
-                                   hintStyle: getbodyStyle(color: AppColors.mediumGrey, fontSize: 13),
-                                ),
-                             )
-                          ),
+                          SizedBox( width: 200, height: 36, child: TextField( style: getbodyStyle(fontSize: 13), decoration: InputDecoration( hintText: "Search...", prefixIcon: Icon(Icons.search, size: 18, color: AppColors.mediumGrey), contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 10), filled: true, fillColor: AppColors.white, border: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.lightGrey)), enabledBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.lightGrey)), focusedBorder: OutlineInputBorder( borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppColors.primaryColor)), hintStyle: getbodyStyle(color: AppColors.mediumGrey, fontSize: 13),),),),
                           const SizedBox(width: 16),
-
-                          // --- FIXED: Use Stack for Overlapping Avatars ---
-                          SizedBox(
-                            width: 56, // Calculated width for 3 avatars with overlap
-                            height: 32,
-                            child: Stack(
-                              clipBehavior: Clip.none, // Allow overflow for add button if needed
-                              children: [
-                                // Position avatars from right to left for correct overlap visual
-                                Positioned( left: 32, child: _buildUserAvatar("M", Colors.pink)), // Example Avatar 3
-                                Positioned( left: 16, child: _buildUserAvatar("E", Colors.blue)), // Example Avatar 2
-                                Positioned( left: 0, child: _buildUserAvatar("A", Colors.orange)), // Example Avatar 1
-                                // Optional Add button positioned next to the stack
-                                Positioned(
-                                   left: 52, // Adjust position based on final layout
-                                   top: 4,
-                                   child: SizedBox(width: 24, height: 24, child: IconButton(onPressed: (){/* TODO: Add user/staff action */}, icon: Icon(Icons.add_circle_outline, size: 20, color: AppColors.mediumGrey), padding: EdgeInsets.zero, constraints: BoxConstraints()))
-                                ),
-                              ],
-                            ),
-                          ),
-                          // --- End Stack Fix ---
-
+                          // Placeholder Avatars
+                          SizedBox( width: 56, height: 32, child: Stack( clipBehavior: Clip.none, children: [ Positioned( left: 32, child: _buildUserAvatar("M", Colors.pink)), Positioned( left: 16, child: _buildUserAvatar("E", Colors.blue)), Positioned( left: 0, child: _buildUserAvatar("A", Colors.orange)), Positioned( left: 52, top: 4, child: SizedBox(width: 24, height: 24, child: IconButton(onPressed: (){/* TODO: Add user/staff action */}, icon: Icon(Icons.add_circle_outline, size: 20, color: AppColors.mediumGrey), padding: EdgeInsets.zero, constraints: BoxConstraints())) ), ], ), ),
                           const SizedBox(width: 16),
                           // Placeholder Timeframe Filter Button
-                          OutlinedButton.icon(
-                             icon: Icon(Icons.calendar_today_outlined, size: 14),
-                             label: Text("This Month"), // Example default text
-                             onPressed: () { /* TODO: Implement Date Range Picker functionality */ },
-                             style: OutlinedButton.styleFrom(
-                               foregroundColor: AppColors.secondaryColor,
-                               side: BorderSide(color: AppColors.lightGrey),
-                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                               padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                               textStyle: getSmallStyle(),
-                             ),
-                          ),
+                          OutlinedButton.icon( icon: Icon(Icons.calendar_today_outlined, size: 14), label: Text("This Month"), onPressed: () { /* TODO: Implement Date Range Picker */ }, style: OutlinedButton.styleFrom( foregroundColor: AppColors.secondaryColor, side: BorderSide(color: AppColors.lightGrey), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)), padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6), textStyle: getSmallStyle(), ), ),
                         ],
                       )
                     ],
                   ),
                   const SizedBox(height: 16),
-                  // Provider Info Header Widget (from dashboard_widgets.dart)
-                  ProviderInfoHeader(providerModel: state.providerModel),
-                  const Divider(height: 16, thickness: 1, color: AppColors.lightGrey), // Divider after header section
+                  // Provider Info Header Widget
+                  ProviderInfoHeader(providerModel: providerModel), // Pass the loaded model
+                  const Divider(height: 16, thickness: 1, color: AppColors.lightGrey),
                 ],
               ),
             ),
@@ -185,57 +136,58 @@ class DashboardScreen extends StatelessWidget {
 
           // --- Main Grid Content Area ---
           SliverPadding(
-            padding: const EdgeInsets.only(left: 24.0, right: 24.0, bottom: 24.0, top: 8.0), // Padding around the grid
-            sliver: SliverLayoutBuilder( // Use LayoutBuilder for responsive grid adjustments
+            padding: const EdgeInsets.only(left: 24.0, right: 24.0, bottom: 24.0, top: 8.0),
+            sliver: SliverLayoutBuilder(
               builder: (context, constraints) {
                  // Determine grid columns and aspect ratio based on available width
-                 int crossAxisCount = 4; double childAspectRatio = 1.3; // Default for wide screens
-                 if (constraints.crossAxisExtent < 650) { crossAxisCount = 1; childAspectRatio = 1.6; }
-                 else if (constraints.crossAxisExtent < 950) { crossAxisCount = 2; childAspectRatio = 1.2; }
-                 else if (constraints.crossAxisExtent < 1300) { crossAxisCount = 3; childAspectRatio = 1.2; }
+                 int crossAxisCount = 4; double childAspectRatio = 1.3; // Default
+                 if (constraints.crossAxisExtent < 650) { crossAxisCount = 1; childAspectRatio = 1.8; } // Adjust aspect ratio for single column
+                 else if (constraints.crossAxisExtent < 950) { crossAxisCount = 2; childAspectRatio = 1.3; }
+                 else if (constraints.crossAxisExtent < 1300) { crossAxisCount = 3; childAspectRatio = 1.3; }
 
                  // Build the list of widgets dynamically based on state and conditions
+                 // Ensure the state object contains the correct data lists based on the models
                  List<Widget> gridItems = [
-                    // 1. Stats Section (Tailored based on pricingModel)
-                    // This widget contains its own internal grid/wrap for individual stats
-                    StatsSection(stats: state.stats, pricingModel: pricingModel),
+                   // 1. Stats Section (Pass model for internal tailoring)
+                   StatsSection(stats: state.stats, pricingModel: pricingModel),
 
-                    // 2. Conditional Sections based on Pricing Model
-                    if (pricingModel == PricingModel.subscription)
-                      SubscriptionManagementSection(subscriptions: state.subscriptions),
-                    if (pricingModel == PricingModel.reservation)
-                      ReservationManagementSection(reservations: state.reservations),
+                   // 2. Conditional Management Sections
+                   if (showSubscriptions)
+                     SubscriptionManagementSection(subscriptions: state.subscriptions), // Ensure state.subscriptions is List<Subscription>
+                   if (showReservations)
+                     ReservationManagementSection(reservations: state.reservations), // Ensure state.reservations is List<Reservation>
 
-                    // 3. Access Logs Section (Common to both models)
-                    AccessLogSection(accessLogs: state.accessLogs),
+                   // 3. Access Logs Section (Common)
+                   AccessLogSection(accessLogs: state.accessLogs), // Ensure state.accessLogs is List<AccessLog>
 
-                    // 4. Class Schedule Placeholder (More relevant for reservation/gyms)
-                    if (pricingModel == PricingModel.reservation || pricingModel == PricingModel.other)
-                      buildSectionContainer( // Using the public helper from widgets file
+                   // 4. Class Schedule Placeholder (Conditional)
+                   if (showSchedule)
+                     buildSectionContainer(
                          title: "Today's Schedule / Classes",
                          trailingAction: TextButton(child: Text("View Full Schedule", style: getbodyStyle(color: AppColors.primaryColor, fontWeight: FontWeight.w500)), onPressed: () { /* TODO: Navigate */ }, style: TextButton.styleFrom(padding: EdgeInsets.zero)),
-                         child: buildEmptyState("Class schedule placeholder.", icon: Icons.schedule_rounded) // Using public helper
-                      ),
-
-                     // 5. Member Check-ins / Capacity Placeholder (Relevant for gyms/studios)
-                     if (pricingModel == PricingModel.subscription || pricingModel == PricingModel.reservation)
-                      buildSectionContainer(
-                         title: "Live Facility Capacity",
-                         child: buildEmptyState("Live check-in/capacity data placeholder.", icon: Icons.sensor_occupied_outlined)
-                      ),
-
-                     // 6. Chart Placeholders (Tailor titles based on model)
-                     ChartPlaceholder(title: pricingModel == PricingModel.subscription ? "Subscription Growth Trend" : "Booking Volume Trend"),
-                     ChartPlaceholder(title: pricingModel == PricingModel.subscription ? "Revenue by Plan" : "Peak Booking Hours"),
-
-                     // 7. Recent Feedback Placeholder
-                      buildSectionContainer(
-                        title: "Recent Customer Feedback",
-                        trailingAction: TextButton(child: Text("View All", style: getbodyStyle(color: AppColors.primaryColor, fontWeight: FontWeight.w500)), onPressed: () { /* TODO */ }, style: TextButton.styleFrom(padding: EdgeInsets.zero)),
-                        child: buildEmptyState("Customer feedback placeholder.", icon: Icons.reviews_outlined)
+                         child: buildEmptyState("Class schedule placeholder.", icon: Icons.schedule_rounded)
                      ),
 
-                     // Add more relevant placeholders or widgets here based on screenshot/needs
+                    // 5. Member Check-ins / Capacity Placeholder (Conditional)
+                    if (showCapacity)
+                      buildSectionContainer(
+                          title: "Live Facility Capacity",
+                          child: buildEmptyState("Live check-in/capacity data placeholder.", icon: Icons.sensor_occupied_outlined)
+                      ),
+
+                    // 6. Chart Placeholders (Tailor titles based on model)
+                    // Pass pricingModel so the widget can decide which chart to show
+                    ChartPlaceholder(title: "Activity Trends", pricingModel: pricingModel),
+                    ChartPlaceholder(title: "Revenue Overview", pricingModel: pricingModel),
+
+                    // 7. Recent Feedback Placeholder (Common)
+                    buildSectionContainer(
+                      title: "Recent Customer Feedback",
+                      trailingAction: TextButton(child: Text("View All", style: getbodyStyle(color: AppColors.primaryColor, fontWeight: FontWeight.w500)), onPressed: () { /* TODO */ }, style: TextButton.styleFrom(padding: EdgeInsets.zero)),
+                      child: buildEmptyState("Customer feedback placeholder.", icon: Icons.reviews_outlined)
+                   ),
+
+                   // Add more relevant placeholders or widgets here
                  ];
 
                  // Use SliverGrid to arrange the widgets
@@ -243,10 +195,10 @@ class DashboardScreen extends StatelessWidget {
                    crossAxisCount: crossAxisCount,
                    crossAxisSpacing: 18.0, // Spacing between columns
                    mainAxisSpacing: 18.0, // Spacing between rows
-                   childAspectRatio: childAspectRatio, // Adjust aspect ratio for content height
+                   childAspectRatio: childAspectRatio, // Adjust aspect ratio
                    children: gridItems, // Use the dynamically built list
                  );
-              }
+               }
             ),
           ),
         ],
@@ -263,22 +215,17 @@ class DashboardScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.cloud_off_rounded, color: AppColors.secondaryColor, size: 60),
+            const Icon(Icons.cloud_off_rounded, color: AppColors.secondaryColor, size: 60),
             const SizedBox(height: 20),
             Text("Failed to Load Dashboard", style: getTitleStyle(color: AppColors.darkGrey, fontSize: 18), textAlign: TextAlign.center),
             const SizedBox(height: 10),
             Text(errorMessage, textAlign: TextAlign.center, style: getbodyStyle(color: AppColors.secondaryColor)),
             const SizedBox(height: 25),
             ElevatedButton.icon(
-               icon: const Icon(Icons.refresh_rounded),
-               label: const Text("Retry"),
-               onPressed: () => context.read<DashboardBloc>().add(RefreshDashboardData()), // Use Refresh event
-               style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryColor,
-                  foregroundColor: AppColors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  textStyle: getbodyStyle(fontWeight: FontWeight.w500)
-               ),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text("Retry"),
+                onPressed: () => context.read<DashboardBloc>().add(RefreshDashboardData()), // Use Refresh event
+                style: ElevatedButton.styleFrom( backgroundColor: AppColors.primaryColor, foregroundColor: AppColors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12), textStyle: getbodyStyle(fontWeight: FontWeight.w500) ),
             )
           ],
         ),
@@ -286,92 +233,64 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  /// Helper to build sidebar items (Placeholder - needs actual navigation logic)
-  /// Updated to show relevant items based on potential pricing model (example)
-  Widget _buildSidebarItem(IconData icon, String label, bool isSelected, {bool isLogout = false, PricingModel? model}) {
-     final color = isSelected ? AppColors.primaryColor : AppColors.secondaryColor;
-     final bgColor = isSelected ? AppColors.primaryColor.withOpacity(0.08) : Colors.transparent;
-
-     // Example: Conditionally hide/show items based on model (adapt this logic)
-     bool showItem = true;
-     if (label == "Members" && model != null && model != PricingModel.subscription) showItem = false;
-     if (label == "Bookings" && model != null && model != PricingModel.reservation) showItem = false;
-     if (label == "Classes/Services" && model != null && model == PricingModel.subscription) showItem = false; // Example: Hide for pure subscription
-
-     if (!showItem) return const SizedBox.shrink(); // Don't render the item if not shown
-
-     return Padding(
-       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-       child: Material(
-         color: Colors.transparent, // Let InkWell handle background for hover/splash
-         child: InkWell(
-           onTap: () {
-              // TODO: Implement actual navigation (e.g., using GoRouter, Navigator 2.0) or actions
-              print("Tapped Sidebar Item: $label");
-              if (isLogout) {
-                 // TODO: Show confirmation dialog then call FirebaseAuth.instance.signOut() and navigate to login
-                 print("Logout action triggered");
-              }
-           },
-           borderRadius: BorderRadius.circular(8.0), // Match shape for splash/hover
-           hoverColor: AppColors.primaryColor.withOpacity(0.05),
-           splashColor: AppColors.primaryColor.withOpacity(0.1),
-           child: Container( // Use container for consistent padding and background color on selection
-             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
-             decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: BorderRadius.circular(8.0),
-             ),
-             child: Row(
-               children: [
-                 Icon(icon, size: 20, color: color),
-                 const SizedBox(width: 16), // More space between icon and text
-                 Text(label, style: getbodyStyle(color: color, fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)),
-               ],
-             ),
-           ),
-         ),
-       ),
-     );
-  }
-
   /// Helper for building user avatars in the header stack
   Widget _buildUserAvatar(String initial, Color color) {
-     // Simple circle avatar for placeholder
-     return CircleAvatar(
-        radius: 16,
-        backgroundColor: color.withOpacity(0.2), // Use lighter shade with opacity
-        child: Text(initial, style: getSmallStyle(fontWeight: FontWeight.bold, color: color)) // Use the color directly
-     );
+    return CircleAvatar( radius: 16, backgroundColor: color.withOpacity(0.2), child: Text(initial, style: getSmallStyle(fontWeight: FontWeight.bold, color: color)) );
   }
 
-  /// Builds the placeholder sidebar. In a real app, this would be a stateful widget
-  /// potentially managed by a navigation BLoC/provider, and would get the actual
-  /// pricing model from the state to conditionally render items.
+  /// Builds the placeholder sidebar.
+  /// TODO: Replace with stateful navigation widget and use actual pricingModel from state.
   Widget _buildSidebarPlaceholder() {
-     // Example model for placeholder rendering - replace with actual state access
-     PricingModel exampleModel = PricingModel.reservation;
+    // Placeholder model - In real app, get from Bloc state inside builder
+    PricingModel exampleModel = PricingModel.hybrid;
 
-     return Container(
-        width: 240, height: double.infinity, color: AppColors.white,
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column( children: [
-            Padding( padding: const EdgeInsets.all(16.0), child: Row( children: [ ClipRRect(borderRadius: BorderRadius.circular(8), child: Container(width: 32, height: 32, color: AppColors.primaryColor, child: Center(child: Text("S", style: getTitleStyle(color: AppColors.white, fontWeight: FontWeight.bold))))), const SizedBox(width: 8), Text("Shamil Admin", style: getTitleStyle(fontWeight: FontWeight.bold)), ]), ),
-            const Divider(color: AppColors.lightGrey, height: 1), const SizedBox(height: 16),
-            // Pass the example model to conditionally show items
-            _buildSidebarItem(Icons.dashboard_rounded, "Dashboard", true, model: exampleModel),
-            _buildSidebarItem(Icons.group_outlined, "Members", false, model: exampleModel), // Shows if subscription
-            _buildSidebarItem(Icons.calendar_today_outlined, "Bookings", false, model: exampleModel), // Shows if reservation
-            _buildSidebarItem(Icons.fitness_center_rounded, "Classes/Services", false, model: exampleModel), // Shows if reservation/other
-            _buildSidebarItem(Icons.admin_panel_settings_outlined, "Access Control", false, model: exampleModel),
-            _buildSidebarItem(Icons.assessment_outlined, "Reports", false, model: exampleModel),
-            _buildSidebarItem(Icons.analytics_outlined, "Analytics", false, model: exampleModel),
-            const Spacer(), const Divider(color: AppColors.lightGrey, height: 1),
-             _buildSidebarItem(Icons.settings_outlined, "Settings", false, model: exampleModel),
-             _buildSidebarItem(Icons.logout_rounded, "Logout", false, isLogout: true, model: exampleModel),
-             const SizedBox(height: 10),
-        ]),
-      );
+    return Container(
+      width: 240, height: double.infinity, color: AppColors.white,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Column( children: [
+        Padding( padding: const EdgeInsets.all(16.0), child: Row( children: [ ClipRRect(borderRadius: BorderRadius.circular(8), child: Container(width: 32, height: 32, color: AppColors.primaryColor, child: Center(child: Text("S", style: getTitleStyle(color: AppColors.white, fontWeight: FontWeight.bold))))), const SizedBox(width: 8), Text("Shamil Admin", style: getTitleStyle(fontWeight: FontWeight.bold)), ]), ),
+        const Divider(color: AppColors.lightGrey, height: 1), const SizedBox(height: 16),
+        // Pass the example model to conditionally show items
+        _buildSidebarItem(Icons.dashboard_rounded, "Dashboard", true, model: exampleModel),
+        _buildSidebarItem(Icons.group_outlined, "Members", false, model: exampleModel), // Shows if subscription or hybrid
+        _buildSidebarItem(Icons.calendar_today_outlined, "Bookings", false, model: exampleModel), // Shows if reservation or hybrid
+        _buildSidebarItem(Icons.fitness_center_rounded, "Classes/Services", false, model: exampleModel), // Shows if reservation/hybrid/other
+        _buildSidebarItem(Icons.admin_panel_settings_outlined, "Access Control", false, model: exampleModel),
+        _buildSidebarItem(Icons.assessment_outlined, "Reports", false, model: exampleModel),
+        _buildSidebarItem(Icons.analytics_outlined, "Analytics", false, model: exampleModel),
+        const Spacer(), const Divider(color: AppColors.lightGrey, height: 1),
+         _buildSidebarItem(Icons.settings_outlined, "Settings", false, model: exampleModel),
+         _buildSidebarItem(Icons.logout_rounded, "Logout", false, isLogout: true, model: exampleModel),
+         const SizedBox(height: 10),
+      ]),
+    );
+  }
+
+  /// Helper to build sidebar items (Placeholder)
+  /// Example conditional logic added based on pricing model
+  Widget _buildSidebarItem(IconData icon, String label, bool isSelected, {bool isLogout = false, PricingModel? model}) {
+    final color = isSelected ? AppColors.primaryColor : AppColors.secondaryColor;
+    final bgColor = isSelected ? AppColors.primaryColor.withOpacity(0.08) : Colors.transparent;
+
+    // Example: Conditionally hide/show items based on model
+    bool showItem = true;
+    if (model != null) { // Only apply filter if model is provided
+        if (label == "Members" && !(model == PricingModel.subscription || model == PricingModel.hybrid)) showItem = false;
+        if (label == "Bookings" && !(model == PricingModel.reservation || model == PricingModel.hybrid)) showItem = false;
+        if (label == "Classes/Services" && model == PricingModel.subscription) showItem = false; // Hide if *only* subscription
+    }
+
+    if (!showItem) return const SizedBox.shrink(); // Don't render the item if not shown
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+      child: Material( color: Colors.transparent, child: InkWell(
+        onTap: () { print("Tapped Sidebar Item: $label"); if (isLogout) print("Logout action triggered"); /* TODO: Implement navigation/action */ },
+        borderRadius: BorderRadius.circular(8.0), hoverColor: AppColors.primaryColor.withOpacity(0.05), splashColor: AppColors.primaryColor.withOpacity(0.1),
+        child: Container( padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0), decoration: BoxDecoration( color: bgColor, borderRadius: BorderRadius.circular(8.0), ),
+          child: Row( children: [ Icon(icon, size: 20, color: color), const SizedBox(width: 16), Text(label, style: getbodyStyle(color: color, fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal)), ], ), ), ), ),
+    );
   }
 
 } // End DashboardScreen
+

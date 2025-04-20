@@ -5,33 +5,30 @@ import 'package:intl/intl.dart'; // For date formatting
 // Adjust paths as necessary for your project structure
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path
-import 'package:shamil_web_app/features/auth/data/ServiceProviderModel.dart';
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
-// Import the dashboard models
+
 // Import a charting package when ready
 // Example: import 'package:fl_chart/fl_chart.dart';
 
 //----------------------------------------------------------------------------//
-// Dashboard Section Widgets (Professional Design V3 - Tailored)              //
+// Dashboard Section Widgets & Helpers (Professional Design V3 - Tailored)    //
 // Widgets adapted to show relevant info based on PricingModel.               //
 //----------------------------------------------------------------------------//
 
 /// Helper: Builds a container for dashboard sections with optional title.
-/// Uses background color and padding for separation, minimal borders/shadows.
-/// PUBLIC: Can be used by DashboardScreen or other layout widgets.
 Widget buildSectionContainer({
   String? title,
   required Widget child,
   Widget? trailingAction,
-  EdgeInsetsGeometry padding = const EdgeInsets.all(20.0), // Default padding
-  EdgeInsetsGeometry margin = const EdgeInsets.only(
-    bottom: 18.0,
-  ), // Default margin
-  Color backgroundColor = AppColors.white, // Default background
+  EdgeInsetsGeometry padding = const EdgeInsets.all(20.0),
+  EdgeInsetsGeometry margin = const EdgeInsets.only(bottom: 18.0),
+  Color backgroundColor = AppColors.white,
   BorderRadiusGeometry borderRadius = const BorderRadius.all(
-    Radius.circular(8.0),
-  ), // Consistent radius
+    Radius.circular(12.0),
+  ),
 }) {
+  // ... (implementation remains the same as response #84) ...
   return Container(
     margin: margin,
     padding: padding,
@@ -41,12 +38,11 @@ Widget buildSectionContainer({
       border: Border.all(
         color: AppColors.lightGrey.withOpacity(0.6),
         width: 1.0,
-      ), // Subtle border for definition
+      ),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Section Header Row (only if title is provided)
         if (title != null) ...[
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -54,7 +50,6 @@ Widget buildSectionContainer({
             children: [
               Text(
                 title,
-                // Use a slightly bolder style for section titles
                 style: getTitleStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w600,
@@ -64,52 +59,24 @@ Widget buildSectionContainer({
               if (trailingAction != null) trailingAction,
             ],
           ),
-          const SizedBox(height: 12), // Space after title
-          const Divider(
-            height: 1,
-            thickness: 1,
-            color: AppColors.lightGrey,
-          ), // Add divider below title
-          const SizedBox(height: 16), // Space after divider
+          const SizedBox(height: 12),
+          const Divider(height: 1, thickness: 1, color: AppColors.lightGrey),
+          const SizedBox(height: 16),
         ],
-        child, // The main content of the section
+        child,
       ],
     ),
   );
 }
 
 // --- 1. Provider Info Header ---
-/// Displays provider info - designed for the top area of the main content.
 class ProviderInfoHeader extends StatelessWidget {
+  // ... (implementation remains the same as response #84) ...
   final ServiceProviderModel providerModel;
   const ProviderInfoHeader({super.key, required this.providerModel});
 
-  // Helper for info rows (private to this widget)
-  Widget _buildInfoRow(IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 16, color: AppColors.secondaryColor),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text.isNotEmpty ? text : "Not Provided",
-              style: getbodyStyle(
-                color:
-                    text.isNotEmpty ? AppColors.darkGrey : AppColors.mediumGrey,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Format address safely
     String address = [
       providerModel.address['street'],
       providerModel.address['city'],
@@ -118,27 +85,22 @@ class ProviderInfoHeader extends StatelessWidget {
     if (address.isEmpty) address = "Address Not Set";
 
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: 8.0,
-        horizontal: 4.0,
-      ), // Padding for the header area
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Provider Logo - Rounded Square
           ClipRRect(
             borderRadius: BorderRadius.circular(8.0),
             child: Container(
               width: 52,
-              height: 52, // Slightly smaller logo
-              color: AppColors.lightGrey, // Background placeholder
+              height: 52,
+              color: AppColors.lightGrey,
               child:
                   (providerModel.logoUrl != null &&
                           providerModel.logoUrl!.isNotEmpty)
                       ? Image.network(
                         providerModel.logoUrl!,
                         fit: BoxFit.cover,
-                        // Optional: Add loading/error builders
                         loadingBuilder:
                             (context, child, progress) =>
                                 progress == null
@@ -177,7 +139,7 @@ class ProviderInfoHeader extends StatelessWidget {
                     fontSize: 19,
                     fontWeight: FontWeight.bold,
                     color: AppColors.darkGrey,
-                  ), // Adjusted size
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
@@ -186,7 +148,7 @@ class ProviderInfoHeader extends StatelessWidget {
                   style: getbodyStyle(
                     color: AppColors.secondaryColor,
                     fontSize: 13,
-                  ), // Smaller subtitle
+                  ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
@@ -194,15 +156,13 @@ class ProviderInfoHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          // Edit Button - More subtle icon button?
           IconButton(
             icon: const Icon(
               Icons.more_vert_rounded,
               color: AppColors.secondaryColor,
-            ), // Example: More options icon
+            ),
             tooltip: "Options / Edit",
             onPressed: () {
-              // TODO: Show menu (Edit, View Profile, etc.) or navigate
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text(
@@ -219,18 +179,15 @@ class ProviderInfoHeader extends StatelessWidget {
 }
 
 // --- 2. Stats Section ---
-/// Displays key statistics TAILORED based on the provider's PricingModel.
 class StatsSection extends StatelessWidget {
+  // ... (implementation remains the same as response #84) ...
   final DashboardStats stats;
-  final PricingModel pricingModel; // Added to determine which stats to show
-
+  final PricingModel pricingModel;
   const StatsSection({
     super.key,
     required this.stats,
-    required this.pricingModel, // Receive the pricing model
+    required this.pricingModel,
   });
-
-  /// Builds a single stat item card - refined style. (Private helper)
   Widget _buildStatCard({
     required String title,
     required String value,
@@ -241,9 +198,8 @@ class StatsSection extends StatelessWidget {
     bool isPrimary = false,
     Widget? actionButton,
   }) {
-    // Define text styles locally for clarity
     final valueStyle = getTitleStyle(
-      fontSize: isPrimary ? 30 : 24,
+      fontSize: isPrimary ? 28 : 22,
       fontWeight: FontWeight.bold,
       color: AppColors.darkGrey,
     );
@@ -257,12 +213,11 @@ class StatsSection extends StatelessWidget {
       fontWeight: FontWeight.w600,
     );
     final secondaryValueStyle = getSmallStyle(color: AppColors.mediumGrey);
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.white,
-        borderRadius: BorderRadius.circular(8.0),
+        borderRadius: BorderRadius.circular(12.0),
         border: Border.all(
           color: AppColors.lightGrey.withOpacity(0.7),
           width: 1.0,
@@ -272,20 +227,17 @@ class StatsSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(title, style: titleStyle),
-                  if (icon != null)
-                    Icon(icon, size: 18, color: AppColors.secondaryColor),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(value, style: valueStyle),
+              Text(title, style: titleStyle),
+              if (icon != null)
+                Icon(icon, size: 18, color: AppColors.secondaryColor),
             ],
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: Text(value, style: valueStyle),
           ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -327,137 +279,134 @@ class StatsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // --- Data Formatting (Common) ---
-    // TODO: The DashboardBloc needs to provide the *correct* underlying data for these stats
-    // based on the pricingModel. These are just examples using the current DashboardStats model.
-    final revenue = NumberFormat.currency(
+    final currencyFormat = NumberFormat.currency(
       locale: 'en_EG',
-      symbol: '',
-      decimalDigits: 2,
-    ).format(stats.totalRevenue);
-    final double previousRevenue =
-        stats.totalRevenue > 0
-            ? (stats.totalRevenue / 1.079)
-            : 0; // Example comparison calc
-    final double revenueChangeAbs = stats.totalRevenue - previousRevenue;
-    final double revenueChangePercent =
-        (previousRevenue > 0) ? (revenueChangeAbs / previousRevenue) * 100 : 0;
+      symbol: 'EGP ',
+      decimalDigits: 0,
+    );
+    final numberFormat = NumberFormat.compact(locale: 'en_US');
+    final revenue = currencyFormat.format(stats.totalRevenue);
+    final double revenueChangePercent = 7.9;
     final String formattedRevenueChangePercent =
         "${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toStringAsFixed(1)}%";
-    final String comparisonText = "vs prev. period"; // Example comparison text
     final Color changeColor =
         revenueChangePercent >= 0 ? Colors.teal.shade700 : AppColors.redColor;
-
-    // --- Build Specific Stats based on Pricing Model ---
     List<Widget> statCards = [];
-
-    // Revenue is likely common, show it first
     statCards.add(
       _buildStatCard(
-        title: "Revenue (EGP)",
+        title: "Revenue (This Month)",
         value: revenue,
         changePercentage: formattedRevenueChangePercent,
-        secondaryValue: comparisonText,
+        secondaryValue: "vs last month",
         changeColor: changeColor,
         isPrimary: true,
       ),
     );
-
-    if (pricingModel == PricingModel.subscription) {
-      // --- Subscription Specific Stats ---
+    if (pricingModel == PricingModel.subscription ||
+        pricingModel == PricingModel.hybrid) {
       statCards.add(
         _buildStatCard(
           title: "Active Members",
-          value: stats.activeSubscriptions.toString(),
+          value: numberFormat.format(stats.activeSubscriptions),
           icon: Icons.people_alt_outlined,
         ),
       );
-      // TODO: Add placeholders/actual cards for MRR, Churn Rate, New Trials etc. (requires data from Bloc)
       statCards.add(
         _buildStatCard(
-          title: "Monthly Recurring Revenue",
-          value: "EGP ---",
-          icon: Icons.autorenew_rounded,
+          title: "New Members (Month)",
+          value: numberFormat.format(stats.newMembersMonth),
+          icon: Icons.person_add_alt_1_outlined,
         ),
-      ); // Placeholder
+      );
       statCards.add(
         _buildStatCard(
-          title: "Member Churn Rate",
-          value: "-- %",
-          icon: Icons.trending_down_rounded,
+          title: "Check-ins (Today)",
+          value: numberFormat.format(stats.checkInsToday),
+          icon: Icons.check_circle_outline,
         ),
-      ); // Placeholder
-    } else if (pricingModel == PricingModel.reservation) {
-      // --- Reservation Specific Stats ---
+      );
+    }
+    if (pricingModel == PricingModel.reservation ||
+        pricingModel == PricingModel.hybrid) {
       statCards.add(
         _buildStatCard(
-          title: "Upcoming Bookings",
-          value: stats.upcomingReservations.toString(),
+          title: "Bookings (Month)",
+          value: numberFormat.format(stats.totalBookingsMonth),
           icon: Icons.event_available_outlined,
         ),
       );
-      // TODO: Add placeholders/actual cards for Check-ins, Capacity %, No-Show Rate etc. (requires data from Bloc)
+      if (pricingModel == PricingModel.reservation) {
+        statCards.add(
+          _buildStatCard(
+            title: "Check-ins (Today)",
+            value: numberFormat.format(stats.checkInsToday),
+            icon: Icons.check_circle_outline,
+          ),
+        );
+      }
       statCards.add(
         _buildStatCard(
-          title: "Today's Check-ins",
-          value: "--",
-          icon: Icons.check_circle_outline,
-        ),
-      ); // Placeholder
-      statCards.add(
-        _buildStatCard(
-          title: "Capacity Utilization",
+          title: "Capacity Use %",
           value: "-- %",
           icon: Icons.pie_chart_outline_rounded,
         ),
-      ); // Placeholder
-    } else {
-      // --- Stats for 'Other' or default ---
-      statCards.add(
-        _buildStatCard(
-          title: "Active Clients",
-          value: stats.activeSubscriptions.toString(),
-          icon: Icons.people_alt_outlined,
-        ),
-      ); // Use activeSubscriptions as a proxy?
-      statCards.add(
-        _buildStatCard(
-          title: "Upcoming Appointments",
-          value: stats.upcomingReservations.toString(),
-          icon: Icons.event_available_outlined,
-        ),
-      ); // Use upcomingReservations as a proxy?
-      // Add other relevant generic stats
+      );
     }
-
-    // --- Layout ---
-    // Use LayoutBuilder to adjust grid columns based on available width
+    if (pricingModel == PricingModel.other) {
+      statCards.add(
+        _buildStatCard(
+          title: "Total Customers",
+          value: numberFormat.format(stats.newMembersMonth),
+          icon: Icons.groups_2_outlined,
+        ),
+      );
+      statCards.add(
+        _buildStatCard(
+          title: "Avg. Rating",
+          value: "--",
+          icon: Icons.star_border_rounded,
+        ),
+      );
+      statCards.add(
+        _buildStatCard(
+          title: "Pending Inquiries",
+          value: "--",
+          icon: Icons.contact_support_outlined,
+        ),
+      );
+    }
+    while (statCards.length < 4) {
+      statCards.add(
+        _buildStatCard(
+          title: "Metric Placeholder",
+          value: "--",
+          icon: Icons.data_usage,
+        ),
+      );
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
         int crossAxisCount = 4;
-        double childAspectRatio = 1.5; // Default aspect ratio slightly adjusted
+        double childAspectRatio = 1.6;
         if (constraints.maxWidth < 650) {
           crossAxisCount = 1;
-          childAspectRatio = 2.2;
+          childAspectRatio = 2.5;
         } else if (constraints.maxWidth < 900) {
           crossAxisCount = 2;
-          childAspectRatio = 1.6;
+          childAspectRatio = 1.8;
         } else if (constraints.maxWidth < 1250) {
           crossAxisCount = 3;
-          childAspectRatio = 1.5;
+          childAspectRatio = 1.6;
         } else {
           crossAxisCount = 4;
-          childAspectRatio = 1.4;
+          childAspectRatio = 1.6;
         }
-
-        // Return a GridView containing the dynamically built list of stat cards
         return GridView.count(
           crossAxisCount: crossAxisCount,
           crossAxisSpacing: 16.0,
           mainAxisSpacing: 16.0,
-          shrinkWrap: true, // Important within parent scroll view
-          physics:
-              const NeverScrollableScrollPhysics(), // Parent handles scrolling
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
           childAspectRatio: childAspectRatio,
           children: statCards,
         );
@@ -467,16 +416,14 @@ class StatsSection extends StatelessWidget {
 }
 
 // --- Common Status Chip Helper ---
-/// Builds a styled Chip based on common status strings.
-/// PUBLIC: Can be used by other widgets.
 Widget buildStatusChip(String status) {
+  /* ... same as response #84 ... */
   Color chipColor = AppColors.lightGrey;
   Color textColor = AppColors.darkGrey;
   IconData? iconData;
   String displayStatus = status;
-
-  // Determine color/icon based on status keyword (case-insensitive)
   String lowerStatus = status.toLowerCase();
+
   if (lowerStatus == 'active' ||
       lowerStatus == 'confirmed' ||
       lowerStatus == 'granted') {
@@ -504,16 +451,16 @@ Widget buildStatusChip(String status) {
     textColor = Colors.purple.shade800;
     iconData = Icons.person_off_outlined;
   } else {
-    // Handle specific denial reasons if needed
     if (status.startsWith('Denied_')) {
       chipColor = Colors.red.shade50;
       textColor = Colors.red.shade800;
       iconData = Icons.highlight_off_rounded;
-      displayStatus = status.replaceFirst('Denied_', ''); // Show reason
+      displayStatus = status.replaceFirst('Denied_', '');
     }
   }
+
   return Tooltip(
-    message: status, // Show full status on hover
+    message: status,
     child: Chip(
       avatar:
           iconData != null ? Icon(iconData, size: 14, color: textColor) : null,
@@ -521,40 +468,42 @@ Widget buildStatusChip(String status) {
       labelStyle: getSmallStyle(color: textColor, fontWeight: FontWeight.w500),
       backgroundColor: chipColor,
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 2.0),
-      visualDensity: VisualDensity.compact, // Make chip smaller
+      visualDensity: VisualDensity.compact,
       side: BorderSide.none,
     ),
   );
 }
 
 // --- Common Empty State Helper ---
-/// Builds a centered message for empty lists/sections.
-/// PUBLIC: Can be used by other widgets.
 Widget buildEmptyState(String message, {IconData icon = Icons.inbox_outlined}) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 32.0),
-    child: Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 40, color: AppColors.mediumGrey.withOpacity(0.6)),
-          const SizedBox(height: 12),
-          Text(message, style: getbodyStyle(color: AppColors.mediumGrey)),
-        ],
-      ),
+  /* ... same as response #84 ... */
+  return Container(
+    padding: const EdgeInsets.symmetric(vertical: 32.0, horizontal: 16.0),
+    alignment: Alignment.center,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 40, color: AppColors.mediumGrey.withOpacity(0.6)),
+        const SizedBox(height: 12),
+        Text(
+          message,
+          style: getbodyStyle(color: AppColors.mediumGrey),
+          textAlign: TextAlign.center,
+        ),
+      ],
     ),
   );
 }
 
 // --- 3. List/Table Section (Generic Structure) ---
-/// Displays data in a table-like list format within a section container.
 class ListTableSection extends StatelessWidget {
+  /* ... same as response #84 ... */
   final String title;
-  final List<Map<String, dynamic>> items; // Generic list of items (maps)
+  final List<Map<String, dynamic>> items;
   final Widget Function(Map<String, dynamic> itemData, int index, bool isLast)
-  rowBuilder; // Function to build rows
+  rowBuilder;
   final VoidCallback? onViewAllPressed;
-  final int maxItemsToShow; // Max items to show directly in dashboard
+  final int maxItemsToShow;
 
   const ListTableSection({
     super.key,
@@ -562,7 +511,7 @@ class ListTableSection extends StatelessWidget {
     required this.items,
     required this.rowBuilder,
     this.onViewAllPressed,
-    this.maxItemsToShow = 5, // Default limit
+    this.maxItemsToShow = 5,
   });
 
   @override
@@ -570,12 +519,8 @@ class ListTableSection extends StatelessWidget {
     final displayedItems = items.take(maxItemsToShow).toList();
 
     return buildSectionContainer(
-      // Use the public helper
       title: title,
-      padding: const EdgeInsets.only(
-        top: 16,
-        bottom: 8,
-      ), // Adjust padding for list content
+      padding: const EdgeInsets.only(top: 16, bottom: 8, left: 20, right: 20),
       trailingAction:
           onViewAllPressed != null && items.length > maxItemsToShow
               ? TextButton(
@@ -589,66 +534,56 @@ class ListTableSection extends StatelessWidget {
                 onPressed: onViewAllPressed,
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
-                ), // Add padding to button
+                ),
               )
               : null,
       child:
           displayedItems.isEmpty
-              ? buildEmptyState("No data available.") // Use public helper
+              ? buildEmptyState("No ${title.toLowerCase()} available.")
               : Column(
-                // Use Column to build rows with dividers
-                children: List.generate(displayedItems.length, (index) {
-                  // Pass isLast flag to rowBuilder to control divider visibility
-                  return rowBuilder(
+                children: List.generate(
+                  displayedItems.length,
+                  (index) => rowBuilder(
                     displayedItems[index],
                     index,
                     index == displayedItems.length - 1,
-                  );
-                }),
+                  ),
+                ),
               ),
     );
   }
 }
 
-// --- Example Usage for Specific Sections ---
-
 // --- 3. Subscription Management Section ---
 class SubscriptionManagementSection extends StatelessWidget {
+  // Use the correct model name from dashboard_models.dart
   final List<Subscription> subscriptions;
   const SubscriptionManagementSection({super.key, required this.subscriptions});
 
   @override
   Widget build(BuildContext context) {
-    // Example: Show recent 5 subscriptions regardless of status for dashboard preview
     final displayedSubscriptions = subscriptions.take(5).toList();
-
     return ListTableSection(
       title: "Recent Subscriptions",
-      items:
-          displayedSubscriptions
-              .map((sub) => {'data': sub})
-              .toList(), // Pass original model
+      items: displayedSubscriptions.map((sub) => {'data': sub}).toList(),
       onViewAllPressed: () {
-        /* TODO: Navigate to full subscription list */
+        /* TODO: Navigate */
       },
       rowBuilder: (item, index, isLast) {
-        // Builder function for each row
         final Subscription sub = item['data'];
+        // Use expiryDate and ensure toDate() is called safely
         final formattedEndDate =
-            sub.endDate != null
-                ? DateFormat('d MMM, yyyy').format(sub.endDate!.toDate())
+            sub.expiryDate != null
+                ? DateFormat('d MMM, yyyy').format(sub.expiryDate!.toDate())
                 : 'N/A';
         return InkWell(
           onTap: () {
-            /* TODO: Show subscription details */
+            /* TODO: Show details */
             print("Tapped subscription: ${sub.id}");
           },
           borderRadius: BorderRadius.circular(8.0),
           child: Container(
-            padding: const EdgeInsets.symmetric(
-              vertical: 14.0,
-              horizontal: 20.0,
-            ), // Consistent padding
+            padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 0),
             decoration: BoxDecoration(
               border:
                   !isLast
@@ -661,9 +596,7 @@ class SubscriptionManagementSection extends StatelessWidget {
                       : null,
             ),
             child: Row(
-              // Custom row layout
               children: [
-                // Avatar
                 Container(
                   width: 36,
                   height: 36,
@@ -685,7 +618,6 @@ class SubscriptionManagementSection extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                // User & Plan (Expanded)
                 Expanded(
                   flex: 3,
                   child: Column(
@@ -704,17 +636,12 @@ class SubscriptionManagementSection extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Status (Fixed width or Expanded)
-                Expanded(
-                  flex: 2,
-                  child: buildStatusChip(sub.status),
-                ), // Use public helper
+                Expanded(flex: 2, child: buildStatusChip(sub.status)),
                 const SizedBox(width: 16),
-                // End Date (Fixed width or Expanded)
                 Expanded(
                   flex: 2,
                   child: Text(
-                    sub.endDate != null ? formattedEndDate : "N/A",
+                    sub.expiryDate != null ? formattedEndDate : "N/A",
                     style: getSmallStyle(color: AppColors.mediumGrey),
                     textAlign: TextAlign.end,
                   ),
@@ -730,24 +657,24 @@ class SubscriptionManagementSection extends StatelessWidget {
 
 // --- 4. Reservation Management Section ---
 class ReservationManagementSection extends StatelessWidget {
-  final List<Reservation> reservations;
+  final List<Reservation> reservations; // Use correct model name
   const ReservationManagementSection({super.key, required this.reservations});
 
   @override
   Widget build(BuildContext context) {
     // Filter and sort upcoming reservations
+    // Ensure startTime is correctly accessed via getter after .toDate()
     final upcomingReservations =
         reservations
             .where(
               (r) =>
                   ['Confirmed', 'Pending'].contains(r.status) &&
-                  r.dateTime.toDate().isAfter(DateTime.now()),
+                  r.startTime.isAfter(DateTime.now()),
             )
             .toList();
-    upcomingReservations.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    upcomingReservations.sort((a, b) => a.startTime.compareTo(b.startTime));
 
     return buildSectionContainer(
-      // Use public helper
       title: "Upcoming Reservations",
       trailingAction: TextButton(
         child: Text(
@@ -764,7 +691,7 @@ class ReservationManagementSection extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // --- Calendar Placeholder ---
+          // Calendar Placeholder
           Container(
             height: 150,
             width: double.infinity,
@@ -793,7 +720,7 @@ class ReservationManagementSection extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 20),
-          // --- Upcoming List ---
+          // Upcoming List
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
@@ -809,18 +736,17 @@ class ReservationManagementSection extends StatelessWidget {
               ? buildEmptyState(
                 "No upcoming reservations.",
                 icon: Icons.event_busy_outlined,
-              ) // Use public helper
+              )
               : ListTableSection(
-                // Use the generic ListTableSection for the list part
                 title: "", // No title needed here
                 items:
                     upcomingReservations.map((res) => {'data': res}).toList(),
-                maxItemsToShow: 3, // Show fewer items below calendar
+                maxItemsToShow: 3,
                 rowBuilder: (item, index, isLast) {
                   final Reservation res = item['data'];
                   final formattedDateTime = DateFormat(
                     'EEE, d MMM - hh:mm a',
-                  ).format(res.dateTime.toDate());
+                  ).format(res.startTime); // Use startTime getter
                   return InkWell(
                     onTap: () {
                       /* TODO: Show details */
@@ -830,7 +756,7 @@ class ReservationManagementSection extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                         vertical: 14.0,
                         horizontal: 0,
-                      ), // No horizontal padding needed from ListTableSection
+                      ),
                       decoration: BoxDecoration(
                         border:
                             !isLast
@@ -865,6 +791,7 @@ class ReservationManagementSection extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
+                                // *** CORRECTED: Use userName ***
                                 Text(
                                   res.userName,
                                   style: getbodyStyle(
@@ -882,10 +809,7 @@ class ReservationManagementSection extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 16),
-                          Expanded(
-                            flex: 2,
-                            child: buildStatusChip(res.status),
-                          ), // Use public helper
+                          Expanded(flex: 2, child: buildStatusChip(res.status)),
                           const SizedBox(width: 16),
                           Expanded(
                             flex: 3,
@@ -908,35 +832,97 @@ class ReservationManagementSection extends StatelessWidget {
 }
 
 // --- 5. Access Log Section ---
+/// Displays recent access log entries with tappable rows for details.
 class AccessLogSection extends StatelessWidget {
+  // Use the correct model name from dashboard_models.dart
   final List<AccessLog> accessLogs;
   const AccessLogSection({super.key, required this.accessLogs});
 
+  // Helper method to show log details in a dialog
+  void _showLogDetailsDialog(BuildContext context, AccessLog log) {
+    final dateTimeFormat = DateFormat(
+      'd MMM yyyy, hh:mm:ss a',
+    ); // More detailed format for dialog
+
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text("Access Log Details"),
+            content: SingleChildScrollView(
+              child: ListBody(
+                // Use ListBody for vertical list of details
+                children: <Widget>[
+                  _buildDetailRow("Log ID:", log.id),
+                  _buildDetailRow("User ID:", log.userId),
+                  _buildDetailRow("User Name:", log.userName),
+                  _buildDetailRow(
+                    "Timestamp:",
+                    dateTimeFormat.format(log.timestamp.toDate()),
+                  ), // Use timestamp field
+                  _buildDetailRow("Status:", log.status),
+                  _buildDetailRow(
+                    "Method:",
+                    log.method ?? "N/A",
+                  ), // Use method field
+                  if (log.denialReason != null && log.denialReason!.isNotEmpty)
+                    _buildDetailRow("Denial Reason:", log.denialReason!),
+                  _buildDetailRow(
+                    "Provider ID:",
+                    log.providerId,
+                  ), // Added provider ID
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('Close'),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+              ),
+            ],
+          ),
+    );
+  }
+
+  // Helper for dialog rows
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("$label ", style: getbodyStyle(fontWeight: FontWeight.w600)),
+          Expanded(child: Text(value, style: getbodyStyle())),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final dateTimeFormat = DateFormat('d MMM, hh:mm:ss a');
+    final dateTimeFormat = DateFormat(
+      'd MMM, hh:mm:ss a',
+    ); // Format for list display
 
     return ListTableSection(
-      // Use the generic ListTableSection
       title: "Recent Access Activity",
       items: accessLogs.map((log) => {'data': log}).toList(),
-      maxItemsToShow: 5, // Limit items shown on dashboard
+      maxItemsToShow: 5,
       onViewAllPressed: () {
         /* TODO: Navigate */
       },
       rowBuilder: (item, index, isLast) {
         final AccessLog log = item['data'];
-        final bool granted = log.status == 'Granted';
+        final bool granted = log.status.toLowerCase() == 'granted';
         return InkWell(
-          onTap: () {
-            /* TODO: Show details */
-          },
+          // Make the row tappable
+          onTap:
+              () => _showLogDetailsDialog(context, log), // Show details on tap
           borderRadius: BorderRadius.circular(8.0),
           child: Container(
-            padding: const EdgeInsets.symmetric(
-              vertical: 14.0,
-              horizontal: 0,
-            ), // No horizontal padding needed
+            padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 0),
             decoration: BoxDecoration(
               border:
                   !isLast
@@ -980,23 +966,24 @@ class AccessLogSection extends StatelessWidget {
                         style: getbodyStyle(fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 2),
+                      // Show method and denial reason if available
                       Text(
-                        "Method: ${log.method}",
+                        "Method: ${log.method ?? 'N/A'}${log.denialReason != null ? ' (${log.denialReason})' : ''}",
                         style: getSmallStyle(color: AppColors.secondaryColor),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 16),
-                Expanded(
-                  flex: 2,
-                  child: buildStatusChip(log.status),
-                ), // Use public helper
+                Expanded(flex: 2, child: buildStatusChip(log.status)),
                 const SizedBox(width: 16),
+                // Use timestamp field and ensure toDate() is called safely
                 Expanded(
                   flex: 3,
                   child: Text(
-                    dateTimeFormat.format(log.dateTime.toDate()),
+                    dateTimeFormat.format(log.timestamp.toDate()),
                     style: getSmallStyle(color: AppColors.mediumGrey),
                     textAlign: TextAlign.end,
                   ),
@@ -1010,49 +997,51 @@ class AccessLogSection extends StatelessWidget {
   }
 }
 
-// --- Placeholder Widgets for Complex Components ---
-
-/// Placeholder for chart widgets.
+// --- Placeholder Chart Widget ---
 class ChartPlaceholder extends StatelessWidget {
+  /* ... same as response #84 ... */
   final String title;
-  final double height;
-  const ChartPlaceholder({super.key, required this.title, this.height = 250});
-
+  final PricingModel? pricingModel;
+  const ChartPlaceholder({super.key, required this.title, this.pricingModel});
   @override
   Widget build(BuildContext context) {
+    String tailoredTitle = title;
+    if (pricingModel == PricingModel.subscription && title.contains("Trends")) {
+      tailoredTitle = "Subscription Trends";
+    } else if (pricingModel == PricingModel.reservation &&
+        title.contains("Trends")) {
+      tailoredTitle = "Booking Trends";
+    } else if (pricingModel == PricingModel.subscription &&
+        title.contains("Revenue")) {
+      tailoredTitle = "Revenue by Plan";
+    } else if (pricingModel == PricingModel.reservation &&
+        title.contains("Revenue")) {
+      tailoredTitle = "Revenue by Service";
+    }
     return buildSectionContainer(
-      // Use public helper
-      title: title,
+      title: tailoredTitle,
       child: Container(
-        height: height,
+        height: 180,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              AppColors.lightGrey.withOpacity(0.3),
-              AppColors.lightGrey.withOpacity(0.1),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(8.0),
+          color: AppColors.lightGrey.withOpacity(0.3),
+          borderRadius: BorderRadius.circular(8),
         ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.insert_chart_outlined_rounded,
-                size: 40,
-                color: AppColors.mediumGrey.withOpacity(0.8),
-              ),
-              const SizedBox(height: 12),
-              Text(title, style: getbodyStyle(color: AppColors.mediumGrey)),
-              Text(
-                "(Requires Chart Package & Implementation)",
-                style: getSmallStyle(color: AppColors.mediumGrey),
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.bar_chart_rounded,
+              size: 40,
+              color: AppColors.mediumGrey,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "$tailoredTitle\n(Chart Placeholder)",
+              style: getbodyStyle(color: AppColors.mediumGrey),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
       ),
     );
@@ -1061,10 +1050,9 @@ class ChartPlaceholder extends StatelessWidget {
 
 /// Placeholder for tabbed sections like "Platform Value" in the screenshot.
 class TabbedSectionPlaceholder extends StatelessWidget {
+  /* ... same as response #84 ... */
   final String title;
   const TabbedSectionPlaceholder({super.key, required this.title});
-
-  // Helper for placeholder tabs (private to this widget)
   Widget _buildPlaceholderTab(String text, bool isSelected) {
     return Container(
       margin: const EdgeInsets.only(left: 8),
@@ -1089,19 +1077,17 @@ class TabbedSectionPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return buildSectionContainer(
-      // Use public helper
       title: title,
       trailingAction: Row(
-        // Example placeholder tabs
         mainAxisSize: MainAxisSize.min,
         children: [
-          _buildPlaceholderTab("Revenue", true), // Example selected tab
+          _buildPlaceholderTab("Revenue", true),
           _buildPlaceholderTab("Leads", false),
           _buildPlaceholderTab("W/L", false),
         ],
       ),
       child: Container(
-        height: 180, // Example height
+        height: 180,
         decoration: BoxDecoration(
           color: AppColors.lightGrey.withOpacity(0.3),
           borderRadius: BorderRadius.circular(8.0),

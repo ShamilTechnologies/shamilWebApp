@@ -6,136 +6,161 @@ import 'package:flutter/services.dart'; // For input formatters
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
+import 'package:shamil_web_app/features/auth/views/page/steps/business_data_step.dart';
+import 'package:shamil_web_app/features/auth/views/page/steps/business_details_widgets/basic_info_section.dart';
 
-// Typedef for helper functions passed from parent
-typedef InputDecorationBuilder = InputDecoration Function({required String label, bool enabled, String? hint});
-typedef SectionHeaderBuilder = Widget Function(String title);
 
-/// Section for Address and Location fields.
+/// Renders the form fields for business address and location selection.
 class AddressLocationSection extends StatelessWidget {
-  final GlobalKey<FormState> formKey; // Passed down for validation context
   final TextEditingController streetController;
   final TextEditingController cityController;
   final TextEditingController postalCodeController;
   final String? selectedGovernorate;
-  final List<String> governorates;
-  final GeoPoint? selectedLocation;
-  final ValueChanged<String?>? onGovernorateChanged;
-  final VoidCallback? onLocationTap;
+  final List<String> governorates; // List of available governorates
+  final GeoPoint? selectedLocation; // Current selected GeoPoint
+  final ValueChanged<String?>? onGovernorateChanged; // Nullable callback
+  final VoidCallback? onLocationTap; // Callback to open map picker
   final bool enabled;
-  // Helper functions passed from parent state
-  final InputDecorationBuilder inputDecorationBuilder;
+  // Accept builder functions matching typedefs from constants file
   final SectionHeaderBuilder sectionHeaderBuilder;
+  final InputDecorationBuilder inputDecorationBuilder;
 
   const AddressLocationSection({
-    super.key, // Add key
-    required this.formKey,
+    super.key,
+    // Pass form key only if needed for internal validation triggers
+    // required this.formKey,
     required this.streetController,
     required this.cityController,
     required this.postalCodeController,
     required this.selectedGovernorate,
     required this.governorates,
     required this.selectedLocation,
-    required this.onGovernorateChanged,
+    this.onGovernorateChanged, // Nullable
     required this.onLocationTap,
     required this.enabled,
-    required this.inputDecorationBuilder, // Require helpers
-    required this.sectionHeaderBuilder, // Require helpers
+    required this.sectionHeaderBuilder, // Require builder function
+    required this.inputDecorationBuilder, // Require builder function
   });
+
+  // final GlobalKey<FormState> formKey; // Uncomment if needed
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        sectionHeaderBuilder("Address & Location"), // Use helper from parent
-        GlobalTextFormField(
+        // Use the passed builder function for the header
+        sectionHeaderBuilder("Address & Location"),
+
+        // Street Address
+        RequiredTextFormField(
           labelText: "Street Address*",
-          hintText: "e.g., 123 Nile St, Building 5, Floor 2",
+          hintText: "Enter street name and building number",
           controller: streetController,
           enabled: enabled,
-          validator: (value) => (value == null || value.trim().isEmpty) ? 'Street address is required' : null,
+          prefixIconData: Icons.location_on_outlined,
         ),
         const SizedBox(height: 20),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start, // Align validation messages
-          children: [
-            Expanded(
-              child: GlobalTextFormField(
-                labelText: "City*",
-                hintText: "e.g., Maadi",
-                controller: cityController,
-                enabled: enabled,
-                validator: (value) => (value == null || value.trim().isEmpty) ? 'City is required' : null,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: GlobalTextFormField(
-                labelText: "Postal Code", // Optional
-                hintText: "e.g., 11728",
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                controller: postalCodeController,
-                enabled: enabled,
-              ),
-            ),
-          ],
+
+        // City
+        RequiredTextFormField(
+          labelText: "City*",
+          hintText: "Enter the city name",
+          controller: cityController,
+          enabled: enabled,
+           prefixIconData: Icons.location_city_outlined,
         ),
         const SizedBox(height: 20),
-        DropdownButtonFormField<String>(
+
+        // Governorate Dropdown
+        GlobalDropdownFormField<String>(
+          labelText: "Governorate*",
+          hintText: "Select Governorate",
           value: selectedGovernorate,
-          hint: const Text("Select Governorate*"),
-          isExpanded: true, // Use available width
-          items: governorates.map((String value) => DropdownMenuItem<String>(value: value, child: Text(value, overflow: TextOverflow.ellipsis))).toList(),
-          onChanged: onGovernorateChanged,
-          validator: (value) => (value == null || value.isEmpty) ? 'Please select a governorate' : null,
-          decoration: inputDecorationBuilder(label: "Governorate*", enabled: enabled), // Use helper
+          items: governorates.map((String gov) =>
+              DropdownMenuItem<String>(value: gov, child: Text(gov))).toList(),
+          onChanged: enabled ? onGovernorateChanged : null, // Use nullable callback
+          validator: (value) {
+            if (value == null || value.isEmpty) return 'Please select a governorate';
+            return null;
+          },
+          enabled: enabled,
+          prefixIcon: const Icon(Icons.map_outlined),
         ),
         const SizedBox(height: 20),
-        // Location Picker Placeholder using FormField for validation integration
-        FormField<GeoPoint>(
-           initialValue: selectedLocation, // Not directly used by FormField but good practice
+
+        // Postal Code (Optional)
+        GlobalTextFormField(
+          labelText: "Postal Code (Optional)",
+          hintText: "Enter postal code if applicable",
+          controller: postalCodeController,
+          enabled: enabled,
+          keyboardType: TextInputType.number,
+          prefixIcon: const Icon(Icons.local_post_office_outlined),
+          // No validator needed as it's optional
+        ),
+        const SizedBox(height: 20),
+
+        // Location Picker Field (Read-only, triggers map picker)
+        FormField<GeoPoint>( // Use FormField for validation integration
+           key: const ValueKey('location_form_field'), // Add key if needed
            enabled: enabled,
-           validator: (value) { // Use the state variable passed from parent for validation
-              if (selectedLocation == null) {
-                 return 'Location is required';
+           initialValue: selectedLocation, // Use the selectedLocation from parent state
+           validator: (value) { // Validate that a location has been selected
+              if (value == null) {
+                 return 'Please select the location on the map';
               }
-              return null;
+              return null; // Valid if not null
            },
-           builder: (formFieldState) {
-             return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                   ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), // Adjust padding
-                      leading: const Icon(Icons.map_outlined, color: AppColors.primaryColor),
-                      title: Text("Location on Map*", style: getbodyStyle()),
-                      subtitle: Text(
-                         selectedLocation != null // Use state variable passed from parent
-                             ? 'Lat: ${selectedLocation!.latitude.toStringAsFixed(5)}, Lng: ${selectedLocation!.longitude.toStringAsFixed(5)}'
-                             : 'Tap to select location',
-                         style: getSmallStyle(color: AppColors.mediumGrey)
-                      ),
-                      onTap: onLocationTap, // Use callback from parent
-                      trailing: selectedLocation != null ? const Icon(Icons.check_circle, color: Colors.green) : null,
-                      tileColor: Colors.grey[50],
-                      shape: RoundedRectangleBorder(
-                         borderRadius: BorderRadius.circular(10),
-                         // Show error border from FormField state
-                         side: BorderSide(color: formFieldState.hasError ? Theme.of(context).colorScheme.error : AppColors.mediumGrey.withOpacity(0.5))
-                      ),
-                   ),
-                   // Display error text if validation fails
-                   if (formFieldState.hasError)
-                      Padding(
-                         padding: const EdgeInsets.only(left: 16.0, top: 8.0),
-                         child: Text(formFieldState.errorText!, style: getSmallStyle(color: Theme.of(context).colorScheme.error)),
-                      ),
-                ],
-             );
+           builder: (FormFieldState<GeoPoint> field) {
+              // Use the inputDecorationBuilder from parent for consistency
+              final InputDecoration effectiveDecoration = inputDecorationBuilder(
+                 label: "Location on Map*",
+                 enabled: enabled,
+                 hint: 'Tap to select location' // Hint isn't directly used here but good practice
+              ).copyWith( // Customize the base decoration
+                 prefixIcon: Icon(Icons.pin_drop_outlined, color: AppColors.darkGrey.withOpacity(0.7)),
+                 suffixIcon: Icon(Icons.map_outlined, color: enabled ? AppColors.primaryColor : AppColors.mediumGrey),
+                 errorText: field.errorText, // Display validation error from FormField state
+              );
+
+              return Column(
+                 crossAxisAlignment: CrossAxisAlignment.start,
+                 children: [
+                    // Display label manually above the InkWell field
+                    Text(
+                       effectiveDecoration.labelText ?? '', // Use labelText from decoration
+                       style: effectiveDecoration.labelStyle ?? getbodyStyle(fontSize: 14, color: AppColors.darkGrey.withOpacity(0.8)),
+                    ),
+                    const SizedBox(height: 6),
+                    InputDecorator( // Provides the border and structure
+                       decoration: effectiveDecoration,
+                       child: InkWell( // Make the field tappable
+                          onTap: enabled ? onLocationTap : null, // Trigger map picker callback
+                          child: Container(
+                             height: 24, // Ensure minimum height for tap target and text display
+                             alignment: Alignment.centerLeft,
+                             child: Text(
+                                selectedLocation != null
+                                    // Display selected coordinates with fixed precision
+                                    ? 'Location Selected (${selectedLocation!.latitude.toStringAsFixed(4)}, ${selectedLocation!.longitude.toStringAsFixed(4)})'
+                                    : 'Tap to select location', // Placeholder text
+                                style: getbodyStyle( // Style the text inside
+                                   color: selectedLocation != null
+                                          ? (enabled ? AppColors.darkGrey : AppColors.secondaryColor) // Color based on selection and enabled state
+                                          : AppColors.mediumGrey, // Hint color if nothing selected
+                                   fontSize: 15
+                                ),
+                                overflow: TextOverflow.ellipsis, // Prevent overflow
+                             ),
+                          ),
+                       ),
+                    ),
+                 ],
+              );
            },
         ),
+
       ],
     );
   }
