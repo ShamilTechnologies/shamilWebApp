@@ -1,152 +1,277 @@
-
 // --- 4. Reservation Management Section ---
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
+import 'package:shamil_web_app/features/dashboard/helper/dashboard_widgets.dart';
 
-
-// --- 4. Reservation Management Section ---
-/// Displays upcoming reservations, potentially with a calendar view.
 class ReservationManagementSection extends StatelessWidget {
-  final List<Reservation> reservations;
-
+  final List<Reservation> reservations; // Use correct model name
   const ReservationManagementSection({super.key, required this.reservations});
 
-  @override
-  Widget build(BuildContext context) {
-    // Filter for upcoming confirmed/pending reservations
-    final upcomingReservations = reservations.where((r) =>
-        ['Confirmed', 'Pending'].contains(r.status) &&
-        r.dateTime.toDate().isAfter(DateTime.now())
-    ).toList();
-    // Sort them chronologically
-    upcomingReservations.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+  // --- Helper Method to Show Details Dialog ---
+  void _showReservationDetailsDialog(BuildContext context, Reservation res) {
+    final DateFormat dateTimeFormat = DateFormat(
+      'EEE, d MMM yyyy, hh:mm a',
+    ); // Format for dialog
+    final DateFormat timeFormat = DateFormat('hh:mm a');
 
+    // Calculate end time if duration exists
+    DateTime? endTime =
+        res.durationMinutes != null
+            ? res.startTime.add(Duration(minutes: res.durationMinutes!))
+            : null;
 
-    return _buildSectionCard(
-      title: "Upcoming Reservations",
-      trailingAction: TextButton.icon( // Use TextButton.icon
-         icon: const Icon(Icons.calendar_month_outlined, size: 18),
-         label: Text("View Calendar", style: getbodyStyle(color: AppColors.primaryColor)),
-         onPressed: () {
-             // TODO: Navigate to a dedicated 'Full Calendar' screen
-             ScaffoldMessenger.of(context).showSnackBar(
-               const SnackBar(content: Text("Full Calendar view not implemented yet."))
-            );
-         },
-          style: TextButton.styleFrom(padding: EdgeInsets.zero),
-      ),
-      child: Column(
+    showDialog(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text("Reservation Details"),
+            content: SingleChildScrollView(
+              child: ListBody(
+                children: <Widget>[
+                  _buildDetailRow("Reservation ID:", res.id),
+                  _buildDetailRow("User ID:", res.userId),
+                  _buildDetailRow("User Name:", res.userName),
+                  _buildDetailRow("Service:", res.serviceName ?? "N/A"),
+                  _buildDetailRow(
+                    "Date & Time:",
+                    dateTimeFormat.format(res.startTime),
+                  ),
+                  if (res.durationMinutes != null)
+                    _buildDetailRow(
+                      "Duration:",
+                      "${res.durationMinutes} minutes",
+                    ),
+                  if (endTime != null)
+                    _buildDetailRow("Ends Around:", timeFormat.format(endTime)),
+                  _buildDetailRow(
+                    "Status:",
+                    res.status,
+                  ), // Consider using buildStatusChip
+                  if (res.notes != null && res.notes!.isNotEmpty)
+                    _buildDetailRow("Notes:", res.notes!),
+                  _buildDetailRow("Provider ID:", res.providerId),
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                child: const Text('Close'),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+              ),
+              // Optional: Add more actions like "Cancel Reservation" etc.
+              // TextButton(
+              //   child: const Text('Cancel Reservation', style: TextStyle(color: AppColors.redColor)),
+              //   onPressed: () {
+              //     // TODO: Implement cancellation logic (e.g., dispatch event to Bloc)
+              //     Navigator.of(dialogContext).pop();
+              //     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cancel action not implemented.")));
+              //   },
+              // ),
+            ],
+          ),
+    );
+  }
+
+  // Helper for dialog rows (copied for consistency)
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // --- Calendar Placeholder ---
-          // TODO: Implement Actual Calendar View HERE using a suitable package.
-          // This requires state management for selected dates and marking reservation days.
-          Container(
-             height: 120, // Reduced placeholder height
-             width: double.infinity,
-             decoration: BoxDecoration(
-                color: AppColors.lightGrey.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(8.0), // 8px radius
-                // border: Border.all(color: AppColors.mediumGrey.withOpacity(0.3))
-             ),
-             child: const Center(child: Text("Calendar Placeholder\n(Requires Package & Implementation)", textAlign: TextAlign.center, style: TextStyle(color: AppColors.mediumGrey))),
-          ),
-          const SizedBox(height: 16),
-
-          // --- Upcoming List ---
-          Text("Next Few:", style: getbodyStyle(fontWeight: FontWeight.w600, color: AppColors.darkGrey)),
-          const SizedBox(height: 8),
-          if (upcomingReservations.isEmpty)
-             const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24.0),
-                child: Center(child: Text("No upcoming reservations.", style: TextStyle(color: AppColors.mediumGrey, fontSize: 15))),
-             )
-          else
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: upcomingReservations.length > 5 ? 5 : upcomingReservations.length, // Limit displayed items
-              separatorBuilder: (context, index) => const Divider(height: 1, thickness: 1, indent: 60, endIndent: 0, color: AppColors.lightGrey),
-              itemBuilder: (context, index) {
-                 final res = upcomingReservations[index];
-                 // Format date and time clearly
-                 final formattedDateTime = DateFormat('EEE, d MMM - hh:mm a').format(res.dateTime.toDate());
-
-                 return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 0),
-                    // Use Rounded Square for Leading Element
-                    leading: Container(
-                       width: 40, height: 40,
-                       decoration: BoxDecoration(
-                           color: AppColors.accentColor.withOpacity(0.1),
-                           borderRadius: BorderRadius.circular(8.0) // 8px radius
-                       ),
-                       child: Center(child: Icon(Icons.event_note_outlined, color: AppColors.primaryColor, size: 20)),
-                    ),
-                    title: Text(res.userName, style: getbodyStyle(fontWeight: FontWeight.w500)),
-                    subtitle: Text("${res.serviceName ?? 'Reservation'} - ${res.status}", style: getSmallStyle(color: AppColors.secondaryColor)),
-                    trailing: Text(formattedDateTime, style: getSmallStyle()),
-                     onTap: () {
-                       // TODO: Navigate to reservation detail or show dialog to confirm/cancel
-                       print("Tapped reservation: ${res.id}");
-                       ScaffoldMessenger.of(context).showSnackBar(
-                         SnackBar(content: Text("View details for ${res.userName}'s reservation not implemented yet."))
-                      );
-                     },
-                 );
-              },
-            )
+          Text("$label ", style: getbodyStyle(fontWeight: FontWeight.w600)),
+          Expanded(child: Text(value, style: getbodyStyle())),
         ],
       ),
     );
   }
-}
+  // --- End Helper Methods ---
 
-/// Helper: Builds a consistent card wrapper for dashboard sections.
-Widget _buildSectionCard({
-  required String title,
-  required Widget child,
-  Widget? trailingAction, // Optional widget for the top right (e.g., 'View All' button)
-  EdgeInsetsGeometry padding = const EdgeInsets.all(16.0), // Default padding
-}) {
-  return Card(
-    elevation: 1.0, // Reduced elevation for a flatter look
-    shadowColor: Colors.grey.withOpacity(0.2), // Softer shadow color
-    margin: const EdgeInsets.only(bottom: 16.0),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)), // Use 8px radius
-    clipBehavior: Clip.antiAlias,
-    color: AppColors.white,
-    child: Padding(
-      padding: padding,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Section Header Row
-          Row(
-             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-             crossAxisAlignment: CrossAxisAlignment.start,
-             children: [
-                // Use Expanded for title to handle long titles gracefully
-                Expanded(
-                  child: Text(
-                    title,
-                    style: getTitleStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.darkGrey) // Slightly darker title
-                  )
-                ),
-                if (trailingAction != null) Padding(
-                  padding: const EdgeInsets.only(left: 8.0),
-                  child: trailingAction, // Display the action widget if provided
-                ),
-             ],
+  @override
+  Widget build(BuildContext context) {
+    // Filter and sort upcoming reservations
+    // Ensure startTime is correctly accessed via getter after .toDate()
+    final upcomingReservations =
+        reservations
+            .where(
+              (r) =>
+                  ['Confirmed', 'Pending'].contains(r.status) &&
+                  r.startTime.isAfter(DateTime.now()),
+            )
+            .toList();
+    upcomingReservations.sort((a, b) => a.startTime.compareTo(b.startTime));
+
+    return buildSectionContainer(
+      // Use the public helper
+      title: "Upcoming Reservations",
+      trailingAction: TextButton(
+        child: Text(
+          "View Calendar",
+          style: getbodyStyle(
+            color: AppColors.primaryColor,
+            fontWeight: FontWeight.w500,
           ),
-          const SizedBox(height: 8), // Reduced space before divider
-          const Divider(height: 16, thickness: 1, color: AppColors.lightGrey), // Thinner divider
-          child, // The main content of the section
+        ),
+        onPressed: () {
+          // TODO: Implement navigation to full calendar screen
+          print("View Calendar button tapped");
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Navigate to Calendar not implemented."),
+            ),
+          );
+        },
+        style: TextButton.styleFrom(padding: EdgeInsets.zero),
+      ),
+      child: Column(
+        children: [
+          // --- Calendar Placeholder ---
+          Container(
+            height: 150,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: AppColors.lightGrey.withOpacity(0.5),
+              borderRadius: BorderRadius.circular(8.0),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: 30,
+                  color: AppColors.mediumGrey.withOpacity(0.8),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  "Calendar View Placeholder",
+                  style: getbodyStyle(color: AppColors.mediumGrey),
+                ),
+                Text(
+                  "(Requires Package & Implementation)",
+                  style: getSmallStyle(color: AppColors.mediumGrey),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          // --- Upcoming List ---
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              "Next Reservations:",
+              style: getbodyStyle(
+                fontWeight: FontWeight.w600,
+                color: AppColors.darkGrey,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          upcomingReservations.isEmpty
+              ? buildEmptyState(
+                "No upcoming reservations.",
+                icon: Icons.event_busy_outlined,
+              ) // Use public helper
+              : ListTableSection(
+                // Use the generic ListTableSection for the list part
+                title: "", // No title needed here
+                items:
+                    upcomingReservations.map((res) => {'data': res}).toList(),
+                maxItemsToShow: 3, // Show fewer items below calendar
+                rowBuilder: (item, index, isLast) {
+                  final Reservation res = item['data'];
+                  final formattedDateTime = DateFormat(
+                    'EEE, d MMM - hh:mm a',
+                  ).format(res.startTime); // Use startTime getter
+                  return InkWell(
+                    // *** UPDATED onTap ***
+                    onTap:
+                        () => _showReservationDetailsDialog(
+                          context,
+                          res,
+                        ), // Show details dialog
+                    borderRadius: BorderRadius.circular(8.0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14.0,
+                        horizontal: 0,
+                      ),
+                      decoration: BoxDecoration(
+                        border:
+                            !isLast
+                                ? Border(
+                                  bottom: BorderSide(
+                                    color: AppColors.lightGrey.withOpacity(0.7),
+                                    width: 1.0,
+                                  ),
+                                )
+                                : null,
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: AppColors.accentColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8.0),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                Icons.event_note_outlined,
+                                color: AppColors.primaryColor,
+                                size: 18,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 3,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  res.userName,
+                                  style: getbodyStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ), // Use userName
+                                const SizedBox(height: 2),
+                                Text(
+                                  res.serviceName ?? 'Reservation',
+                                  style: getSmallStyle(
+                                    color: AppColors.secondaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            flex: 2,
+                            child: buildStatusChip(res.status),
+                          ), // Use public helper
+                          const SizedBox(width: 16),
+                          Expanded(
+                            flex: 3,
+                            child: Text(
+                              formattedDateTime,
+                              style: getSmallStyle(color: AppColors.mediumGrey),
+                              textAlign: TextAlign.end,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
         ],
       ),
-    ),
-  );
+    );
+  }
 }

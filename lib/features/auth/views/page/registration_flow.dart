@@ -39,7 +39,7 @@ import 'package:shamil_web_app/features/auth/views/page/widgets/navigation_butto
 
 // --- Import Dashboard Screen ---
 // !! IMPORTANT: Make sure this path is correct for your DashboardScreen !!
-import 'package:shamil_web_app/features/dashboard/views/pages/dashboard_screen.dart';
+import 'package:shamil_web_app/features/dashboard/views/dashboard_screen.dart';
 
 //----------------------------------------------------------------------------//
 // Registration Flow Widget                                                   //

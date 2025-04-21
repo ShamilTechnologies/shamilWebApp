@@ -1,309 +1,383 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For input formatters
+import 'package:intl/intl.dart';
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Adjust path if needed
-import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'; // Adjust path if needed
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
+import 'package:shamil_web_app/features/dashboard/helper/dashboard_widgets.dart'; // Adjust path if needed
+
+// Define typedef for callback
+typedef OnPlansChanged = void Function(List<SubscriptionPlan> updatedPlans);
 
 class SubscriptionPlansWidget extends StatefulWidget {
-  final List<SubscriptionPlan>? initialPlans;
-  // Callback still passes the full list back to the parent (PricingStep)
-  final Function(List<SubscriptionPlan>) onPlansChanged;
-  final bool enabled; // <-- Added enabled parameter
+  final List<SubscriptionPlan> initialPlans;
+  final OnPlansChanged onPlansChanged;
+  final bool enabled;
 
   const SubscriptionPlansWidget({
     super.key,
-    this.initialPlans,
+    required this.initialPlans,
     required this.onPlansChanged,
-    this.enabled = true, // <-- Default to enabled
+    this.enabled = true,
   });
 
   @override
-  State<SubscriptionPlansWidget> createState() => _SubscriptionPlansWidgetState();
+  State<SubscriptionPlansWidget> createState() =>
+      _SubscriptionPlansWidgetState();
 }
 
 class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
-  late List<SubscriptionPlan> _plans;
-  // Manage controllers internally
-  final List<TextEditingController> _nameControllers = [];
-  final List<TextEditingController> _priceControllers = [];
-  final List<TextEditingController> _descriptionControllers = [];
-  // Add keys for Forms within the list items if validation needs to be triggered individually
-   final List<GlobalKey<FormState>> _formKeys = [];
+  late List<SubscriptionPlan> _currentPlans;
+  final currencyFormat = NumberFormat.currency(
+    locale: 'en_EG',
+    symbol: 'EGP ',
+    decimalDigits: 2,
+  );
 
   @override
   void initState() {
     super.initState();
-    _initializeState(widget.initialPlans);
+    // Create a mutable copy of the initial list
+    _currentPlans = List<SubscriptionPlan>.from(widget.initialPlans);
   }
 
+  // Update local state if the initial plans from the parent change
   @override
   void didUpdateWidget(covariant SubscriptionPlansWidget oldWidget) {
-      super.didUpdateWidget(oldWidget);
-      // If the initial plans from parent change AND they are different from current internal state, re-initialize.
-      // This is complex logic - might be simpler to make widget fully controlled by parent if needed.
-      // For now, we assume initialization happens mostly once.
-      // Consider if re-initialization is truly needed based on your flow.
-      // if (widget.initialPlans != oldWidget.initialPlans) {
-      //    _initializeState(widget.initialPlans);
-      // }
-  }
-
-  // Helper to initialize or re-initialize state and controllers
-  void _initializeState(List<SubscriptionPlan>? plans) {
-       // Dispose existing controllers before clearing lists
-       for (var controller in _nameControllers) { controller.dispose(); }
-       for (var controller in _priceControllers) { controller.dispose(); }
-       for (var controller in _descriptionControllers) { controller.dispose(); }
-
-      _plans = List<SubscriptionPlan>.from(plans ?? []); // Create a mutable copy
-       _nameControllers.clear();
-       _priceControllers.clear();
-       _descriptionControllers.clear();
-       _formKeys.clear();
-
-      for (var plan in _plans) {
-        _nameControllers.add(TextEditingController(text: plan.name));
-        _priceControllers.add(TextEditingController(text: plan.price > 0 ? plan.price.toStringAsFixed(2) : '')); // Handle 0 price display
-        _descriptionControllers.add(TextEditingController(text: plan.description));
-         _formKeys.add(GlobalKey<FormState>()); // Add a Form key for each plan item
-      }
-  }
-
-
-  void _addPlan() {
-    // Add a new plan with default values and corresponding controllers/keys
-    setState(() {
-      _plans.add(const SubscriptionPlan(
-        name: '',
-        price: 0.0,
-        description: '',
-        duration: 'Monthly', // Default duration
-      ));
-      _nameControllers.add(TextEditingController());
-      _priceControllers.add(TextEditingController());
-      _descriptionControllers.add(TextEditingController());
-       _formKeys.add(GlobalKey<FormState>());
-    });
-    // Notify the parent widget (PricingStep) about the change in the plans list
-    widget.onPlansChanged(_plans);
-  }
-
-  void _removePlan(int index) {
-     // Dispose controllers before removing them
-    _nameControllers[index].dispose();
-    _priceControllers[index].dispose();
-    _descriptionControllers[index].dispose();
-
-    setState(() {
-      _plans.removeAt(index);
-      _nameControllers.removeAt(index);
-      _priceControllers.removeAt(index);
-      _descriptionControllers.removeAt(index);
-       _formKeys.removeAt(index); // Remove corresponding key
-    });
-    // Notify the parent widget (PricingStep)
-    widget.onPlansChanged(_plans);
-  }
-
-   // Update the plan data based on text field changes
-  void _updatePlanData(int index) {
-      // Optional: Validate the specific plan's form before updating the model list
-      // if (!(_formKeys[index].currentState?.validate() ?? false)) {
-      //     return; // Don't update if invalid
-      // }
-      setState(() {
-          _plans[index] = _plans[index].copyWith(
-              name: _nameControllers[index].text.trim(),
-              price: double.tryParse(_priceControllers[index].text) ?? 0.0,
-              description: _descriptionControllers[index].text.trim(),
-              // Duration is updated via its own dropdown onChanged
-          );
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialPlans != oldWidget.initialPlans) {
+      // Use WidgetsBinding to avoid calling setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _currentPlans = List<SubscriptionPlan>.from(widget.initialPlans);
+          });
+        }
       });
-       // Notify parent immediately on field change
-       // This keeps parent state (_currentSubscriptionPlans) in sync
-       widget.onPlansChanged(_plans);
+    }
   }
 
-   void _updatePlanDuration(int index, String? newDuration) {
-       if (newDuration != null) {
-           setState(() {
-               _plans[index] = _plans[index].copyWith(duration: newDuration);
-           });
-            widget.onPlansChanged(_plans);
-       }
-   }
+  // --- Dialog Logic ---
+  Future<void> _showPlanDialog({SubscriptionPlan? planToEdit}) async {
+    final _formKey = GlobalKey<FormState>();
+    final _nameController = TextEditingController(text: planToEdit?.name ?? '');
+    final _descriptionController = TextEditingController(
+      text: planToEdit?.description ?? '',
+    );
+    final _priceController = TextEditingController(
+      text: planToEdit?.price.toStringAsFixed(2) ?? '',
+    );
+    final _featuresController = TextEditingController(
+      text: planToEdit?.features.join('\n') ?? '',
+    );
+    // *** ADDED Controllers/State for Interval ***
+    final _intervalCountController = TextEditingController(
+      text: planToEdit?.intervalCount.toString() ?? '1',
+    );
+    PricingInterval _selectedInterval =
+        planToEdit?.interval ?? PricingInterval.month; // Default to month
 
-  @override
-  void dispose() {
-    // Dispose all controllers when the widget is removed
-    for (var controller in _nameControllers) { controller.dispose(); }
-    for (var controller in _priceControllers) { controller.dispose(); }
-    for (var controller in _descriptionControllers) { controller.dispose(); }
-    super.dispose();
-  }
-
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isEnabled = widget.enabled; // Use the enabled state from parent
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row( // Title and Add button side-by-side
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              "Subscription Plans",
-              style: getTitleStyle(fontSize: 18, fontWeight: FontWeight.w600, height: 1.5),
-            ),
-            // Add Plan Button - only enabled if widget is enabled
-             ElevatedButton.icon(
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("Add Plan"),
-                onPressed: isEnabled ? _addPlan : null, // Disable if widget not enabled
-                style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    textStyle: getbodyStyle(fontSize: 14, fontWeight: FontWeight.w500)
-                ),
-             ),
-          ],
-        ),
-        const SizedBox(height: 10),
-
-         // Show message if no plans and widget is enabled
-         if (_plans.isEmpty && isEnabled)
-             Padding(
-                 padding: const EdgeInsets.symmetric(vertical: 20.0),
-                 child: Center(child: Text("No subscription plans added yet. Click 'Add Plan' to start.", style: getbodyStyle(color: AppColors.mediumGrey))),
-             ),
-
-        // Plan List - Use Form widget for each item
-        ListView.builder(
-          shrinkWrap: true, // Needed inside Column
-          physics: const NeverScrollableScrollPhysics(), // Disable scrolling if inside another scrollable
-          itemCount: _plans.length,
-          itemBuilder: (context, index) {
-            return Form( // Wrap each plan card in its own Form
-               key: _formKeys[index],
-               child: Card(
-                elevation: 1, // Subtle elevation
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+    final result = await showDialog<SubscriptionPlan?>(
+      context: context,
+      barrierDismissible: false, // User must tap button
+      builder: (BuildContext dialogContext) {
+        // Use StatefulBuilder to manage the interval dropdown state within the dialog
+        return StatefulBuilder(
+          builder: (stfContext, stfSetState) {
+            return AlertDialog(
+              title: Text(planToEdit == null ? 'Add New Plan' : 'Edit Plan'),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: _formKey,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Plan Name *',
+                        ),
+                        validator:
+                            (value) =>
+                                (value == null || value.isEmpty)
+                                    ? 'Please enter a plan name'
+                                    : null,
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _descriptionController,
+                        decoration: const InputDecoration(
+                          labelText: 'Description *',
+                        ),
+                        maxLines: 2,
+                        validator:
+                            (value) =>
+                                (value == null || value.isEmpty)
+                                    ? 'Please enter a description'
+                                    : null,
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _priceController,
+                        decoration: const InputDecoration(
+                          labelText: 'Price (EGP) *',
+                          prefixText: 'EGP ',
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d+\.?\d{0,2}'),
+                          ),
+                        ],
+                        validator: (value) {
+                          if (value == null || value.isEmpty)
+                            return 'Please enter a price';
+                          if (double.tryParse(value) == null)
+                            return 'Invalid price format';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      // *** ADDED Interval Fields ***
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          // Plan Name Field (takes available space)
                           Expanded(
-                            child: GlobalTextFormField(
-                              labelText: "Plan Name*",
-                              hintText: "E.g., Basic, Premium",
-                              controller: _nameControllers[index],
-                              enabled: isEnabled,
+                            flex: 2,
+                            child: TextFormField(
+                              controller: _intervalCountController,
+                              decoration: const InputDecoration(
+                                labelText: 'Interval Count *',
+                              ),
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                              ],
                               validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Plan name required';
-                                }
+                                if (value == null || value.isEmpty)
+                                  return 'Enter count';
+                                if (int.tryParse(value) == null ||
+                                    int.parse(value) <= 0)
+                                  return 'Invalid';
                                 return null;
                               },
-                              onChanged: (_) => _updatePlanData(index), // Update plan data on change
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          // Remove Button
-                          IconButton(
-                            icon: Icon(Icons.delete_outline, color: isEnabled ? AppColors.redColor : AppColors.mediumGrey),
-                            tooltip: "Remove Plan",
-                            padding: const EdgeInsets.only(top: 8), // Align roughly with text field top
-                            constraints: const BoxConstraints(),
-                            iconSize: 22,
-                            onPressed: isEnabled ? () => _removePlan(index) : null, // Disable if needed
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 3,
+                            child: DropdownButtonFormField<PricingInterval>(
+                              value: _selectedInterval,
+                              decoration: const InputDecoration(
+                                labelText: 'Interval *',
+                              ),
+                              items:
+                                  PricingInterval.values.map((
+                                    PricingInterval interval,
+                                  ) {
+                                    return DropdownMenuItem<PricingInterval>(
+                                      value: interval,
+                                      child: Text(
+                                        interval.name[0].toUpperCase() +
+                                            interval.name.substring(1),
+                                      ), // Capitalize first letter
+                                    );
+                                  }).toList(),
+                              onChanged: (PricingInterval? newValue) {
+                                if (newValue != null) {
+                                  // Use stfSetState to update the dialog's stateful part
+                                  stfSetState(() {
+                                    _selectedInterval = newValue;
+                                  });
+                                }
+                              },
+                              validator:
+                                  (value) =>
+                                      value == null ? 'Select interval' : null,
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      // Price Field
-                      GlobalTextFormField(
-                        labelText: "Price*",
-                        hintText: "e.g., 9.99",
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))],
-                        controller: _priceControllers[index],
-                        enabled: isEnabled,
-                        prefixIcon: Icon(Icons.attach_money, size: 18, color: AppColors.darkGrey.withOpacity(0.7)), // Add currency icon
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Price required';
-                          }
-                          final price = double.tryParse(value);
-                          if (price == null) {
-                             return 'Invalid number';
-                          }
-                           if (price <= 0) { // Usually plans are > 0
-                             return 'Price must be positive';
-                           }
-                          return null;
-                        },
-                         onChanged: (_) => _updatePlanData(index),
-                      ),
-                      const SizedBox(height: 12),
-                       // Description Field (using TextAreaFormField)
-                      TextAreaFormField(
-                         labelText: "Description", // Optional field? Adjust validator if so
-                         hintText: "Describe what this plan includes...",
-                         minLines: 2,
-                         maxLines: 4,
-                         controller: _descriptionControllers[index],
-                         enabled: isEnabled,
-                          validator: (value) { // Make validation optional if needed
-                            // if (value == null || value.trim().isEmpty) {
-                            //   return 'Description required';
-                            // }
-                            return null; // Return null if optional or valid
-                          },
-                          onChanged: (_) => _updatePlanData(index),
-                      ),
-                      const SizedBox(height: 12),
-                       // Duration Dropdown
-                      DropdownButtonFormField<String>(
-                        value: _plans[index].duration.isNotEmpty && ['Monthly', 'Yearly'].contains(_plans[index].duration)
-                               ? _plans[index].duration
-                               : 'Monthly', // Default to Monthly if invalid/empty
-                        items: ['Monthly', 'Yearly'].map((duration) { // Simple duration options
-                          return DropdownMenuItem<String>(
-                            value: duration,
-                            child: Text(duration),
-                          );
-                        }).toList(),
-                        onChanged: isEnabled ? (value) => _updatePlanDuration(index, value) : null,
-                        decoration: InputDecoration(
-                          labelText: "Duration",
-                          labelStyle: getbodyStyle(fontSize: 14, color: AppColors.darkGrey),
-                          // Use contentPadding from GlobalTextFormField decoration for consistency?
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), // Adjust padding
-                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppColors.mediumGrey.withOpacity(0.7))),
-                           focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primaryColor, width: 1.5)),
-                           enabled: isEnabled,
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: _featuresController,
+                        decoration: const InputDecoration(
+                          labelText: 'Features (one per line)',
+                          alignLabelWithHint: true,
                         ),
-                         // No validator usually needed if defaulted and options are fixed
+                        maxLines: 4,
+                        // No validator needed for optional features
                       ),
                     ],
                   ),
                 ),
               ),
-            ); // End Card
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed:
+                      () => Navigator.of(
+                        dialogContext,
+                      ).pop(null), // Return null on cancel
+                ),
+                TextButton(
+                  child: Text(planToEdit == null ? 'Add Plan' : 'Save Changes'),
+                  onPressed: () {
+                    if (_formKey.currentState!.validate()) {
+                      final featuresList =
+                          _featuresController.text
+                              .split('\n')
+                              .map((s) => s.trim())
+                              .where((s) => s.isNotEmpty)
+                              .toList();
+                      final price =
+                          double.tryParse(_priceController.text) ?? 0.0;
+                      // *** ADDED: Parse interval count ***
+                      final intervalCount =
+                          int.tryParse(_intervalCountController.text) ?? 1;
+
+                      // *** FIXED: Create SubscriptionPlan with correct fields ***
+                      final newPlan = SubscriptionPlan(
+                        id:
+                            planToEdit?.id ??
+                            DateTime.now().millisecondsSinceEpoch
+                                .toString(), // Keep existing ID or generate new
+                        name: _nameController.text.trim(),
+                        description: _descriptionController.text.trim(),
+                        price: price,
+                        features: featuresList,
+                        interval: _selectedInterval, // Use selected interval
+                        intervalCount: intervalCount, // Use parsed count
+                        // duration: duration, // REMOVED duration
+                      );
+                      Navigator.of(
+                        dialogContext,
+                      ).pop(newPlan); // Return the new/edited plan
+                    }
+                  },
+                ),
+              ],
+            );
           },
-        ), // End ListView.builder
+        );
+      },
+    );
 
-        // Removed the explicit "Add New Plan" button from here, moved it next to the title
+    // If the dialog returned a plan (i.e., not cancelled)
+    if (result != null) {
+      setState(() {
+        if (planToEdit == null) {
+          // Add new plan
+          _currentPlans.add(result);
+        } else {
+          // Update existing plan
+          final index = _currentPlans.indexWhere((p) => p.id == planToEdit.id);
+          if (index != -1) {
+            _currentPlans[index] = result;
+          } else {
+            _currentPlans.add(
+              result,
+            ); // Fallback: add if ID somehow didn't match
+          }
+        }
+      });
+      widget.onPlansChanged(_currentPlans); // Notify parent widget
+    }
+  }
 
+  void _deletePlan(int index) {
+    // Optional: Add confirmation dialog here
+    setState(() {
+      _currentPlans.removeAt(index);
+    });
+    widget.onPlansChanged(_currentPlans); // Notify parent widget
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header Row
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              "Subscription Plans",
+              style: getTitleStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ),
+            if (widget.enabled)
+              IconButton(
+                icon: const Icon(
+                  Icons.add_circle,
+                  color: AppColors.primaryColor,
+                  size: 28,
+                ),
+                tooltip: "Add Subscription Plan",
+                onPressed: () => _showPlanDialog(),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // List or Empty State
+        _currentPlans.isEmpty
+            ? buildEmptyState(
+              "No subscription plans added yet. Click '+' to add one.",
+            ) // Use common helper
+            : ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _currentPlans.length,
+              separatorBuilder:
+                  (_, __) => const Divider(height: 1, thickness: 0.5),
+              itemBuilder: (context, index) {
+                final plan = _currentPlans[index];
+                return ListTile(
+                  key: ValueKey(plan.id), // Use ID for key
+                  title: Text(
+                    plan.name,
+                    style: getbodyStyle(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text(
+                    // *** FIXED: Use interval and intervalCount ***
+                    "${currencyFormat.format(plan.price)} / ${plan.intervalCount} ${plan.interval.name}${plan.intervalCount > 1 ? 's' : ''}\n${plan.description}",
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: getSmallStyle(color: AppColors.secondaryColor),
+                  ),
+                  trailing:
+                      widget.enabled
+                          ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit_outlined,
+                                  size: 20,
+                                  color: AppColors.secondaryColor,
+                                ),
+                                tooltip: "Edit Plan",
+                                onPressed:
+                                    () => _showPlanDialog(planToEdit: plan),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 20,
+                                  color: AppColors.redColor,
+                                ),
+                                tooltip: "Delete Plan",
+                                onPressed: () => _deletePlan(index),
+                              ),
+                            ],
+                          )
+                          : null,
+                );
+              },
+            ),
       ],
     );
   }

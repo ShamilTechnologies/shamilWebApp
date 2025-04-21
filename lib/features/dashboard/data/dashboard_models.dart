@@ -1,8 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
+import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
 //----------------------------------------------------------------------------//
 // Dashboard Data Models                                                      //
-// Based on user-provided structure. Updated for consistency with widgets.    //
+// Based on user-provided structure.                                          //
 //----------------------------------------------------------------------------//
 
 /// Represents a user's subscription to a service provider's plan.
@@ -14,7 +15,7 @@ class Subscription extends Equatable {
   final String planName; // Name of the subscription plan
   final String status; // e.g., 'Active', 'Cancelled', 'Expired'
   final Timestamp startDate; // When the subscription period started
-  final Timestamp? expiryDate; // *** RENAMED from endDate ***
+  final Timestamp? expiryDate; // *** RENAMED from endDate *** When the current subscription period ends
   final String? paymentMethodInfo; // Optional: e.g., "Visa **** 1234"
   final double? pricePaid; // Optional: Price paid for this period
 
@@ -32,16 +33,18 @@ class Subscription extends Equatable {
   });
 
   /// Creates a Subscription object from a Firestore Map and document ID.
+  /// Includes null checks and default values. ADAPT FIELD NAMES AS NEEDED.
   factory Subscription.fromMap(String id, Map<String, dynamic> data) {
     return Subscription(
       id: id,
       userId: data['userId'] as String? ?? '',
       providerId: data['providerId'] as String? ?? '',
-      userName: data['userName'] as String? ?? 'Unknown User',
+      userName: data['userName'] as String? ?? 'Unknown User', // Denormalized
       planName: data['planName'] as String? ?? 'Unknown Plan',
       status: data['status'] as String? ?? 'Unknown',
-      startDate: data['startDate'] as Timestamp? ?? Timestamp.now(),
-      expiryDate: data['expiryDate'] as Timestamp? ?? data['endDate'] as Timestamp?, // *** RENAMED (added fallback for old data) ***
+      startDate: data['startDate'] as Timestamp? ?? Timestamp.now(), // Default if missing
+      // Read 'expiryDate' first, fallback to 'endDate' for compatibility
+      expiryDate: data['expiryDate'] as Timestamp? ?? data['endDate'] as Timestamp?, // *** RENAMED (added fallback) ***
       paymentMethodInfo: data['paymentMethodInfo'] as String?,
       pricePaid: (data['pricePaid'] as num?)?.toDouble(),
     );
@@ -59,14 +62,16 @@ class Subscription extends Equatable {
     return {
       'userId': userId,
       'providerId': providerId,
-      'userName': userName,
+      'userName': userName, // Denormalized
       'planName': planName,
       'status': status,
       'startDate': startDate,
       if (expiryDate != null) 'expiryDate': expiryDate, // *** RENAMED ***
       if (paymentMethodInfo != null) 'paymentMethodInfo': paymentMethodInfo,
       if (pricePaid != null) 'pricePaid': pricePaid,
-      // 'lastUpdatedAt': FieldValue.serverTimestamp(),
+      // Consider adding server timestamps for created/updated fields
+      // 'createdAt': FieldValue.serverTimestamp(), // Only on create
+      // 'lastUpdatedAt': FieldValue.serverTimestamp(), // On update
     };
   }
 
@@ -92,8 +97,8 @@ class Subscription extends Equatable {
       status: status ?? this.status,
       startDate: startDate ?? this.startDate,
       expiryDate: expiryDate ?? this.expiryDate, // *** RENAMED ***
-      paymentMethodInfo: paymentMethodInfo ?? this.paymentMethodInfo,
-      pricePaid: pricePaid ?? this.pricePaid,
+      paymentMethodInfo: paymentMethodInfo ?? this.paymentMethodInfo, // Handles null assignment
+      pricePaid: pricePaid ?? this.pricePaid, // Handles null assignment
     );
   }
 
@@ -110,21 +115,24 @@ class Reservation extends Equatable {
   final String userId; // ID of the reserving user
   final String providerId; // ID of the service provider
   final String userName; // Denormalized user name
-  final Timestamp dateTime; // Specific date and time of the reservation
+  final Timestamp dateTime; // Specific date and time of the reservation START
   final String status; // e.g., 'Confirmed', 'Pending', 'Cancelled', 'Completed', 'NoShow'
   final String? serviceName; // Optional: name of the specific service reserved
   final int? durationMinutes; // Optional: duration of the reservation
   final String? notes; // Optional: notes from the user or provider
 
-  // Getter for easy access to DateTime object
+  // Calculated field for easy sorting/display - represents start time
   DateTime get startTime => dateTime.toDate();
+  // Calculated field for end time (optional, assumes durationMinutes is present)
+  DateTime? get endTime => durationMinutes != null ? startTime.add(Duration(minutes: durationMinutes!)) : null;
+
 
   const Reservation({
     required this.id,
     required this.userId,
     required this.providerId,
     required this.userName,
-    required this.dateTime,
+    required this.dateTime, // Represents the start time
     required this.status,
     this.serviceName,
     this.durationMinutes,
@@ -137,8 +145,8 @@ class Reservation extends Equatable {
       id: id,
       userId: data['userId'] as String? ?? '',
       providerId: data['providerId'] as String? ?? '',
-      userName: data['userName'] as String? ?? 'Unknown User',
-      dateTime: data['dateTime'] as Timestamp? ?? Timestamp.now(),
+      userName: data['userName'] as String? ?? 'Unknown User', // Denormalized
+      dateTime: data['dateTime'] as Timestamp? ?? Timestamp.now(), // Default if missing
       status: data['status'] as String? ?? 'Unknown',
       serviceName: data['serviceName'] as String?,
       durationMinutes: data['durationMinutes'] as int?,
@@ -157,8 +165,8 @@ class Reservation extends Equatable {
     return {
       'userId': userId,
       'providerId': providerId,
-      'userName': userName,
-      'dateTime': dateTime,
+      'userName': userName, // Denormalized
+      'dateTime': dateTime, // Store start time
       'status': status,
       if (serviceName != null) 'serviceName': serviceName,
       if (durationMinutes != null) 'durationMinutes': durationMinutes,
@@ -186,9 +194,9 @@ class Reservation extends Equatable {
       userName: userName ?? this.userName,
       dateTime: dateTime ?? this.dateTime,
       status: status ?? this.status,
-      serviceName: serviceName ?? this.serviceName,
-      durationMinutes: durationMinutes ?? this.durationMinutes,
-      notes: notes ?? this.notes,
+      serviceName: serviceName ?? this.serviceName, // Handles null
+      durationMinutes: durationMinutes ?? this.durationMinutes, // Handles null
+      notes: notes ?? this.notes, // Handles null
     );
   }
 
@@ -207,9 +215,9 @@ class AccessLog extends Equatable {
   final String userName; // Denormalized
   final Timestamp timestamp; // *** RENAMED from dateTime *** Time of the access attempt
   final String status; // e.g., 'Granted', 'Denied_SubscriptionExpired', etc.
-  final String action; // *** ADDED *** e.g., "CheckIn", "CheckOut", "EntryAttempt"
   final String? method; // Optional: e.g., 'QR', 'NFC', 'Manual'
   final String? denialReason; // Optional
+  // final String action; // Removed based on model provided in #81 - use status/denialReason
 
   const AccessLog({
     required this.id,
@@ -218,7 +226,7 @@ class AccessLog extends Equatable {
     required this.userName,
     required this.timestamp, // *** RENAMED ***
     required this.status,
-    required this.action, // *** ADDED ***
+    // required this.action, // Removed
     this.method,
     this.denialReason,
   });
@@ -232,7 +240,7 @@ class AccessLog extends Equatable {
       userName: data['userName'] as String? ?? 'Unknown User',
       timestamp: data['timestamp'] as Timestamp? ?? data['dateTime'] as Timestamp? ?? Timestamp.now(), // *** RENAMED (added fallback) ***
       status: data['status'] as String? ?? 'Unknown',
-      action: data['action'] as String? ?? 'Unknown', // *** ADDED ***
+      // action: data['action'] as String? ?? 'Unknown', // Removed
       method: data['method'] as String?, // Kept optional
       denialReason: data['denialReason'] as String?,
     );
@@ -252,7 +260,7 @@ class AccessLog extends Equatable {
       'userName': userName,
       'timestamp': timestamp, // *** RENAMED ***
       'status': status,
-      'action': action, // *** ADDED ***
+      // 'action': action, // Removed
       if (method != null) 'method': method,
       if (denialReason != null) 'denialReason': denialReason,
     };
@@ -266,7 +274,7 @@ class AccessLog extends Equatable {
     String? userName,
     Timestamp? timestamp, // *** RENAMED ***
     String? status,
-    String? action, // *** ADDED ***
+    // String? action, // Removed
     String? method,
     String? denialReason,
   }) {
@@ -277,14 +285,14 @@ class AccessLog extends Equatable {
       userName: userName ?? this.userName,
       timestamp: timestamp ?? this.timestamp, // *** RENAMED ***
       status: status ?? this.status,
-      action: action ?? this.action, // *** ADDED ***
-      method: method ?? this.method,
-      denialReason: denialReason ?? this.denialReason,
+      // action: action ?? this.action, // Removed
+      method: method ?? this.method, // Handles null
+      denialReason: denialReason ?? this.denialReason, // Handles null
     );
   }
 
   @override
-  List<Object?> get props => [id, providerId, userId, userName, timestamp, status, action, method, denialReason]; // *** UPDATED ***
+  List<Object?> get props => [id, providerId, userId, userName, timestamp, status, /*action,*/ method, denialReason]; // *** UPDATED ***
 }
 
 // --- DashboardStats Model ---
@@ -293,29 +301,30 @@ class AccessLog extends Equatable {
 /// This is not typically stored directly in Firestore but calculated by the BLoC.
 class DashboardStats extends Equatable {
   final int activeSubscriptions;
-  // final int upcomingReservations; // Removed as not used in widget
-  final double totalRevenue; // Assuming this represents monthly revenue
+  final int upcomingReservations;
+  final double totalRevenue; // Example: Revenue this month
   final int newMembersMonth;
   final int checkInsToday;
-  final int totalBookingsMonth; // *** ADDED ***
+  // Added based on widget usage analysis
+  final int totalBookingsMonth;
 
   const DashboardStats({
     required this.activeSubscriptions,
-    // required this.upcomingReservations, // Removed
+    required this.upcomingReservations,
     required this.totalRevenue,
     required this.newMembersMonth,
     required this.checkInsToday,
-    required this.totalBookingsMonth, // *** ADDED ***
+    required this.totalBookingsMonth, // Added
   });
 
   /// Represents an empty or default state for statistics.
   const DashboardStats.empty() : this(
     activeSubscriptions: 0,
-    // upcomingReservations: 0, // Removed
+    upcomingReservations: 0,
     totalRevenue: 0.0,
     newMembersMonth: 0,
     checkInsToday: 0,
-    totalBookingsMonth: 0, // *** ADDED ***
+    totalBookingsMonth: 0, // Added
   );
 
   /// Creates a DashboardStats object from a Map (e.g., aggregated data).
@@ -323,30 +332,31 @@ class DashboardStats extends Equatable {
    factory DashboardStats.fromMap(Map<String, dynamic> map) {
      return DashboardStats(
        activeSubscriptions: (map['activeSubscriptions'] as num?)?.toInt() ?? 0,
-       // upcomingReservations: (map['upcomingReservations'] as num?)?.toInt() ?? 0, // Removed
-       totalRevenue: (map['totalRevenueMonth'] as num?)?.toDouble() ?? (map['totalRevenue'] as num?)?.toDouble() ?? 0.0, // Accept either name
+       upcomingReservations: (map['upcomingReservations'] as num?)?.toInt() ?? 0,
+       // Accept common variations for revenue field name
+       totalRevenue: (map['totalRevenueMonth'] as num?)?.toDouble() ?? (map['totalRevenue'] as num?)?.toDouble() ?? 0.0,
        newMembersMonth: (map['newMembersMonth'] as num?)?.toInt() ?? 0,
        checkInsToday: (map['checkInsToday'] as num?)?.toInt() ?? 0,
-       totalBookingsMonth: (map['totalBookingsMonth'] as num?)?.toInt() ?? 0, // *** ADDED ***
+       totalBookingsMonth: (map['totalBookingsMonth'] as num?)?.toInt() ?? 0, // Added
      );
    }
 
    /// Creates a copy of this DashboardStats with optional updated values.
    DashboardStats copyWith({
     int? activeSubscriptions,
-    // int? upcomingReservations, // Removed
+    int? upcomingReservations,
     double? totalRevenue,
     int? newMembersMonth,
     int? checkInsToday,
-    int? totalBookingsMonth, // *** ADDED ***
+    int? totalBookingsMonth, // Added
    }) {
      return DashboardStats(
        activeSubscriptions: activeSubscriptions ?? this.activeSubscriptions,
-       // upcomingReservations: upcomingReservations ?? this.upcomingReservations, // Removed
+       upcomingReservations: upcomingReservations ?? this.upcomingReservations,
        totalRevenue: totalRevenue ?? this.totalRevenue,
        newMembersMonth: newMembersMonth ?? this.newMembersMonth,
        checkInsToday: checkInsToday ?? this.checkInsToday,
-       totalBookingsMonth: totalBookingsMonth ?? this.totalBookingsMonth, // *** ADDED ***
+       totalBookingsMonth: totalBookingsMonth ?? this.totalBookingsMonth, // Added
      );
    }
 
@@ -354,10 +364,10 @@ class DashboardStats extends Equatable {
   @override
   List<Object?> get props => [
     activeSubscriptions,
-    // upcomingReservations, // Removed
+    upcomingReservations,
     totalRevenue,
     newMembersMonth,
     checkInsToday,
-    totalBookingsMonth, // *** ADDED ***
+    totalBookingsMonth, // Added
   ];
 }
