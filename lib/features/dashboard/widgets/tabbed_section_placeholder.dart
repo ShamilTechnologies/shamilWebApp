@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/widgets/tabbed_section_placeholder.dart
 /// --- Placeholder widget for sections with tabs ---
+library;
 
 import 'package:flutter/material.dart';
 

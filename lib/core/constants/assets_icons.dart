@@ -23,4 +23,10 @@ class AssetsIcons {
   static const String successAnimation = 'assets/images/success.json';
   static const String blockAnimation = 'assets/images/block.json';
   static const String WaitingAnimation = 'assets/images/waiting.json';
+
+  //sound
+  static const String successSound = 'assets/sounds/success.mp3';
+  static const String errorSound = 'assets/sounds/error.mp3';
+  static const String notificationSound = 'assets/sounds/notification.mp3';
+  static const String deniedSound = 'assets/sounds/denied.mp3';
 }

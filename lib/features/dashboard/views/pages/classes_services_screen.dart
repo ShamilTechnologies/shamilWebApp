@@ -1,6 +1,7 @@
 /// File: lib/features/dashboard/views/pages/classes_services_screen.dart
 /// --- Screen for viewing and managing Classes/Bookable Services and Subscription Plans ---
 /// --- UPDATED: Fixed import paths ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -172,7 +173,6 @@ class _ServiceListItem extends StatelessWidget {
 
   const _ServiceListItem({
     // *** FIXED: Added Key ***
-    super.key,
     required this.service,
     required this.currencyFormat,
     required this.onEdit,
@@ -267,7 +267,6 @@ class _PlanListItem extends StatelessWidget {
 
   const _PlanListItem({
     // *** FIXED: Added Key ***
-    super.key,
     required this.plan,
     required this.currencyFormat,
     required this.onEdit,

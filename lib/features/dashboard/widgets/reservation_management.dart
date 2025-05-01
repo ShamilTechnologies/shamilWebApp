@@ -110,13 +110,6 @@ class ReservationManagementSection extends StatelessWidget {
       // Use the public helper
       title: "Upcoming Reservations",
       trailingAction: TextButton(
-        child: Text(
-          "View Calendar",
-          style: getbodyStyle(
-            color: AppColors.primaryColor,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
         onPressed: () {
           // TODO: Implement navigation to full calendar screen
           print("View Calendar button tapped");
@@ -127,6 +120,13 @@ class ReservationManagementSection extends StatelessWidget {
           );
         },
         style: TextButton.styleFrom(padding: EdgeInsets.zero),
+        child: Text(
+          "View Calendar",
+          style: getbodyStyle(
+            color: AppColors.primaryColor,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ),
       child: Column(
         children: [
@@ -220,7 +220,7 @@ class ReservationManagementSection extends StatelessWidget {
                               color: AppColors.accentColor.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(8.0),
                             ),
-                            child: Center(
+                            child: const Center(
                               child: Icon(
                                 Icons.event_note_outlined,
                                 color: AppColors.primaryColor,

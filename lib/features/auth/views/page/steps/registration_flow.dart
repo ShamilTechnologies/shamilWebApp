@@ -1,7 +1,6 @@
 import 'dart:async'; // Required for Timer
 
 import 'package:firebase_auth/firebase_auth.dart'; // Required for FirebaseAuth
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart'; // Required for addPostFrameCallback
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -21,7 +20,6 @@ import 'package:shamil_web_app/core/functions/navigation.dart'; // Needs pushAnd
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart';
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart';
-import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 
 // Auth Step Widgets & States (Ensure State classes are public and method names match)
 // !! IMPORTANT: You MUST ensure these State classes (e.g., PersonalDataStepState) are PUBLIC !!

@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/constants/business_categories.dart';
 
 // Import UI utils & Widgets (adjust paths as needed)
-import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
-import 'package:shamil_web_app/core/utils/colors.dart'; // Needed for InputDecoration helper
+// Needed for InputDecoration helper
 
 // Typedef for helper functions passed from parent
 typedef InputDecorationBuilder = InputDecoration Function({required String label, bool enabled, String? hint});

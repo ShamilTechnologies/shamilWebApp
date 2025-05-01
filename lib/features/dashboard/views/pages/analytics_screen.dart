@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/views/pages/analytics_screen.dart
 /// --- Placeholder screen for viewing Analytics ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
@@ -21,7 +22,7 @@ class AnalyticsScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-             Icon(Icons.analytics_outlined, size: 60, color: AppColors.mediumGrey),
+             const Icon(Icons.analytics_outlined, size: 60, color: AppColors.mediumGrey),
             const SizedBox(height: 16),
             Text(
               'Analytics Screen Content',

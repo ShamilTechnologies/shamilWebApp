@@ -1,11 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart'; // Needed for GeoPoint
 import 'package:equatable/equatable.dart';
-import 'package:flutter/foundation.dart'; // Needed for Uint8List potentially in assetData
-import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
-
-// Import the model and potentially other needed types
-// Adjust path as per your project structure
+// Needed for Uint8List potentially in assetData
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
+import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
 
 // --- Base Event Class ---
 abstract class ServiceProviderEvent extends Equatable {
@@ -25,17 +22,21 @@ class NavigateToStep extends ServiceProviderEvent {
 }
 
 // --- Data Update Events ---
+// Base class for events that update step data AND trigger a save
 abstract class UpdateAndValidateStepData extends ServiceProviderEvent {
   const UpdateAndValidateStepData();
+  // Apply updates to the model *before* saving
   ServiceProviderModel applyUpdates(ServiceProviderModel currentModel);
 }
 
+// Consolidated event for Step 1 data
 class UpdatePersonalIdDataEvent extends UpdateAndValidateStepData {
   final String name;
-  final DateTime? dob;
-  final String? gender;
+  final DateTime? dob; // Keep field, value comes from local state now
+  final String? gender; // Keep field, value comes from local state now
   final String personalPhoneNumber;
   final String idNumber;
+
   const UpdatePersonalIdDataEvent({
     required this.name,
     required this.dob,
@@ -43,6 +44,7 @@ class UpdatePersonalIdDataEvent extends UpdateAndValidateStepData {
     required this.personalPhoneNumber,
     required this.idNumber,
   });
+
   @override
   ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) =>
       currentModel.copyWith(
@@ -52,10 +54,13 @@ class UpdatePersonalIdDataEvent extends UpdateAndValidateStepData {
         personalPhoneNumber: personalPhoneNumber,
         idNumber: idNumber,
       );
+
   @override
   List<Object?> get props => [name, dob, gender, personalPhoneNumber, idNumber];
 }
 
+
+// Event for Step 2 data
 class UpdateBusinessDataEvent extends UpdateAndValidateStepData {
   final String businessName;
   final String businessDescription;
@@ -64,11 +69,10 @@ class UpdateBusinessDataEvent extends UpdateAndValidateStepData {
   final String website;
   final String businessCategory;
   final String? businessSubCategory;
-  final Map<String, String> address;
+  final Map<String, String> address; // Contains display name for governorate
   final GeoPoint? location;
   final OpeningHours openingHours;
   final List<String> amenities;
-  // servicesOffered removed
 
   const UpdateBusinessDataEvent({
     required this.businessName,
@@ -86,6 +90,7 @@ class UpdateBusinessDataEvent extends UpdateAndValidateStepData {
 
   @override
   ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) {
+    // Bloc handles mapping governorate display name to ID during save
     return currentModel.copyWith(
       businessName: businessName,
       businessDescription: businessDescription,
@@ -103,87 +108,74 @@ class UpdateBusinessDataEvent extends UpdateAndValidateStepData {
 
   @override
   List<Object?> get props => [
-    businessName,
-    businessDescription,
-    businessContactPhone,
-    businessContactEmail,
-    website,
-    businessCategory,
-    businessSubCategory,
-    address,
-    location,
-    openingHours,
-    amenities,
+    businessName, businessDescription, businessContactPhone, businessContactEmail,
+    website, businessCategory, businessSubCategory, address, location, openingHours, amenities,
   ];
 }
 
+
+// Event for Step 3 data
 class UpdatePricingDataEvent extends UpdateAndValidateStepData {
   final PricingModel pricingModel;
-  final List<SubscriptionPlan>? subscriptionPlans; // Nullable
-  final List<BookableService>? bookableServices; // Nullable
+  final List<SubscriptionPlan>? subscriptionPlans;
+  final List<BookableService>? bookableServices;
   final String? pricingInfo;
+  final List<String>? supportedReservationTypes;
+  final int? maxGroupSize;
+  final List<AccessPassOption>? accessOptions;
+  final String? seatMapUrl;
+  final Map<String, dynamic>? reservationTypeConfigs;
 
   const UpdatePricingDataEvent({
     required this.pricingModel,
-    this.subscriptionPlans, // Pass what the UI has for subscription/hybrid
-    this.bookableServices, // Pass what the UI has for reservation/hybrid
-    this.pricingInfo, // Pass what the UI has for other
+    this.subscriptionPlans,
+    this.bookableServices,
+    this.pricingInfo,
+    this.supportedReservationTypes,
+    this.maxGroupSize,
+    this.accessOptions,
+    this.seatMapUrl,
+    this.reservationTypeConfigs,
   });
 
   @override
   ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) {
-    // Apply the selected model first
     ServiceProviderModel updatedModel = currentModel.copyWith(
       pricingModel: pricingModel,
+      supportedReservationTypes: supportedReservationTypes ?? currentModel.supportedReservationTypes,
+      maxGroupSize: maxGroupSize,
+      accessOptions: accessOptions,
+      seatMapUrl: seatMapUrl,
+      reservationTypeConfigs: reservationTypeConfigs ?? currentModel.reservationTypeConfigs,
     );
 
-    // Update lists based on the NEW model, preserving data if switching to hybrid
-    List<SubscriptionPlan>? finalPlans = updatedModel.subscriptionPlans;
-    List<BookableService>? finalServices = updatedModel.bookableServices;
-    String? finalPricingInfo = updatedModel.pricingInfo;
+    List<SubscriptionPlan> finalPlans = updatedModel.subscriptionPlans;
+    List<BookableService> finalServices = updatedModel.bookableServices;
+    String finalPricingInfo = updatedModel.pricingInfo;
 
     switch (pricingModel) {
       case PricingModel.subscription:
-        finalPlans = subscriptionPlans ?? []; // Use passed plans, default empty
-        finalServices = null; // Clear bookable services
-        finalPricingInfo = ''; // Clear other info
-        break;
+        finalPlans = subscriptionPlans ?? []; finalServices = []; finalPricingInfo = ''; break;
       case PricingModel.reservation:
-        finalPlans = null; // Clear plans
-        finalServices =
-            bookableServices ?? []; // Use passed services, default empty
-        finalPricingInfo = ''; // Clear other info
-        break;
+        finalPlans = []; finalServices = bookableServices ?? []; finalPricingInfo = ''; break;
       case PricingModel.hybrid:
-        // Keep both lists as passed (or current if not passed - though UI should pass current state)
-        finalPlans = subscriptionPlans ?? updatedModel.subscriptionPlans ?? [];
-        finalServices = bookableServices ?? updatedModel.bookableServices ?? [];
-        finalPricingInfo = ''; // Clear other info
-        break;
+        finalPlans = subscriptionPlans ?? []; finalServices = bookableServices ?? []; finalPricingInfo = ''; break;
       case PricingModel.other:
-        finalPlans = null; // Clear plans
-        finalServices = null; // Clear services
-        finalPricingInfo = pricingInfo ?? ''; // Use passed info, default empty
-        break;
+        finalPlans = []; finalServices = []; finalPricingInfo = pricingInfo ?? ''; break;
     }
-
-    // Return model with updated pricing details
     return updatedModel.copyWith(
-      subscriptionPlans: finalPlans,
-      bookableServices: finalServices,
-      pricingInfo: finalPricingInfo,
+      subscriptionPlans: finalPlans, bookableServices: finalServices, pricingInfo: finalPricingInfo,
     );
   }
 
   @override
   List<Object?> get props => [
-    pricingModel,
-    subscriptionPlans,
-    bookableServices,
-    pricingInfo,
+    pricingModel, subscriptionPlans, bookableServices, pricingInfo,
+    supportedReservationTypes, maxGroupSize, accessOptions, seatMapUrl, reservationTypeConfigs,
   ];
 }
 
+// Event for Step 4 Gallery Update (still triggers save)
 class UpdateGalleryUrlsEvent extends UpdateAndValidateStepData {
   final List<String> updatedUrls;
   const UpdateGalleryUrlsEvent(this.updatedUrls);
@@ -194,91 +186,62 @@ class UpdateGalleryUrlsEvent extends UpdateAndValidateStepData {
   List<Object?> get props => [updatedUrls];
 }
 
-// --- Asset Upload/Removal Events ---
+// Event for Step 1 and Step 4 Asset Uploads (still triggers save)
+// *** REMOVED currentDob, currentGender from this event ***
 class UploadAssetAndUpdateEvent extends ServiceProviderEvent {
   final dynamic assetData;
   final String targetField;
   final String assetTypeFolder;
+  // Pass other relevant fields that should be saved *concurrently* with upload
   final String? currentName;
-  final DateTime? currentDob;
-  final String? currentGender;
   final String? currentPersonalPhoneNumber;
   final String? currentIdNumber;
+  // Add other optional fields here if needed for other steps
+
   const UploadAssetAndUpdateEvent({
     required this.assetData,
     required this.targetField,
     required this.assetTypeFolder,
     this.currentName,
-    this.currentDob,
-    this.currentGender,
     this.currentPersonalPhoneNumber,
     this.currentIdNumber,
+    // Add other optional fields here if needed
   });
-  ServiceProviderModel applyUpdatesToModel(
-    ServiceProviderModel currentModel,
-    String imageUrl,
-  ) => currentModel.copyWith(
-    idFrontImageUrl:
-        targetField == 'idFrontImageUrl'
-            ? imageUrl
-            : currentModel.idFrontImageUrl,
-    idBackImageUrl:
-        targetField == 'idBackImageUrl'
-            ? imageUrl
-            : currentModel.idBackImageUrl,
-    logoUrl: targetField == 'logoUrl' ? imageUrl : currentModel.logoUrl,
-    mainImageUrl:
-        targetField == 'mainImageUrl' ? imageUrl : currentModel.mainImageUrl,
-    galleryImageUrls:
-        targetField == 'addGalleryImageUrl'
-            ? (List<String>.from(currentModel.galleryImageUrls ?? [])
-              ..add(imageUrl))
-            : currentModel.galleryImageUrls,
-    name: currentName ?? currentModel.name,
-    dob: currentDob ?? currentModel.dob,
-    gender: currentGender ?? currentModel.gender,
-    personalPhoneNumber:
-        currentPersonalPhoneNumber ?? currentModel.personalPhoneNumber,
-    idNumber: currentIdNumber ?? currentModel.idNumber,
-  );
+
   @override
   List<Object?> get props => [
-    assetData,
-    targetField,
-    assetTypeFolder,
-    currentName,
-    currentDob,
-    currentGender,
-    currentPersonalPhoneNumber,
-    currentIdNumber,
+    assetData, targetField, assetTypeFolder,
+    currentName, currentPersonalPhoneNumber, currentIdNumber,
+    // Add other optional fields here
   ];
 }
 
+// *** UpdateDobEvent and UpdateGenderEvent REMOVED ***
+
+// --- RemoveAssetUrlEvent ---
 class RemoveAssetUrlEvent extends ServiceProviderEvent {
   final String targetField;
   const RemoveAssetUrlEvent(this.targetField);
   @override
   List<Object?> get props => [targetField];
+
+  // This event still needs to trigger a save implicitly via the Bloc handler
   ServiceProviderModel applyRemoval(ServiceProviderModel currentModel) {
     switch (targetField) {
-      case 'logoUrl':
-        return currentModel.copyWith(logoUrl: null);
-      case 'mainImageUrl':
-        return currentModel.copyWith(mainImageUrl: null);
-      case 'idFrontImageUrl':
-        return currentModel.copyWith(idFrontImageUrl: null);
-      case 'idBackImageUrl':
-        return currentModel.copyWith(idBackImageUrl: null);
+      case 'logoUrl': return currentModel.copyWith(logoUrl: null);
+      case 'mainImageUrl': return currentModel.copyWith(mainImageUrl: null);
+      case 'idFrontImageUrl': return currentModel.copyWith(idFrontImageUrl: null);
+      case 'idBackImageUrl': return currentModel.copyWith(idBackImageUrl: null);
+      case 'profilePictureUrl': return currentModel.copyWith(profilePictureUrl: null);
       default:
-        print(
-          "Warning: Unknown target field '$targetField' for removal in RemoveAssetUrlEvent",
-        );
+        print("Warning: Unknown target field '$targetField' for removal in RemoveAssetUrlEvent");
         return currentModel;
     }
   }
 }
 
-// --- Authentication Event ---
+
+// --- Authentication Events ---
 class SubmitAuthDetailsEvent extends ServiceProviderEvent {
   final String email;
   final String password;
@@ -287,7 +250,6 @@ class SubmitAuthDetailsEvent extends ServiceProviderEvent {
   List<Object?> get props => [email, password];
 }
 
-// --- Email Verification Event ---
 class CheckEmailVerificationStatusEvent extends ServiceProviderEvent {}
 
 // --- Completion Event ---

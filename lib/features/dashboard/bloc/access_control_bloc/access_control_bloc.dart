@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/bloc/access_control_bloc.dart
 /// --- Bloc for managing Access Control screen state and data ---
+library;
 
 import 'dart:async';
 import 'package:bloc/bloc.dart';

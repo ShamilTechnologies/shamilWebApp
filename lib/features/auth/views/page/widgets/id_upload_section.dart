@@ -1,4 +1,5 @@
 /// --- Widget for ID Image Upload Fields ---
+library;
 
 import 'package:flutter/material.dart';
 

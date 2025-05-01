@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/views/pages/reports_screen.dart
 /// --- Placeholder screen for viewing Reports ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
@@ -21,7 +22,7 @@ class ReportsScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-             Icon(Icons.assessment_outlined, size: 60, color: AppColors.mediumGrey),
+             const Icon(Icons.assessment_outlined, size: 60, color: AppColors.mediumGrey),
             const SizedBox(height: 16),
             Text(
               'Reports Screen Content',

@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/views/pages/bookings_screen.dart
 /// --- Placeholder screen for managing Bookings/Calendar ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
@@ -21,7 +22,7 @@ class BookingsScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.calendar_month_outlined, size: 60, color: AppColors.mediumGrey),
+            const Icon(Icons.calendar_month_outlined, size: 60, color: AppColors.mediumGrey),
             const SizedBox(height: 16),
             Text(
               'Bookings Screen Content',

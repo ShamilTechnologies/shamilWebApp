@@ -92,8 +92,9 @@ class ServicesOfferedSection extends StatelessWidget {
                     ], // Allow decimals
                     validator: (v) {
                       // Price validation
-                      if (v == null || v.trim().isEmpty)
+                      if (v == null || v.trim().isEmpty) {
                         return 'Price is required';
+                      }
                       final price = double.tryParse(v);
                       if (price == null) return 'Invalid price format';
                       if (price < 0) return 'Price cannot be negative';

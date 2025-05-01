@@ -1,5 +1,6 @@
 /// File: lib/features/auth/views/page/widgets/bookable_services_widget.dart
 /// --- Widget for managing Bookable Services in Pricing Step ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For input formatters
@@ -412,8 +413,9 @@ class _AddEditServiceFormState extends State<_AddEditServiceForm> {
               validator: (v) {
                 if (v == null || v.isEmpty) return 'Price required';
                 final p = double.tryParse(v);
-                if (p == null || p < 0)
+                if (p == null || p < 0) {
                   return 'Invalid price (must be 0 or more)';
+                }
                 return null; // Valid
               },
             ),

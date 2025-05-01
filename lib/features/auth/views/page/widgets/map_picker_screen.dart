@@ -26,7 +26,7 @@ class MapPickerScreen extends StatefulWidget {
 
 class _MapPickerScreenState extends State<MapPickerScreen> {
   // Default center if no initial location is provided (e.g., Cairo)
-  static final LatLng _defaultCenter = LatLng(30.0444, 31.2357);
+  static const LatLng _defaultCenter = LatLng(30.0444, 31.2357);
   static const double _defaultZoom = 13.0;
 
   // Controllers
@@ -240,10 +240,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
             throw Exception("Invalid coordinates in Nominatim response.");
           }
         } else {
-          if (mounted)
+          if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Location not found.')),
             );
+          }
         }
       } else {
         throw Exception(
@@ -252,10 +253,11 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       }
     } catch (e) {
       print("Error during Nominatim search: $e");
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error searching location: $e')));
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

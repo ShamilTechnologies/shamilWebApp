@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'; // For OpeningHours
-import 'package:shamil_web_app/features/auth/views/page/steps/business_data_step.dart';
 import 'package:shamil_web_app/features/auth/views/page/steps/business_details_widgets/basic_info_section.dart';
 import 'package:shamil_web_app/features/auth/views/page/widgets/opening_hours_widget.dart'; // OpeningHoursWidget
 

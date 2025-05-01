@@ -1,23 +1,28 @@
+/// File: lib/features/auth/views/page/steps/business_details_widgets/address_location_section.dart
+/// --- UPDATED: Accept and use GlobalKey for FormField ---
+library;
+
 import 'package:cloud_firestore/cloud_firestore.dart'; // Needed for GeoPoint
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For input formatters
+// For input formatters
 
 // Import UI utils & Widgets (adjust paths as needed)
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
-import 'package:shamil_web_app/features/auth/views/page/steps/business_data_step.dart';
 import 'package:shamil_web_app/features/auth/views/page/steps/business_details_widgets/basic_info_section.dart';
 
 
 /// Renders the form fields for business address and location selection.
 class AddressLocationSection extends StatelessWidget {
+  // *** ADDED: Key for the FormField ***
+  final GlobalKey<FormFieldState<GeoPoint>>? formFieldKey;
   final TextEditingController streetController;
   final TextEditingController cityController;
   final TextEditingController postalCodeController;
   final String? selectedGovernorate;
   final List<String> governorates; // List of available governorates
-  final GeoPoint? selectedLocation; // Current selected GeoPoint
+  final GeoPoint? selectedLocation; // Current selected GeoPoint from parent state
   final ValueChanged<String?>? onGovernorateChanged; // Nullable callback
   final VoidCallback? onLocationTap; // Callback to open map picker
   final bool enabled;
@@ -27,25 +32,27 @@ class AddressLocationSection extends StatelessWidget {
 
   const AddressLocationSection({
     super.key,
-    // Pass form key only if needed for internal validation triggers
-    // required this.formKey,
+    this.formFieldKey, // Accept the key
     required this.streetController,
     required this.cityController,
     required this.postalCodeController,
     required this.selectedGovernorate,
     required this.governorates,
     required this.selectedLocation,
-    this.onGovernorateChanged, // Nullable
+    this.onGovernorateChanged,
     required this.onLocationTap,
     required this.enabled,
-    required this.sectionHeaderBuilder, // Require builder function
-    required this.inputDecorationBuilder, // Require builder function
+    required this.sectionHeaderBuilder,
+    required this.inputDecorationBuilder,
   });
 
-  // final GlobalKey<FormState> formKey; // Uncomment if needed
 
   @override
   Widget build(BuildContext context) {
+    // *** ADDED LOGGING ***
+    print("[AddressLocationSection build] Received selectedLocation: ${selectedLocation?.latitude}, ${selectedLocation?.longitude}");
+    // *** END LOGGING ***
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -79,7 +86,7 @@ class AddressLocationSection extends StatelessWidget {
           value: selectedGovernorate,
           items: governorates.map((String gov) =>
               DropdownMenuItem<String>(value: gov, child: Text(gov))).toList(),
-          onChanged: enabled ? onGovernorateChanged : null, // Use nullable callback
+          onChanged: enabled ? onGovernorateChanged : null,
           validator: (value) {
             if (value == null || value.isEmpty) return 'Please select a governorate';
             return null;
@@ -97,28 +104,48 @@ class AddressLocationSection extends StatelessWidget {
           enabled: enabled,
           keyboardType: TextInputType.number,
           prefixIcon: const Icon(Icons.local_post_office_outlined),
-          // No validator needed as it's optional
         ),
         const SizedBox(height: 20),
 
         // Location Picker Field (Read-only, triggers map picker)
-        FormField<GeoPoint>( // Use FormField for validation integration
-           key: const ValueKey('location_form_field'), // Add key if needed
+        FormField<GeoPoint>(
+           // *** Assign the passed key ***
+           key: formFieldKey,
            enabled: enabled,
-           initialValue: selectedLocation, // Use the selectedLocation from parent state
-           validator: (value) { // Validate that a location has been selected
-              if (value == null) {
+           initialValue: selectedLocation, // Use value from parent state
+           validator: (value) {
+              // *** Validate using the LATEST value from the parent state ***
+              // This ensures validation uses the value updated by setState in the parent,
+              // even if the FormField's internal state update is slightly delayed.
+              if (selectedLocation == null) {
                  return 'Please select the location on the map';
               }
               return null; // Valid if not null
            },
            builder: (FormFieldState<GeoPoint> field) {
-              // Use the inputDecorationBuilder from parent for consistency
+              print("[AddressLocationSection FormField builder] widget.selectedLocation: ${selectedLocation?.latitude}, ${selectedLocation?.longitude} | field.value: ${field.value?.latitude}, ${field.value?.longitude}");
+
+              // Update FormField's internal value if it differs from the parent state's value
+              // This helps keep the visual display consistent and might help validation timing.
+              if (field.value?.latitude != selectedLocation?.latitude || field.value?.longitude != selectedLocation?.longitude) {
+                print("[AddressLocationSection FormField builder] field.value differs from widget.selectedLocation. Calling field.didChange() post frame.");
+                 WidgetsBinding.instance.addPostFrameCallback((_) {
+                     // Use try-catch as accessing state after dispose is possible in edge cases
+                     try {
+                         if(field.mounted) { // Check if the field is still mounted
+                            field.didChange(selectedLocation);
+                         }
+                     } catch (e) {
+                        print("[AddressLocationSection FormField builder] Error calling field.didChange: $e");
+                     }
+                 });
+              }
+
               final InputDecoration effectiveDecoration = inputDecorationBuilder(
                  label: "Location on Map*",
                  enabled: enabled,
-                 hint: 'Tap to select location' // Hint isn't directly used here but good practice
-              ).copyWith( // Customize the base decoration
+                 hint: 'Tap to select location'
+              ).copyWith(
                  prefixIcon: Icon(Icons.pin_drop_outlined, color: AppColors.darkGrey.withOpacity(0.7)),
                  suffixIcon: Icon(Icons.map_outlined, color: enabled ? AppColors.primaryColor : AppColors.mediumGrey),
                  errorText: field.errorText, // Display validation error from FormField state
@@ -127,31 +154,31 @@ class AddressLocationSection extends StatelessWidget {
               return Column(
                  crossAxisAlignment: CrossAxisAlignment.start,
                  children: [
-                    // Display label manually above the InkWell field
                     Text(
-                       effectiveDecoration.labelText ?? '', // Use labelText from decoration
+                       effectiveDecoration.labelText ?? '',
                        style: effectiveDecoration.labelStyle ?? getbodyStyle(fontSize: 14, color: AppColors.darkGrey.withOpacity(0.8)),
                     ),
                     const SizedBox(height: 6),
-                    InputDecorator( // Provides the border and structure
+                    InputDecorator(
                        decoration: effectiveDecoration,
-                       child: InkWell( // Make the field tappable
-                          onTap: enabled ? onLocationTap : null, // Trigger map picker callback
+                       child: InkWell(
+                          onTap: enabled ? onLocationTap : null,
                           child: Container(
-                             height: 24, // Ensure minimum height for tap target and text display
+                             height: 24,
                              alignment: Alignment.centerLeft,
                              child: Text(
+                                // *** Use widget.selectedLocation directly for display ***
                                 selectedLocation != null
-                                    // Display selected coordinates with fixed precision
                                     ? 'Location Selected (${selectedLocation!.latitude.toStringAsFixed(4)}, ${selectedLocation!.longitude.toStringAsFixed(4)})'
-                                    : 'Tap to select location', // Placeholder text
-                                style: getbodyStyle( // Style the text inside
+                                    : 'Tap to select location',
+                                style: getbodyStyle(
+                                   // *** Use widget.selectedLocation for style condition ***
                                    color: selectedLocation != null
-                                          ? (enabled ? AppColors.darkGrey : AppColors.secondaryColor) // Color based on selection and enabled state
-                                          : AppColors.mediumGrey, // Hint color if nothing selected
+                                          ? (enabled ? AppColors.darkGrey : AppColors.secondaryColor)
+                                          : AppColors.mediumGrey,
                                    fontSize: 15
                                 ),
-                                overflow: TextOverflow.ellipsis, // Prevent overflow
+                                overflow: TextOverflow.ellipsis,
                              ),
                           ),
                        ),

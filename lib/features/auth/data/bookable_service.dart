@@ -1,5 +1,6 @@
 /// File: lib/features/auth/data/BookableService.dart
 /// Represents a service or class that can be booked by time slots.
+library;
 
 import 'package:equatable/equatable.dart';
 

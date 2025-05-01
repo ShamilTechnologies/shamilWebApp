@@ -184,8 +184,8 @@ class _OpeningHoursWidgetState extends State<OpeningHoursWidget> {
                       activeColor: AppColors.primaryColor, // Use your AppColors
                       checkColor: AppColors.white,
                       // Style disabled state
-                      fillColor: MaterialStateProperty.resolveWith((states) {
-                         if (states.contains(MaterialState.disabled)) {
+                      fillColor: WidgetStateProperty.resolveWith((states) {
+                         if (states.contains(WidgetState.disabled)) {
                             return AppColors.mediumGrey.withOpacity(0.3);
                          }
                          return null; // Use default active/inactive colors

@@ -111,8 +111,8 @@ class ProviderInfoCard extends StatelessWidget {
                 .replaceAllMapped(RegExp(r'^, '), (match) => '') // Fix leading comma space
              ),
              // Add Website if available
-             if (providerModel.website != null && providerModel.website!.isNotEmpty)
-                _buildInfoRow(Icons.language_outlined, providerModel.website!),
+             if (providerModel.website.isNotEmpty)
+                _buildInfoRow(Icons.language_outlined, providerModel.website),
            ],
          ),
        ),

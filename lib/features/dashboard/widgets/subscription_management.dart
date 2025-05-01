@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/widgets/subscription_management.dart
 /// --- Section for displaying recent subscriptions ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart'; // For date formatting

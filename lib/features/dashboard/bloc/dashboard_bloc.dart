@@ -1,17 +1,22 @@
+/// File: lib/features/dashboard/bloc/dashboard_bloc.dart
+/// --- UPDATED: Uses updated ServiceProviderModel, ReservationModel ---
+/// --- UPDATED: Fetches governorateId and uses partitioned queries ---
+library;
+
 import 'dart:async'; // Required for Future
 
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+// *** UPDATED: Import the updated models ***
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
-
-// Adjust paths as necessary for your project structure
 
 // Use part directives to link event and state files
 part 'dashboard_event.dart';
 part 'dashboard_state.dart';
+
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -50,32 +55,60 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     try {
       print("DashboardBloc: Fetching data for provider $providerId...");
 
-      // Fetch base data concurrently
+      // --- Step 1: Fetch Provider Info FIRST to get governorateId ---
+      final ServiceProviderModel providerInfo = await _fetchServiceProvider(
+        providerId,
+      );
+      final String? governorateId =
+          providerInfo.governorateId; // Extract governorateId
+
+      if (governorateId == null || governorateId.isEmpty) {
+        // Handle critical error: Cannot proceed without governorateId for partitioned data
+        print(
+          "!!! DashboardBloc: CRITICAL ERROR - Provider $providerId is missing 'governorateId'. Cannot load dashboard data requiring partitioning.",
+        );
+        emit(
+          const DashboardLoadFailure(
+            "Provider configuration incomplete (Missing Governorate ID). Please contact support or complete registration.",
+          ),
+        );
+        return;
+      }
+      print(
+        "DashboardBloc: Fetched provider info. Governorate ID: $governorateId",
+      );
+
+      // --- Step 2: Fetch other data concurrently using governorateId ---
       final results = await Future.wait([
-        _fetchServiceProvider(providerId),
-        _fetchRecentReservations(providerId, limit: 10),
-        _fetchRecentSubscriptions(providerId, limit: 10),
-        _fetchRecentAccessLogs(providerId, limit: 10),
-        // Calculate stats separately now
+        // Fetch other data that might NOT depend on governorateId first
+        _fetchRecentSubscriptions(providerId, limit: 10), // Assumes top-level
+        _fetchRecentAccessLogs(providerId, limit: 10), // Assumes top-level
+        // Now fetch data requiring governorateId
+        _fetchRecentReservations(
+          providerId,
+          governorateId: governorateId,
+          limit: 10,
+        ), // Pass governorateId
+        _calculateDashboardStats(
+          providerId,
+          governorateId,
+        ), // Pass governorateId
       ], eagerError: true); // Stop if any essential fetch fails
 
-      final ServiceProviderModel providerInfo =
-          results[0] as ServiceProviderModel;
-      final List<Reservation> reservations = results[1] as List<Reservation>;
-      final List<Subscription> subscriptions = results[2] as List<Subscription>;
-      final List<AccessLog> accessLogs = results[3] as List<AccessLog>;
-
-      // Calculate Stats (now attempts real calculations)
-      final DashboardStats stats = await _calculateDashboardStats(providerId);
+      // Process results (indexes shifted due to fetching providerInfo separately)
+      final List<Subscription> subscriptions = results[0] as List<Subscription>;
+      final List<AccessLog> accessLogs = results[1] as List<AccessLog>;
+      final List<Reservation> reservations = results[2] as List<Reservation>;
+      final DashboardStats stats = results[3] as DashboardStats;
 
       print("DashboardBloc: Data fetched and stats calculated successfully.");
       emit(
         DashboardLoadSuccess(
-          providerInfo: providerInfo,
+          providerInfo: providerInfo, // Now contains governorateId
           stats: stats,
-          reservations: reservations, // Pass limited list for display
-          subscriptions: subscriptions, // Pass limited list for display
-          accessLogs: accessLogs, // Pass limited list for display
+          reservations: reservations, // Uses updated ReservationModel
+          subscriptions: subscriptions,
+          accessLogs: accessLogs,
         ),
       );
     } catch (e, stackTrace) {
@@ -92,12 +125,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
   }
 
-  // --- Helper: Fetch Service Provider Info ---
+  // --- Helper: Fetch Service Provider Info --- (No changes needed here)
   Future<ServiceProviderModel> _fetchServiceProvider(String providerId) async {
     try {
       final docSnapshot =
           await _firestore.collection("serviceProviders").doc(providerId).get();
       if (docSnapshot.exists) {
+        // *** Uses updated model's fromFirestore ***
         return ServiceProviderModel.fromFirestore(docSnapshot);
       } else {
         throw Exception(
@@ -111,30 +145,48 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   }
 
   // --- Helper: Fetch Recent/Upcoming Reservations (for display list) ---
+  // *** UPDATED: Accepts governorateId and uses partitioned path ***
   Future<List<Reservation>> _fetchRecentReservations(
     String providerId, {
+    required String governorateId, // Now required
     int limit = 10,
   }) async {
+    // No need for null check here, _onLoadDashboardData handles it
+    print(
+      "DashboardBloc [_fetchRecentReservations]: Fetching from /reservations/$governorateId/$providerId",
+    );
     try {
+      // *** UPDATED: Query the partitioned path ***
       final querySnapshot =
           await _firestore
               .collection("reservations")
-              .where("providerId", isEqualTo: providerId)
+              .doc(governorateId) // Use governorateId
+              .collection(providerId) // Use providerId
               .where("status", whereIn: ["Confirmed", "Pending"])
-              .where("dateTime", isGreaterThanOrEqualTo: Timestamp.now())
-              .orderBy("dateTime", descending: false)
+              // Fetch slightly into the past too, in case of near-time access
+              .where(
+                "dateTime",
+                isGreaterThanOrEqualTo: Timestamp.fromDate(
+                  DateTime.now().subtract(const Duration(hours: 1)),
+                ),
+              )
+              .orderBy("dateTime", descending: false) // Order upcoming first
               .limit(limit)
               .get();
+
+      // *** Uses updated model's fromSnapshot ***
       return querySnapshot.docs
           .map((doc) => Reservation.fromSnapshot(doc))
           .toList();
     } catch (e) {
       print("Error fetching Recent Reservations: $e");
-      return []; /* Return empty on error */
+      // Rethrow or return empty? Rethrowing might be better to fail fast.
+      throw Exception("Could not load recent reservations.");
+      // return []; /* Return empty on error */
     }
   }
 
-  // --- Helper: Fetch Recent/Active Subscriptions (for display list) ---
+  // --- Helper: Fetch Recent/Active Subscriptions (for display list) --- (No changes)
   Future<List<Subscription>> _fetchRecentSubscriptions(
     String providerId, {
     int limit = 10,
@@ -142,7 +194,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     try {
       final querySnapshot =
           await _firestore
-              .collection("subscriptions")
+              .collection("subscriptions") // Assuming top-level collection
               .where("providerId", isEqualTo: providerId)
               .where("status", isEqualTo: "Active")
               .orderBy("expiryDate", descending: false) // Use expiryDate field
@@ -153,11 +205,12 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           .toList();
     } catch (e) {
       print("Error fetching Recent Subscriptions: $e");
-      return []; /* Return empty on error */
+      throw Exception("Could not load recent subscriptions.");
+      // return []; /* Return empty on error */
     }
   }
 
-  // --- Helper: Fetch Recent Access Logs (for display list) ---
+  // --- Helper: Fetch Recent Access Logs (for display list) --- (No changes)
   Future<List<AccessLog>> _fetchRecentAccessLogs(
     String providerId, {
     int limit = 10,
@@ -165,7 +218,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     try {
       final querySnapshot =
           await _firestore
-              .collection("accessLogs")
+              .collection("accessLogs") // Assuming top-level collection
               .where("providerId", isEqualTo: providerId)
               .orderBy("timestamp", descending: true) // Use timestamp field
               .limit(limit)
@@ -175,17 +228,25 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           .toList();
     } catch (e) {
       print("Error fetching Recent Access Logs: $e");
-      return []; /* Return empty on error */
+      throw Exception("Could not load recent activity.");
+      // return []; /* Return empty on error */
     }
   }
 
   // --- Helper: Calculate Dashboard Stats ---
-  Future<DashboardStats> _calculateDashboardStats(String providerId) async {
+  // *** UPDATED: Accepts governorateId and uses partitioned path for reservations ***
+  Future<DashboardStats> _calculateDashboardStats(
+    String providerId,
+    String governorateId, // Now required and assumed non-null
+  ) async {
+    print(
+      "DashboardBloc [_calculateDashboardStats]: Calculating for /reservations/$governorateId/$providerId",
+    );
     try {
       final now = DateTime.now();
       final startOfMonth = Timestamp.fromDate(DateTime(now.year, now.month, 1));
       final endOfMonth = Timestamp.fromDate(
-        DateTime(now.year, now.month + 1, 0, 23, 59, 59), // Day 0 of next month is last day of current
+        DateTime(now.year, now.month + 1, 0, 23, 59, 59),
       );
       final startOfDay = Timestamp.fromDate(
         DateTime(now.year, now.month, now.day),
@@ -196,31 +257,35 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
 
       // Perform Queries for Stats concurrently
       final List<dynamic> statsResults = await Future.wait([
-        // 1. Active Subscriptions Count
+        // 1. Active Subscriptions Count (Assumes top-level)
         _firestore
             .collection("subscriptions")
             .where("providerId", isEqualTo: providerId)
             .where("status", isEqualTo: "Active")
             .count()
             .get(),
-        // 2. Upcoming Reservations Count
+        // 2. Upcoming Reservations Count (Uses Partitioned Path)
         _firestore
             .collection("reservations")
-            .where("providerId", isEqualTo: providerId)
+            .doc(governorateId) // Use Partition
+            .collection(providerId) // Use Partition
             .where("status", whereIn: ["Confirmed", "Pending"])
             .where("dateTime", isGreaterThanOrEqualTo: Timestamp.now())
             .count()
             .get(),
         // 3. Total Revenue This Month (Example - WARNING: Inefficient)
-        // Fetches documents to sum 'pricePaid' for subscriptions started this month.
+        // Fetches subscription documents (Assumes top-level)
+        // Consider a Cloud Function for accurate, efficient aggregation
         _firestore
             .collection("subscriptions")
             .where("providerId", isEqualTo: providerId)
-            .where("startDate", isGreaterThanOrEqualTo: startOfMonth)
+            .where(
+              "startDate",
+              isGreaterThanOrEqualTo: startOfMonth,
+            ) // Based on when sub STARTED
             .where("startDate", isLessThanOrEqualTo: endOfMonth)
-            // Add other filters if needed (e.g., only count paid subscriptions)
             .get(),
-        // 4. New Members This Month (Example: Count new subscriptions)
+        // 4. New Members This Month (Example: Count new subscriptions - Assumes top-level)
         _firestore
             .collection("subscriptions")
             .where("providerId", isEqualTo: providerId)
@@ -228,23 +293,31 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
             .where("startDate", isLessThanOrEqualTo: endOfMonth)
             .count()
             .get(),
-        // 5. Check-ins Today (Requires 'action' field = "CheckIn")
-        // Ensure Firestore index exists: providerId ASC, timestamp ASC/DESC, action ASC
-         _firestore
-             .collection("accessLogs")
-             .where("providerId", isEqualTo: providerId)
-             .where("timestamp", isGreaterThanOrEqualTo: startOfDay)
-             .where("timestamp", isLessThanOrEqualTo: endOfDay)
-             .where("action", isEqualTo: "CheckIn") // Ensure 'action' field exists and is indexed
-             .count()
-             .get(),
-        // 6. Total Bookings This Month
+        // 5. Check-ins Today (Assumes top-level accessLogs)
+        _firestore
+            .collection("accessLogs")
+            .where("providerId", isEqualTo: providerId)
+            .where("timestamp", isGreaterThanOrEqualTo: startOfDay)
+            .where("timestamp", isLessThanOrEqualTo: endOfDay)
+            // Ensure 'status' field indicates successful check-in, e.g., 'Granted'
+            .where(
+              "status",
+              isEqualTo: "Granted",
+            ) // Filter for successful check-ins
+            // .where("method", whereIn: ["NFC", "QR"]) // Optional: Filter by method
+            .count()
+            .get(),
+        // 6. Total Bookings This Month (Uses Partitioned Path)
         _firestore
             .collection("reservations")
-            .where("providerId", isEqualTo: providerId)
+            .doc(governorateId) // Use Partition
+            .collection(providerId) // Use Partition
+            .where(
+              "status",
+              whereIn: ["Confirmed", "Completed"],
+            ) // Count confirmed/completed
             .where("dateTime", isGreaterThanOrEqualTo: startOfMonth)
             .where("dateTime", isLessThanOrEqualTo: endOfMonth)
-            // Add status filter if needed (e.g., count only 'Confirmed')
             .count()
             .get(),
       ], eagerError: true); // Stop if any query fails
@@ -262,7 +335,16 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         totalRevenue +=
             (doc.data() as Map<String, dynamic>?)?['pricePaid'] as num? ?? 0.0;
       }
-      // TODO: Add revenue from completed reservations this month if needed
+      // TODO: Add revenue from completed reservations this month (requires partitioned query)
+      // Example (inefficient - fetches docs):
+      // final resRevenueSnapshot = await _firestore.collection("reservations").doc(governorateId).collection(providerId)
+      //    .where("status", isEqualTo: "Completed")
+      //    .where("dateTime", isGreaterThanOrEqualTo: startOfMonth)
+      //    .where("dateTime", isLessThanOrEqualTo: endOfMonth)
+      //    .get();
+      // for (var doc in resRevenueSnapshot.docs) {
+      //    totalRevenue += (doc.data()?['price'] as num?) ?? 0.0; // Assuming a 'price' field exists
+      // }
 
       final newMembers =
           (statsResults[3] as AggregateQuerySnapshot?)?.count ?? 0;
@@ -287,12 +369,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       print("Error calculating Dashboard Stats: $e");
       print(stackTrace);
       // Returning empty stats allows the dashboard to load partially
-      return const DashboardStats.empty();
-      // Alternatively, rethrow to trigger DashboardLoadFailure in the main handler
-      // throw Exception("Could not calculate dashboard statistics.");
+      // return const DashboardStats.empty();
+      // Rethrow to trigger DashboardLoadFailure in the main handler
+      throw Exception("Could not calculate dashboard statistics.");
     }
   }
-
-  // --- _handleAuthError Method Removed ---
-
 } // End DashboardBloc class

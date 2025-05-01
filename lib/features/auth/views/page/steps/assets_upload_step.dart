@@ -1,5 +1,5 @@
-import 'dart:io'; // Keep for File type check
-import 'dart:typed_data'; // Keep for Uint8List type check
+// Keep for File type check
+// Keep for Uint8List type check
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -25,7 +25,6 @@ import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/auth/views/page/widgets/modern_upload_field_widget.dart';
 import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart';
 // Import Cloudinary Service (Assuming static upload method or accessible instance)
-import 'package:shamil_web_app/cloudinary_service.dart';
 
 /// Registration Step 4: Upload Business Assets.
 /// Handles Logo, Main Image, and Gallery uploads.
@@ -70,8 +69,9 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
   /// Returns image path (String) for native or image bytes (Uint8List) for web.
   Future<dynamic> _pickImage() async {
     if (kIsWeb) print("AssetsUploadStep: Opening file selector for web...");
-    if (!kIsWeb)
+    if (!kIsWeb) {
       print("AssetsUploadStep: Opening file selector for desktop/mobile...");
+    }
     try {
       // Define accepted image types
       const XTypeGroup typeGroup = XTypeGroup(
@@ -176,10 +176,12 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
     );
     context.read<ServiceProviderBloc>().add(RemoveAssetUrlEvent(targetField));
     // Reset specific loading flag if removal is triggered during upload (edge case)
-    if (targetField == 'logoUrl' && _isUploadingLogo)
+    if (targetField == 'logoUrl' && _isUploadingLogo) {
       setState(() => _isUploadingLogo = false);
-    if (targetField == 'mainImageUrl' && _isUploadingMainImage)
+    }
+    if (targetField == 'mainImageUrl' && _isUploadingMainImage) {
       setState(() => _isUploadingMainImage = false);
+    }
   }
 
   /// Removes a gallery image by dispatching an event with the updated list.

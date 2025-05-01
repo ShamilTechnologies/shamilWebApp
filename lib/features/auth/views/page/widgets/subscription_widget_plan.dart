@@ -3,7 +3,7 @@ import 'package:flutter/services.dart'; // For input formatters
 import 'package:intl/intl.dart';
 import 'package:shamil_web_app/core/utils/colors.dart'; // Adjust path if needed
 import 'package:shamil_web_app/core/utils/text_style.dart'; // Adjust path if needed
-import 'package:shamil_web_app/core/utils/text_field_templates.dart'; // Adjust path if needed
+// Adjust path if needed
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/helper/dashboard_widgets.dart'; // Adjust path if needed
 
@@ -60,22 +60,22 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
 
   // --- Dialog Logic ---
   Future<void> _showPlanDialog({SubscriptionPlan? planToEdit}) async {
-    final _formKey = GlobalKey<FormState>();
-    final _nameController = TextEditingController(text: planToEdit?.name ?? '');
-    final _descriptionController = TextEditingController(
+    final formKey = GlobalKey<FormState>();
+    final nameController = TextEditingController(text: planToEdit?.name ?? '');
+    final descriptionController = TextEditingController(
       text: planToEdit?.description ?? '',
     );
-    final _priceController = TextEditingController(
+    final priceController = TextEditingController(
       text: planToEdit?.price.toStringAsFixed(2) ?? '',
     );
-    final _featuresController = TextEditingController(
+    final featuresController = TextEditingController(
       text: planToEdit?.features.join('\n') ?? '',
     );
     // *** ADDED Controllers/State for Interval ***
-    final _intervalCountController = TextEditingController(
+    final intervalCountController = TextEditingController(
       text: planToEdit?.intervalCount.toString() ?? '1',
     );
-    PricingInterval _selectedInterval =
+    PricingInterval selectedInterval =
         planToEdit?.interval ?? PricingInterval.month; // Default to month
 
     final result = await showDialog<SubscriptionPlan?>(
@@ -89,12 +89,12 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
               title: Text(planToEdit == null ? 'Add New Plan' : 'Edit Plan'),
               content: SingleChildScrollView(
                 child: Form(
-                  key: _formKey,
+                  key: formKey,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       TextFormField(
-                        controller: _nameController,
+                        controller: nameController,
                         decoration: const InputDecoration(
                           labelText: 'Plan Name *',
                         ),
@@ -106,7 +106,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
-                        controller: _descriptionController,
+                        controller: descriptionController,
                         decoration: const InputDecoration(
                           labelText: 'Description *',
                         ),
@@ -119,7 +119,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
-                        controller: _priceController,
+                        controller: priceController,
                         decoration: const InputDecoration(
                           labelText: 'Price (EGP) *',
                           prefixText: 'EGP ',
@@ -133,10 +133,12 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                           ),
                         ],
                         validator: (value) {
-                          if (value == null || value.isEmpty)
+                          if (value == null || value.isEmpty) {
                             return 'Please enter a price';
-                          if (double.tryParse(value) == null)
+                          }
+                          if (double.tryParse(value) == null) {
                             return 'Invalid price format';
+                          }
                           return null;
                         },
                       ),
@@ -148,7 +150,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                           Expanded(
                             flex: 2,
                             child: TextFormField(
-                              controller: _intervalCountController,
+                              controller: intervalCountController,
                               decoration: const InputDecoration(
                                 labelText: 'Interval Count *',
                               ),
@@ -157,11 +159,13 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                                 FilteringTextInputFormatter.digitsOnly,
                               ],
                               validator: (value) {
-                                if (value == null || value.isEmpty)
+                                if (value == null || value.isEmpty) {
                                   return 'Enter count';
+                                }
                                 if (int.tryParse(value) == null ||
-                                    int.parse(value) <= 0)
+                                    int.parse(value) <= 0) {
                                   return 'Invalid';
+                                }
                                 return null;
                               },
                             ),
@@ -170,7 +174,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                           Expanded(
                             flex: 3,
                             child: DropdownButtonFormField<PricingInterval>(
-                              value: _selectedInterval,
+                              value: selectedInterval,
                               decoration: const InputDecoration(
                                 labelText: 'Interval *',
                               ),
@@ -190,7 +194,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                                 if (newValue != null) {
                                   // Use stfSetState to update the dialog's stateful part
                                   stfSetState(() {
-                                    _selectedInterval = newValue;
+                                    selectedInterval = newValue;
                                   });
                                 }
                               },
@@ -203,7 +207,7 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                       ),
                       const SizedBox(height: 10),
                       TextFormField(
-                        controller: _featuresController,
+                        controller: featuresController,
                         decoration: const InputDecoration(
                           labelText: 'Features (one per line)',
                           alignLabelWithHint: true,
@@ -226,18 +230,18 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                 TextButton(
                   child: Text(planToEdit == null ? 'Add Plan' : 'Save Changes'),
                   onPressed: () {
-                    if (_formKey.currentState!.validate()) {
+                    if (formKey.currentState!.validate()) {
                       final featuresList =
-                          _featuresController.text
+                          featuresController.text
                               .split('\n')
                               .map((s) => s.trim())
                               .where((s) => s.isNotEmpty)
                               .toList();
                       final price =
-                          double.tryParse(_priceController.text) ?? 0.0;
+                          double.tryParse(priceController.text) ?? 0.0;
                       // *** ADDED: Parse interval count ***
                       final intervalCount =
-                          int.tryParse(_intervalCountController.text) ?? 1;
+                          int.tryParse(intervalCountController.text) ?? 1;
 
                       // *** FIXED: Create SubscriptionPlan with correct fields ***
                       final newPlan = SubscriptionPlan(
@@ -245,11 +249,11 @@ class _SubscriptionPlansWidgetState extends State<SubscriptionPlansWidget> {
                             planToEdit?.id ??
                             DateTime.now().millisecondsSinceEpoch
                                 .toString(), // Keep existing ID or generate new
-                        name: _nameController.text.trim(),
-                        description: _descriptionController.text.trim(),
+                        name: nameController.text.trim(),
+                        description: descriptionController.text.trim(),
                         price: price,
                         features: featuresList,
-                        interval: _selectedInterval, // Use selected interval
+                        interval: selectedInterval, // Use selected interval
                         intervalCount: intervalCount, // Use parsed count
                         // duration: duration, // REMOVED duration
                       );

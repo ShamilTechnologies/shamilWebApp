@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/widgets/stats_section.dart
 /// --- Displays key statistics tailored by PricingModel ---
+library;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart'; // For number formatting
@@ -131,7 +132,7 @@ class StatsSection extends StatelessWidget {
     // Use totalRevenue from the stats object
     final revenue = currencyFormat.format(stats.totalRevenue);
     // TODO: Replace placeholder change % with actual calculation based on previous period data
-    final double revenueChangePercent = 7.9; // Placeholder
+    const double revenueChangePercent = 7.9; // Placeholder
     final String formattedRevenueChangePercent =
         "${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toStringAsFixed(1)}%";
     final Color changeColor =

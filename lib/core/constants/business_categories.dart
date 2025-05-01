@@ -1,5 +1,6 @@
 /// File: lib/core/constants/business_categories.dart
 /// Defines the structure and data for business categories and subcategories.
+library;
 
 /// Represents a business category with its subcategories.
 class Category {

@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/widgets/provider_info_header.dart
 /// --- Displays provider info at the top of the dashboard content area ---
+library;
 
 import 'package:flutter/material.dart';
 
@@ -53,7 +54,7 @@ class ProviderInfoHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "${providerModel.businessCategory.isNotEmpty ? providerModel.businessCategory : "Category"} • ${address}",
+                  "${providerModel.businessCategory.isNotEmpty ? providerModel.businessCategory : "Category"} • $address",
                   style: getbodyStyle(color: AppColors.secondaryColor, fontSize: 13),
                   overflow: TextOverflow.ellipsis, maxLines: 1,
                 ),

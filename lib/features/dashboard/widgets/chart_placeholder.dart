@@ -1,5 +1,6 @@
 /// File: lib/features/dashboard/widgets/chart_placeholder.dart
 /// --- Placeholder widget for dashboard charts ---
+library;
 
 import 'package:flutter/material.dart';
 
@@ -36,7 +37,7 @@ class ChartPlaceholder extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration( color: AppColors.lightGrey.withOpacity(0.3), borderRadius: BorderRadius.circular(8) ),
         child: Column( mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.bar_chart_rounded, size: 40, color: AppColors.mediumGrey), const SizedBox(height: 8),
+            const Icon(Icons.bar_chart_rounded, size: 40, color: AppColors.mediumGrey), const SizedBox(height: 8),
             Text( "$tailoredTitle\n(Chart Placeholder)", style: getbodyStyle(color: AppColors.mediumGrey), textAlign: TextAlign.center, ),
           ],
         ),
