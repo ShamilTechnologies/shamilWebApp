@@ -1,16 +1,8 @@
-// lib/features/auth/views/bloc/service_provider_event.dart
-
-/// File: lib/features/auth/views/bloc/service_provider_event.dart
-/// --- UPDATED: Added specific field update events, removed concurrent data from asset upload ---
-library;
-
 import 'package:cloud_firestore/cloud_firestore.dart'; // Needed for GeoPoint
 import 'package:equatable/equatable.dart';
-import 'package:flutter/foundation.dart' show Uint8List; // Needed for assetData type
-
+// Needed for Uint8List potentially in assetData
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
-
 
 // --- Base Event Class ---
 abstract class ServiceProviderEvent extends Equatable {
@@ -29,20 +21,21 @@ class NavigateToStep extends ServiceProviderEvent {
   List<Object?> get props => [targetStep];
 }
 
-// --- Consolidated Data Update Events (Triggered by "Next" button -> SAVE) ---
-// These still exist to trigger the save action for the entire step's data
-// They will be populated using data read from the current Bloc state in handleNext.
+// --- Data Update Events ---
+// Base class for events that update step data AND trigger a save
+abstract class UpdateAndValidateStepData extends ServiceProviderEvent {
+  const UpdateAndValidateStepData();
+  // Apply updates to the model *before* saving
+  ServiceProviderModel applyUpdates(ServiceProviderModel currentModel);
+}
 
-// Consolidated event for Step 1 data (Personal ID)
-class UpdatePersonalIdDataEvent extends ServiceProviderEvent {
-  // Fields here represent the *complete* data for the step,
-  // sourced from Bloc state when dispatching from handleNext.
+// Consolidated event for Step 1 data
+class UpdatePersonalIdDataEvent extends UpdateAndValidateStepData {
   final String name;
-  final DateTime? dob;
-  final String? gender;
+  final DateTime? dob; // Keep field, value comes from local state now
+  final String? gender; // Keep field, value comes from local state now
   final String personalPhoneNumber;
   final String idNumber;
-  // No need for image URLs here, handled by UploadAssetAndUpdateEvent
 
   const UpdatePersonalIdDataEvent({
     required this.name,
@@ -53,13 +46,22 @@ class UpdatePersonalIdDataEvent extends ServiceProviderEvent {
   });
 
   @override
+  ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) =>
+      currentModel.copyWith(
+        name: name,
+        dob: dob,
+        gender: gender,
+        personalPhoneNumber: personalPhoneNumber,
+        idNumber: idNumber,
+      );
+
+  @override
   List<Object?> get props => [name, dob, gender, personalPhoneNumber, idNumber];
 }
 
 
-// Consolidated event for Step 2 data (Business Details)
-class UpdateBusinessDataEvent extends ServiceProviderEvent {
-  // Fields represent complete data for Step 2, sourced from Bloc state
+// Event for Step 2 data
+class UpdateBusinessDataEvent extends UpdateAndValidateStepData {
   final String businessName;
   final String businessDescription;
   final String businessContactPhone;
@@ -87,6 +89,24 @@ class UpdateBusinessDataEvent extends ServiceProviderEvent {
   });
 
   @override
+  ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) {
+    // Bloc handles mapping governorate display name to ID during save
+    return currentModel.copyWith(
+      businessName: businessName,
+      businessDescription: businessDescription,
+      businessContactPhone: businessContactPhone,
+      businessContactEmail: businessContactEmail,
+      website: website,
+      businessCategory: businessCategory,
+      businessSubCategory: businessSubCategory,
+      address: address,
+      location: location,
+      openingHours: openingHours,
+      amenities: amenities,
+    );
+  }
+
+  @override
   List<Object?> get props => [
     businessName, businessDescription, businessContactPhone, businessContactEmail,
     website, businessCategory, businessSubCategory, address, location, openingHours, amenities,
@@ -94,30 +114,59 @@ class UpdateBusinessDataEvent extends ServiceProviderEvent {
 }
 
 
-// Consolidated event for Step 3 data (Pricing)
-class UpdatePricingDataEvent extends ServiceProviderEvent {
-  // Fields represent complete data for Step 3, sourced from Bloc state
+// Event for Step 3 data
+class UpdatePricingDataEvent extends UpdateAndValidateStepData {
   final PricingModel pricingModel;
-  final List<SubscriptionPlan> subscriptionPlans;
-  final List<BookableService> bookableServices;
-  final String pricingInfo;
-  final List<String> supportedReservationTypes;
+  final List<SubscriptionPlan>? subscriptionPlans;
+  final List<BookableService>? bookableServices;
+  final String? pricingInfo;
+  final List<String>? supportedReservationTypes;
   final int? maxGroupSize;
-  final List<AccessPassOption> accessOptions;
+  final List<AccessPassOption>? accessOptions;
   final String? seatMapUrl;
-  final Map<String, dynamic> reservationTypeConfigs;
+  final Map<String, dynamic>? reservationTypeConfigs;
 
   const UpdatePricingDataEvent({
     required this.pricingModel,
-    required this.subscriptionPlans,
-    required this.bookableServices,
-    required this.pricingInfo,
-    required this.supportedReservationTypes,
+    this.subscriptionPlans,
+    this.bookableServices,
+    this.pricingInfo,
+    this.supportedReservationTypes,
     this.maxGroupSize,
-    required this.accessOptions,
+    this.accessOptions,
     this.seatMapUrl,
-    required this.reservationTypeConfigs,
+    this.reservationTypeConfigs,
   });
+
+  @override
+  ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) {
+    ServiceProviderModel updatedModel = currentModel.copyWith(
+      pricingModel: pricingModel,
+      supportedReservationTypes: supportedReservationTypes ?? currentModel.supportedReservationTypes,
+      maxGroupSize: maxGroupSize,
+      accessOptions: accessOptions,
+      seatMapUrl: seatMapUrl,
+      reservationTypeConfigs: reservationTypeConfigs ?? currentModel.reservationTypeConfigs,
+    );
+
+    List<SubscriptionPlan> finalPlans = updatedModel.subscriptionPlans;
+    List<BookableService> finalServices = updatedModel.bookableServices;
+    String finalPricingInfo = updatedModel.pricingInfo;
+
+    switch (pricingModel) {
+      case PricingModel.subscription:
+        finalPlans = subscriptionPlans ?? []; finalServices = []; finalPricingInfo = ''; break;
+      case PricingModel.reservation:
+        finalPlans = []; finalServices = bookableServices ?? []; finalPricingInfo = ''; break;
+      case PricingModel.hybrid:
+        finalPlans = subscriptionPlans ?? []; finalServices = bookableServices ?? []; finalPricingInfo = ''; break;
+      case PricingModel.other:
+        finalPlans = []; finalServices = []; finalPricingInfo = pricingInfo ?? ''; break;
+    }
+    return updatedModel.copyWith(
+      subscriptionPlans: finalPlans, bookableServices: finalServices, pricingInfo: finalPricingInfo,
+    );
+  }
 
   @override
   List<Object?> get props => [
@@ -126,129 +175,69 @@ class UpdatePricingDataEvent extends ServiceProviderEvent {
   ];
 }
 
-// --- ** NEW ** Specific Field Update Events (Do NOT trigger save) ---
-// These events update the Bloc state immediately upon user interaction.
-
-// Step 1 Specific Updates
-class UpdateDob extends ServiceProviderEvent {
-  final DateTime? dob;
-  const UpdateDob(this.dob);
-  @override List<Object?> get props => [dob];
-}
-
-class UpdateGender extends ServiceProviderEvent {
-  final String? gender;
-  const UpdateGender(this.gender);
-  @override List<Object?> get props => [gender];
-}
-
-// Step 2 Specific Updates
-class UpdateCategoryAndSubCategory extends ServiceProviderEvent {
-  final String? category;
-  final String? subCategory; // Often reset when main category changes
-  const UpdateCategoryAndSubCategory({required this.category, this.subCategory});
-  @override List<Object?> get props => [category, subCategory];
-}
-
-class UpdateGovernorate extends ServiceProviderEvent {
-  final String? governorateDisplayName; // Pass display name
-  const UpdateGovernorate(this.governorateDisplayName);
-  @override List<Object?> get props => [governorateDisplayName];
-}
-
-class UpdateLocation extends ServiceProviderEvent {
-  final GeoPoint? location;
-  const UpdateLocation(this.location);
-  @override List<Object?> get props => [location];
-}
-
-class UpdateOpeningHours extends ServiceProviderEvent {
-  final OpeningHours openingHours;
-  const UpdateOpeningHours(this.openingHours);
-  @override List<Object?> get props => [openingHours];
-}
-
-class UpdateAmenities extends ServiceProviderEvent {
-  final List<String> amenities; // Send the full updated list
-  const UpdateAmenities(this.amenities);
-  @override List<Object?> get props => [amenities];
-}
-
-// Step 3 Specific Updates
-class UpdatePricingModel extends ServiceProviderEvent {
-  final PricingModel pricingModel;
-  const UpdatePricingModel(this.pricingModel);
-  @override List<Object?> get props => [pricingModel];
-}
-
-class UpdateSubscriptionPlans extends ServiceProviderEvent {
-  final List<SubscriptionPlan> plans;
-  const UpdateSubscriptionPlans(this.plans);
-  @override List<Object?> get props => [plans];
-}
-
-class UpdateBookableServices extends ServiceProviderEvent {
-  final List<BookableService> services;
-  const UpdateBookableServices(this.services);
-  @override List<Object?> get props => [services];
-}
-
-class UpdateSupportedReservationTypes extends ServiceProviderEvent {
-  final List<String> types; // List of type names
-  const UpdateSupportedReservationTypes(this.types);
-  @override List<Object?> get props => [types];
-}
-
-class UpdateAccessOptions extends ServiceProviderEvent {
-  final List<AccessPassOption> options;
-  const UpdateAccessOptions(this.options);
-  @override List<Object?> get props => [options];
-}
-
-// Note: MaxGroupSize, SeatMapUrl, PricingInfo, ReservationConfigs are likely updated via TextControllers
-// and saved with the consolidated UpdatePricingDataEvent triggered by "Next".
-// If more immediate Bloc state updates are needed for these, specific events can be added.
-
-// --- Asset Events ---
-
-// Event for Step 4 Gallery Update (Triggers Save of the gallery list only)
-class UpdateGalleryUrlsEvent extends ServiceProviderEvent {
+// Event for Step 4 Gallery Update (still triggers save)
+class UpdateGalleryUrlsEvent extends UpdateAndValidateStepData {
   final List<String> updatedUrls;
   const UpdateGalleryUrlsEvent(this.updatedUrls);
-  @override List<Object?> get props => [updatedUrls];
-  // This event WILL trigger a save in the Bloc handler
+  @override
+  ServiceProviderModel applyUpdates(ServiceProviderModel currentModel) =>
+      currentModel.copyWith(galleryImageUrls: updatedUrls);
+  @override
+  List<Object?> get props => [updatedUrls];
 }
 
-// Asset Upload Event (Triggers Save) - REMOVED Concurrent Data
+// Event for Step 1 and Step 4 Asset Uploads (still triggers save)
+// *** REMOVED currentDob, currentGender from this event ***
 class UploadAssetAndUpdateEvent extends ServiceProviderEvent {
-  final dynamic assetData; // Uint8List (web) or String path (non-web)
-  final String targetField; // e.g., 'idFrontImageUrl', 'logoUrl', 'addGalleryImageUrl'
-  final String assetTypeFolder; // Cloudinary folder hint
+  final dynamic assetData;
+  final String targetField;
+  final String assetTypeFolder;
+  // Pass other relevant fields that should be saved *concurrently* with upload
+  final String? currentName;
+  final String? currentPersonalPhoneNumber;
+  final String? currentIdNumber;
+  // Add other optional fields here if needed for other steps
 
   const UploadAssetAndUpdateEvent({
     required this.assetData,
     required this.targetField,
     required this.assetTypeFolder,
-    // REMOVED concurrent fields (currentName, currentDob, etc.)
+    this.currentName,
+    this.currentPersonalPhoneNumber,
+    this.currentIdNumber,
+    // Add other optional fields here if needed
   });
 
   @override
   List<Object?> get props => [
-    // assetData is tricky for Equatable, might cause issues if it's Uint8List.
-    // Consider overriding props or ensuring assetData is handled carefully.
-    // For simplicity now, excluding assetData from props.
-    targetField, assetTypeFolder,
+    assetData, targetField, assetTypeFolder,
+    currentName, currentPersonalPhoneNumber, currentIdNumber,
+    // Add other optional fields here
   ];
 }
 
+// *** UpdateDobEvent and UpdateGenderEvent REMOVED ***
 
-// Remove Asset Event (Triggers Save)
+// --- RemoveAssetUrlEvent ---
 class RemoveAssetUrlEvent extends ServiceProviderEvent {
-  final String targetField; // e.g., 'logoUrl', 'mainImageUrl', 'idFrontImageUrl', etc.
+  final String targetField;
   const RemoveAssetUrlEvent(this.targetField);
   @override
   List<Object?> get props => [targetField];
-  // Bloc handler will perform the removal and save
+
+  // This event still needs to trigger a save implicitly via the Bloc handler
+  ServiceProviderModel applyRemoval(ServiceProviderModel currentModel) {
+    switch (targetField) {
+      case 'logoUrl': return currentModel.copyWith(logoUrl: null);
+      case 'mainImageUrl': return currentModel.copyWith(mainImageUrl: null);
+      case 'idFrontImageUrl': return currentModel.copyWith(idFrontImageUrl: null);
+      case 'idBackImageUrl': return currentModel.copyWith(idBackImageUrl: null);
+      case 'profilePictureUrl': return currentModel.copyWith(profilePictureUrl: null);
+      default:
+        print("Warning: Unknown target field '$targetField' for removal in RemoveAssetUrlEvent");
+        return currentModel;
+    }
+  }
 }
 
 
@@ -265,7 +254,6 @@ class CheckEmailVerificationStatusEvent extends ServiceProviderEvent {}
 
 // --- Completion Event ---
 class CompleteRegistration extends ServiceProviderEvent {
-  // Pass the *final* model state from the Bloc when dispatching
   final ServiceProviderModel finalModel;
   const CompleteRegistration(this.finalModel);
   @override
