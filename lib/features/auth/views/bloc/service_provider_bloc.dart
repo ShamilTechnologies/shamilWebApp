@@ -1,1227 +1,459 @@
-/// File: lib/features/auth/views/bloc/service_provider_bloc.dart
-/// --- UPDATED: Removed restrictive loading guard in _onLoadInitialData ---
+/// File: lib/features/auth/presentation/bloc/service_provider_bloc.dart
+/// --- REFACTORED for Clean Architecture ---
 library;
 
-import 'dart:async'; // Required for Future
-import 'package:flutter/foundation.dart' show kDebugMode; // For debug prints
-
+import 'dart:async';
 import 'package:bloc/bloc.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-// Assuming base event/state use Equatable
+import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 
-// --- Import Project Specific Files ---
-// Adjust paths based on your project structure
-import 'package:shamil_web_app/cloudinary_service.dart';
-// *** Uses the UPDATED model ***
-import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
-// Import Event and State definitions
-// *** Uses the UPDATED events referencing the updated model ***
-// *** ADDED Import for governorate mapping ***
-import 'package:shamil_web_app/core/constants/registration_constants.dart'
-    show getGovernorateId;
-// *** Import UPDATED events ***
-import 'service_provider_event.dart';
-import 'service_provider_state.dart';
+// --- Core ---
+import 'package:shamil_web_app/core/error/failures.dart';
+import 'package:shamil_web_app/core/use_cases/assets/remove_asset.dart';
+import 'package:shamil_web_app/core/use_cases/assets/upload_asset.dart';
+import 'package:shamil_web_app/core/use_cases/auth/get_current_user.dart';
+import 'package:shamil_web_app/core/use_cases/auth/reload_user.dart';
+import 'package:shamil_web_app/core/use_cases/auth/send_email_verification.dart';
+import 'package:shamil_web_app/core/use_cases/provider/register_provider.dart';
+import 'package:shamil_web_app/core/use_cases/provider/save_service_provider_profile.dart';
+import 'package:shamil_web_app/core/use_cases/usecase.dart';
 
-//----------------------------------------------------------------------------//
-// Service Provider BLoC Implementation                                     //
-//----------------------------------------------------------------------------//
+// --- Domain Layer ---
+import 'package:shamil_web_app/domain/entities/user_entity.dart';
+import 'package:shamil_web_app/core/use_cases/auth/sign_in.dart';
 
-class ServiceProviderBloc
-    extends Bloc<ServiceProviderEvent, ServiceProviderState> {
-  // Firebase service instances
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+// --- Presentation Layer (Events & States) ---
+// Adjust paths if needed after restructuring
+import 'service_provider_event.dart'; // Uses UPDATED events
+import 'service_provider_state.dart'; // Uses Entities
 
-  // Firestore collection reference (adjust name if needed)
-  CollectionReference get _providersCollection =>
-      _firestore.collection("serviceProviders");
+// --- Utils ---
+import 'package:shamil_web_app/core/constants/registration_constants.dart' show getGovernorateId;
 
-  ServiceProviderBloc() : super(ServiceProviderInitial()) {
+class ServiceProviderBloc extends Bloc<ServiceProviderEvent, ServiceProviderState> {
+
+  // --- Use Case Dependencies (Injected) ---
+  final GetCurrentUserUseCase getCurrentUserUseCase;
+  final ReloadUserUseCase reloadUserUseCase;
+  final SignInUseCase signInUseCase;
+  final RegisterProviderUseCase registerProviderUseCase;
+  final SendEmailVerificationUseCase sendEmailVerificationUseCase;
+  final GetServiceProviderProfileUseCase getServiceProviderProfileUseCase;
+  final SaveServiceProviderProfileUseCase saveServiceProviderProfileUseCase;
+  final UploadAssetUseCase uploadAssetUseCase;
+  final RemoveAssetUseCase removeAssetUseCase;
+  // Add other required use cases (e.g., SignOutUseCase)
+
+  ServiceProviderBloc({
+    required this.getCurrentUserUseCase,
+    required this.reloadUserUseCase,
+    required this.signInUseCase,
+    required this.registerProviderUseCase,
+    required this.sendEmailVerificationUseCase,
+    required this.getServiceProviderProfileUseCase,
+    required this.saveServiceProviderProfileUseCase,
+    required this.uploadAssetUseCase,
+    required this.removeAssetUseCase,
+    // ... inject others ...
+  }) : super(ServiceProviderInitial()) {
     // Register event handlers
     on<LoadInitialData>(_onLoadInitialData);
     on<SubmitAuthDetailsEvent>(_onSubmitAuthDetails);
     on<CheckEmailVerificationStatusEvent>(_onCheckEmailVerificationStatus);
 
-    // Consolidated Step Savers (triggered by "Next")
-    on<UpdatePersonalIdDataEvent>(_onUpdateAndSaveStepData);
-    on<UpdateBusinessDataEvent>(_onUpdateAndSaveStepData);
-    on<UpdatePricingDataEvent>(_onUpdateAndSaveStepData);
+    // Consolidated Step Savers trigger Save Use Case
+    on<UpdatePersonalIdDataEvent>(_onSaveStepData);
+    on<UpdateBusinessDataEvent>(_onSaveStepData);
+    on<UpdatePricingDataEvent>(_onSaveStepData);
 
-    // ** NEW ** Specific Field Updaters (Do NOT save immediately)
-    on<UpdateDob>(_onUpdateDob);
-    on<UpdateGender>(_onUpdateGender);
-    on<UpdateCategoryAndSubCategory>(_onUpdateCategoryAndSubCategory);
-    on<UpdateGovernorate>(_onUpdateGovernorate);
-    on<UpdateLocation>(_onUpdateLocation);
-    on<UpdateOpeningHours>(_onUpdateOpeningHours);
-    on<UpdateAmenities>(_onUpdateAmenities);
-    on<UpdatePricingModel>(_onUpdatePricingModel);
-    on<UpdateSubscriptionPlans>(_onUpdateSubscriptionPlans);
-    on<UpdateBookableServices>(_onUpdateBookableServices);
-    on<UpdateSupportedReservationTypes>(_onUpdateSupportedReservationTypes);
-    on<UpdateAccessOptions>(_onUpdateAccessOptions);
-    // MaxGroupSize, SeatMapUrl, PricingInfo, Configs are handled via consolidated event + TextControllers
+    // Specific Field Updaters only update state via copyWith (NO SAVE)
+    on<UpdateDob>(_onUpdateField);
+    on<UpdateGender>(_onUpdateField);
+    on<UpdateCategoryAndSubCategory>(_onUpdateField);
+    on<UpdateGovernorate>(_onUpdateField);
+    on<UpdateLocation>(_onUpdateField);
+    on<UpdateOpeningHours>(_onUpdateField);
+    on<UpdateAmenities>(_onUpdateField);
+    on<UpdatePricingModel>(_onUpdateField);
+    on<UpdateSubscriptionPlans>(_onUpdateField);
+    on<UpdateBookableServices>(_onUpdateField);
+    on<UpdateSupportedReservationTypes>(_onUpdateField);
+    on<UpdateAccessOptions>(_onUpdateField);
 
+    // Navigation handler
     on<NavigateToStep>(_onNavigateToStep);
 
-    // Asset Handlers (Trigger Save)
+    // Asset Handlers trigger Upload/Remove Use Cases and Save Use Case
     on<UploadAssetAndUpdateEvent>(_onUploadAssetAndUpdate);
     on<RemoveAssetUrlEvent>(_onRemoveAssetUrl);
-    on<UpdateGalleryUrlsEvent>(_onUpdateGalleryUrls); // Handles gallery save
+    on<UpdateGalleryUrlsEvent>(_onUpdateGalleryUrls); // Triggers Save Use Case
 
+    // Completion handler triggers Save Use Case
     on<CompleteRegistration>(_onCompleteRegistration);
 
-    // Add initial data load trigger right after Bloc creation
-    add(LoadInitialData());
+    add(LoadInitialData()); // Trigger initial load
   }
 
-  /// Private getter for the currently authenticated Firebase user.
-  User? get _currentUser => _auth.currentUser;
+  // Helper to map Failure to error message string
+  String _mapFailureToMessage(Failure failure) {
+    switch (failure.runtimeType) {
+      case ServerFailure: return (failure as ServerFailure).message;
+      case CacheFailure: return failure.message;
+      case AuthenticationFailure: return (failure as AuthenticationFailure).message;
+      case NetworkFailure: return failure.message;
+      case ValidationFailure: return (failure as ValidationFailure).message;
+      case DeviceFailure: return (failure as DeviceFailure).message;
+      case PermissionFailure: return (failure as PermissionFailure).message;
+      default: return failure.message.isNotEmpty ? failure.message : 'An unexpected error occurred';
+    }
+  }
 
   //--------------------------------------------------------------------------//
-  // Event Handlers                                                           //
+  // Refactored Event Handlers                                                //
   //--------------------------------------------------------------------------//
 
-  /// Determines the initial state when the registration flow starts or resumes.
-  Future<void> _onLoadInitialData(
-    LoadInitialData event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    // --- GUARD REMOVED ---
-    // The original guard `if (state is ServiceProviderLoading) return;` was removed
-    // to allow post-login loading to proceed.
-
-    // Emit Loading state only if not already loading.
-    // This prevents flicker if LoadInitialData is called rapidly,
-    // but allows it to run after login even if the initial load was quick.
+  Future<void> _onLoadInitialData(LoadInitialData event, Emitter<ServiceProviderState> emit) async {
+    // Keep emitting Loading at the start
     if (state is! ServiceProviderLoading) {
-      print("ServiceProviderBloc [LoadInitial]: Emitting Loading state.");
       emit(const ServiceProviderLoading());
-    } else {
-      print(
-        "ServiceProviderBloc [LoadInitial]: State is already Loading, proceeding anyway (likely post-login or refresh).",
-      );
     }
+    print("ServiceProviderBloc [LoadInitial - Clean Arch]: Getting current user...");
+    final userResult = await getCurrentUserUseCase(NoParams());
 
-    final user = _currentUser;
-    if (user == null) {
-      print(
-        "ServiceProviderBloc [LoadInitial]: No authenticated user. Resetting to Step 0.",
-      );
-      // Ensure we emit DataLoaded even if user is null, for Step 0 UI
-      emit(
-        ServiceProviderDataLoaded(
-          ServiceProviderModel.empty('temp_uid', 'temp_email'),
-          0,
-        ),
-      );
-      return;
-    }
-
-    try {
-      print(
-        "ServiceProviderBloc [LoadInitial]: User ${user.uid} authenticated. Reloading user data...",
-      );
-      // Reload Firebase user data to get latest status (like email verification)
-      await user.reload();
-      final freshUser = _auth.currentUser; // Get potentially updated user data
-
-      if (freshUser == null) {
-        print(
-          "ServiceProviderBloc [LoadInitial]: User became null after reload. Resetting to Step 0.",
-        );
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty('temp_uid', 'temp_email'),
-            0,
-          ),
-        );
-        return;
-      }
-
-      // Check email verification status FIRST
-      if (!freshUser.emailVerified) {
-        print(
-          "ServiceProviderBloc [LoadInitial]: Email not verified for ${freshUser.email}. Emitting AwaitingVerification.",
-        );
-        if (state is! ServiceProviderAwaitingVerification) {
-          // Avoid re-emitting if already in this state
-          emit(ServiceProviderAwaitingVerification(freshUser.email!));
+    await userResult.fold(
+      (failure) async {
+        print("LoadInitial: No authenticated user or error ($_mapFailureToMessage(failure)). Resetting to Step 0.");
+        emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty('temp', 'temp'), 0));
+      },
+      (userEntity) async {
+        if (userEntity == null) {
+           print("LoadInitial: No authenticated user found. Resetting to Step 0.");
+           emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty('temp', 'temp'), 0));
+           return;
         }
-        return; // Stop further processing until email is verified
+
+        print("LoadInitial: User ${userEntity.uid} found. Reloading...");
+        final reloadResult = await reloadUserUseCase(NoParams()); // Use case reloads current user
+
+        // Use reloaded user if available, otherwise original
+        // Handle case where reload might fail but we still have the original userEntity
+        UserEntity? userToCheck;
+         reloadResult.fold(
+           (failure) {
+                print("LoadInitial: User reload failed (${_mapFailureToMessage(failure)}), proceeding with potentially stale user data.");
+                userToCheck = userEntity; // Use original entity if reload fails
+           },
+           (reloadedUserEntity) {
+                userToCheck = reloadedUserEntity ?? userEntity; // Use reloaded if available
+           }
+         );
+
+        if (userToCheck == null) { // Check again after reload attempt
+            print("LoadInitial: User became null after reload check. Resetting to Step 0.");
+            emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty('temp', 'temp'), 0));
+            return;
+        }
+
+        if (!userToCheck!.isEmailVerified) {
+           print("LoadInitial: Email not verified for ${userToCheck!.email}. Emitting AwaitingVerification.");
+           emit(ServiceProviderAwaitingVerification(userToCheck!.email));
+           return;
+        }
+
+        print("LoadInitial: Email verified for ${userToCheck!.uid}. Loading profile using Use Case...");
+        await _loadProfileAndEmitState(userToCheck!, emit);
       }
+    );
+  }
 
-      // Email is verified, proceed to check Firestore data
-      print(
-        "ServiceProviderBloc [LoadInitial]: Email verified. Checking Firestore for doc ${freshUser.uid}...",
+  // Helper to load profile via Use Case and emit final state
+  Future<void> _loadProfileAndEmitState(UserEntity user, Emitter<ServiceProviderState> emit) async {
+      final profileResult = await getServiceProviderProfileUseCase(user.uid);
+      profileResult.fold(
+        (failure) {
+            // Distinguish between not found (new user) and other errors
+            if (failure is CacheFailure || failure.message.contains("not found")){
+                 print("LoadInitial: Profile not found for ${user.uid}. Starting new registration at Step 1.");
+                 final initialProfile = ServiceProviderEntity.empty(user.uid, user.email);
+                 // Save the initial profile via Use Case - handle potential error during save
+                 saveServiceProviderProfileUseCase(initialProfile).then((saveResult) {
+                     saveResult.fold(
+                         (saveFailure) => emit(ServiceProviderError("Failed to create initial profile: ${_mapFailureToMessage(saveFailure)}")),
+                         (_) => emit(ServiceProviderDataLoaded(initialProfile, 1)) // Start at step 1
+                     );
+                 }).catchError((e) => emit(ServiceProviderError("Error saving initial profile: $e")));
+            } else {
+                 print("LoadInitial: Failed to load profile: ${_mapFailureToMessage(failure)}");
+                 emit(ServiceProviderError("Failed to load profile: ${_mapFailureToMessage(failure)}"));
+                 // Optionally revert to step 0
+                 emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty(user.uid, user.email), 0));
+            }
+        },
+        (profileEntity) {
+            if (profileEntity.isRegistrationComplete) {
+                print("LoadInitial: Registration complete. Emitting AlreadyCompleted.");
+                emit(ServiceProviderAlreadyCompleted(profileEntity));
+            } else {
+                final resumeStep = profileEntity.currentProgressStep;
+                print("LoadInitial: Registration incomplete. Resuming at step: $resumeStep");
+                emit(ServiceProviderDataLoaded(profileEntity, resumeStep));
+            }
+        }
       );
-      final docSnapshot = await _providersCollection.doc(freshUser.uid).get();
+  }
 
-      if (docSnapshot.exists) {
-        print("ServiceProviderBloc [LoadInitial]: Firestore document found.");
-        final model = ServiceProviderModel.fromFirestore(docSnapshot);
-        if (model.isRegistrationComplete) {
-          print(
-            "ServiceProviderBloc [LoadInitial]: Registration complete flag is true. Emitting AlreadyCompleted.",
-          );
-          emit(
-            ServiceProviderAlreadyCompleted(
-              model,
-              message: "Registration is already complete.",
-            ),
-          );
+  Future<void> _onSubmitAuthDetails(SubmitAuthDetailsEvent event, Emitter<ServiceProviderState> emit) async {
+     emit(const ServiceProviderLoading(message: "Authenticating..."));
+     final signInResult = await signInUseCase(SignInParams(email: event.email, password: event.password));
+
+     await signInResult.fold(
+        (signInFailure) async {
+            // Only try registration if sign in failed because user wasn't found or wrong password
+            if (signInFailure is AuthenticationFailure && (signInFailure.message.contains('user-not-found') || signInFailure.message.contains('wrong-password') || signInFailure.message.contains('INVALID_LOGIN_CREDENTIALS'))) {
+                print("SubmitAuth: Sign in failed as expected for new user (${signInFailure.message}), attempting registration...");
+                final registerResult = await registerProviderUseCase(RegisterProviderParams(email: event.email, password: event.password));
+                registerResult.fold(
+                    (registerFailure) { emit(ServiceProviderError(_mapFailureToMessage(registerFailure))); emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty('temp',event.email), 0)); },
+                    (userEntity) async { print("SubmitAuth: Registration successful. Emitting AwaitingVerification."); await sendEmailVerificationUseCase(NoParams()); emit(ServiceProviderAwaitingVerification(userEntity.email)); }
+                );
+            } else {
+                // Different sign in error (network, server, etc.)
+                 print("SubmitAuth: Sign in failed with other error: ${_mapFailureToMessage(signInFailure)}");
+                 emit(ServiceProviderError(_mapFailureToMessage(signInFailure)));
+                 emit(ServiceProviderDataLoaded(ServiceProviderEntity.empty('temp',event.email), 0));
+            }
+        },
+        (_) async { // Sign in successful
+             print("SubmitAuth: Sign in successful. Triggering LoadInitialData.");
+             add(LoadInitialData());
+        }
+     );
+  }
+
+   Future<void> _onCheckEmailVerificationStatus(CheckEmailVerificationStatusEvent event, Emitter<ServiceProviderState> emit) async {
+       final userResult = await getCurrentUserUseCase(NoParams());
+       userResult.fold(
+         (_) => add(LoadInitialData()), // Reload if user somehow became null
+         (userEntity) async {
+           if (userEntity == null || state is! ServiceProviderAwaitingVerification) return;
+           print("VerifyCheck: Checking status for ${userEntity.email}...");
+           final reloadResult = await reloadUserUseCase(NoParams());
+           reloadResult.fold(
+             (failure) => print("VerifyCheck: User reload failed: ${_mapFailureToMessage(failure)}"),
+             (reloadedUserEntity) {
+               if (reloadedUserEntity?.isEmailVerified ?? false) {
+                 print("VerifyCheck: Email verified. Triggering LoadInitialData.");
+                 add(LoadInitialData()); // Load profile now
+               } else {
+                 print("VerifyCheck: Email still not verified.");
+               }
+             }
+           );
+         }
+       );
+   }
+
+   // Generic handler for specific field updates - updates state locally (NO SAVE)
+    void _onUpdateField(ServiceProviderEvent event, Emitter<ServiceProviderState> emit) {
+        if (state is! ServiceProviderDataLoaded) return;
+        final currentState = state as ServiceProviderDataLoaded;
+        ServiceProviderEntity updatedModel = currentState.model;
+        bool changed = false;
+
+        // Apply copyWith logic based on event type
+        if(event is UpdateDob && updatedModel.dob != event.dob) { updatedModel = updatedModel.copyWith(dob: event.dob); changed = true; }
+        else if(event is UpdateGender && updatedModel.gender != event.gender) { updatedModel = updatedModel.copyWith(gender: event.gender); changed = true; }
+        else if(event is UpdateCategoryAndSubCategory && (updatedModel.businessCategory != event.category || updatedModel.businessSubCategory != event.subCategory)) { updatedModel = updatedModel.copyWith(businessCategory: event.category, businessSubCategory: event.subCategory); changed = true; }
+        else if(event is UpdateGovernorate) { final addr = Map<String,String>.from(updatedModel.address); addr['governorate'] = event.governorateDisplayName ?? ''; final gid = getGovernorateId(event.governorateDisplayName); if(updatedModel.address['governorate'] != event.governorateDisplayName || updatedModel.governorateId != gid) { updatedModel = updatedModel.copyWith(address: addr, governorateId: gid); changed = true;} }
+        else if(event is UpdateLocation && updatedModel.location != event.location) { updatedModel = updatedModel.copyWith(location: event.location); changed = true; }
+        else if(event is UpdateOpeningHours && updatedModel.openingHours != event.openingHours) { updatedModel = updatedModel.copyWith(openingHours: event.openingHours); changed = true; }
+        else if(event is UpdateAmenities && !ListEquality().equals(updatedModel.amenities, event.amenities)) { updatedModel = updatedModel.copyWith(amenities: event.amenities); changed = true; }
+        else if(event is UpdatePricingModel && updatedModel.pricingModel != event.pricingModel) { updatedModel = updatedModel.copyWith(pricingModel: event.pricingModel); changed = true; }
+        else if(event is UpdateSubscriptionPlans && !ListEquality().equals(updatedModel.subscriptionPlans, event.plans)) { updatedModel = updatedModel.copyWith(subscriptionPlans: event.plans); changed = true; }
+        else if(event is UpdateBookableServices && !ListEquality().equals(updatedModel.bookableServices, event.services)) { updatedModel = updatedModel.copyWith(bookableServices: event.services); changed = true; }
+        else if(event is UpdateSupportedReservationTypes && !ListEquality().equals(updatedModel.supportedReservationTypes, event.types)) { updatedModel = updatedModel.copyWith(supportedReservationTypes: event.types); changed = true; }
+        else if(event is UpdateAccessOptions && !ListEquality().equals(updatedModel.accessOptions ?? [], event.options)) { updatedModel = updatedModel.copyWith(accessOptions: event.options); changed = true; }
+
+        if (changed) {
+             emit(ServiceProviderDataLoaded(updatedModel, currentState.currentStep));
+             print("Bloc: Updated field in state for event ${event.runtimeType}");
         } else {
-          final resumeStep = model.currentProgressStep;
-          print(
-            "ServiceProviderBloc [LoadInitial]: Registration incomplete. Resuming at step: $resumeStep",
-          );
-          emit(ServiceProviderDataLoaded(model, resumeStep));
+            print("Bloc: Field update event ${event.runtimeType} resulted in no change.");
         }
-      } else {
-        // User authenticated and verified, but no Firestore doc - start registration flow
-        print(
-          "ServiceProviderBloc [LoadInitial]: No Firestore document found. Starting new registration at Step 1.",
-        );
-        final initialModel = ServiceProviderModel.empty(
-          freshUser.uid,
-          freshUser.email!,
-        );
-        // Save the initial empty model immediately to create the document
-        await _saveProviderData(initialModel, emit); // Use helper to save
-        // Check if save failed before emitting DataLoaded
-        if (state is! ServiceProviderError) {
-          emit(ServiceProviderDataLoaded(initialModel, 1)); // Start at step 1
-        }
-        // If save failed, _saveProviderData would have emitted Error state already.
-      }
-    } on FirebaseAuthException catch (e) {
-      print(
-        "ServiceProviderBloc [LoadInitial]: FirebaseAuthException: ${e.code}",
-      );
-      emit(ServiceProviderError("Auth Error: ${e.message ?? e.code}"));
-      // Revert to step 0 on auth error during reload
-      emit(
-        ServiceProviderDataLoaded(
-          ServiceProviderModel.empty(user.uid, user.email ?? 'error_email'),
-          0,
-        ),
-      );
-    } catch (e, s) {
-      print("ServiceProviderBloc [LoadInitial]: Generic error: $e\n$s");
-      emit(ServiceProviderError("Error loading data: ${e.toString()}"));
-      // Revert to step 0 on generic error
-      emit(
-        ServiceProviderDataLoaded(
-          ServiceProviderModel.empty(user.uid, user.email ?? 'error_email'),
-          0,
-        ),
-      );
-    }
-  }
-
-  /// Handles email/password submission from Step 0.
-  Future<void> _onSubmitAuthDetails(
-    SubmitAuthDetailsEvent event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    // Get UID before emitting loading, in case we need it for error state fallback
-    String uidForFallback = 'temp_uid';
-    if (state is ServiceProviderDataLoaded) {
-      uidForFallback = (state as ServiceProviderDataLoaded).model.uid;
     }
 
-    emit(const ServiceProviderLoading(message: "Authenticating..."));
-    try {
-      final signInMethods = await _auth.fetchSignInMethodsForEmail(event.email);
-      print(
-        'ServiceProviderBloc [SubmitAuth]: Sign In Methods for ${event.email}: $signInMethods',
-      );
-      if (signInMethods.isEmpty) {
-        await _performRegistration(event.email, event.password, emit);
-      } else {
-        await _performLogin(event.email, event.password, emit);
-      }
-    } on FirebaseAuthException catch (e) {
-      print(
-        "ServiceProviderBloc [SubmitAuth]: FirebaseAuthException: ${e.code}",
-      );
-      if (!isClosed) emit(ServiceProviderError(_handleAuthError(e)));
-      // After error, revert to step 0 UI state
-      if (!isClosed)
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty(uidForFallback, event.email),
-            0,
-          ),
-        );
-    } catch (e, s) {
-      print("ServiceProviderBloc [SubmitAuth]: Generic Error: $e\n$s");
-      if (!isClosed)
-        emit(
-          const ServiceProviderError(
-            "An unexpected error occurred. Please check your connection and try again.",
-          ),
-        );
-      // After error, revert to step 0 UI state
-      if (!isClosed)
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty(uidForFallback, event.email),
-            0,
-          ),
-        );
-    }
-  }
 
-  /// Helper: Performs the registration logic.
-  Future<void> _performRegistration(
-    String email,
-    String password,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    print("ServiceProviderBloc [Register]: Attempting registration: $email");
-    String uidForFallback = 'temp_uid'; // For error case before user exists
-    try {
-      final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      final User? user = userCredential.user;
-      if (user == null) {
-        throw Exception("Firebase user creation returned null.");
-      }
-      uidForFallback = user.uid; // User exists now
-      print(
-        "ServiceProviderBloc [Register]: User created: ${user.uid}. Sending verification email.",
-      );
-      try {
-        await user.sendEmailVerification();
-        print("ServiceProviderBloc [Register]: Verification email sent.");
-      } catch (e) {
-        print(
-          "ServiceProviderBloc [Register]: Warning - Error sending verification email: $e",
-        );
-      }
+   // Handler for consolidated step save events (calls Save Use Case)
+   Future<void> _onSaveStepData(ServiceProviderEvent event, Emitter<ServiceProviderState> emit) async {
+       if (state is! ServiceProviderDataLoaded) return;
+       final currentState = state as ServiceProviderDataLoaded;
+       print("Bloc [_onSaveStepData]: Processing ${event.runtimeType} for step ${currentState.currentStep}.");
 
-      final initialModel = ServiceProviderModel.empty(user.uid, user.email!);
-      await _saveProviderData(initialModel, emit); // Save initial document
-      if (!isClosed && state is! ServiceProviderError) {
-        print(
-          "ServiceProviderBloc [Register]: Registration successful. Emitting AwaitingVerification.",
-        );
-        emit(ServiceProviderAwaitingVerification(user.email!));
-      }
-      // If _saveProviderData failed, it emits Error, so no need for else here.
-    } on FirebaseAuthException catch (e) {
-      if (isClosed) return;
-      if (e.code == 'email-already-in-use') {
-        print(
-          "ServiceProviderBloc [Register]: Registration failed (email-already-in-use), attempting login fallback...",
-        );
-        await _performLogin(email, password, emit); // Try login instead
-      } else {
-        print(
-          "ServiceProviderBloc [Register]: FirebaseAuthException: ${e.code}",
-        );
-        if (!isClosed) emit(ServiceProviderError(_handleAuthError(e)));
-        // Revert to step 0 on registration error
-        if (!isClosed)
-          emit(
-            ServiceProviderDataLoaded(
-              ServiceProviderModel.empty(uidForFallback, email),
-              0,
-            ),
-          );
-      }
-    } catch (e, s) {
-      print("ServiceProviderBloc [Register]: Generic error: $e\n$s");
-      if (!isClosed)
-        emit(
-          const ServiceProviderError(
-            "An unexpected error occurred during registration.",
-          ),
-        );
-      // Revert to step 0 on registration error
-      if (!isClosed)
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty(uidForFallback, email),
-            0,
-          ),
-        );
-    }
-  }
+       // Create the model to save based on event data (sourced from UI state via event payload)
+       ServiceProviderEntity modelToSave;
+        if (event is UpdatePersonalIdDataEvent) { modelToSave = currentState.model.copyWith( name: event.name, dob: event.dob, gender: event.gender, personalPhoneNumber: event.personalPhoneNumber, idNumber: event.idNumber, ); }
+        else if (event is UpdateBusinessDataEvent) { final String governorateId = getGovernorateId(event.address['governorate']); modelToSave = currentState.model.copyWith( businessName: event.businessName, businessDescription: event.businessDescription, businessContactPhone: event.businessContactPhone, businessContactEmail: event.businessContactEmail, website: event.website, businessCategory: event.businessCategory, businessSubCategory: event.businessSubCategory, address: event.address, location: event.location, openingHours: event.openingHours, amenities: event.amenities, governorateId: governorateId, ); }
+        else if (event is UpdatePricingDataEvent) { modelToSave = currentState.model.copyWith( pricingModel: event.pricingModel, subscriptionPlans: event.subscriptionPlans, bookableServices: event.bookableServices, pricingInfo: event.pricingInfo, supportedReservationTypes: event.supportedReservationTypes, maxGroupSize: event.maxGroupSize, accessOptions: event.accessOptions, seatMapUrl: event.seatMapUrl, reservationTypeConfigs: event.reservationTypeConfigs, ); }
+        else { print("Bloc [_onSaveStepData]: Error - Unhandled consolidated event type"); return; }
 
-  /// Helper: Performs the login logic. Dispatches LoadInitialData on success.
-  Future<void> _performLogin(
-    String email,
-    String password,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    print("ServiceProviderBloc [Login]: Attempting login: $email");
-    String uidForFallback = 'temp_uid'; // For error case
-    if (state is ServiceProviderDataLoaded) {
-      uidForFallback = (state as ServiceProviderDataLoaded).model.uid;
-    }
-    try {
-      final userCredential = await _auth.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      final User? user = userCredential.user;
-      if (user == null) throw Exception("Firebase login returned null user.");
-      print(
-        "ServiceProviderBloc [Login]: Login successful: ${user.uid}. Triggering LoadInitialData.",
-      );
-      if (!isClosed)
-        add(LoadInitialData()); // Trigger load to check verification etc.
-    } on FirebaseAuthException catch (e) {
-      print("ServiceProviderBloc [Login]: FirebaseAuthException: ${e.code}");
-      if (!isClosed) emit(ServiceProviderError(_handleAuthError(e)));
-      // Revert to step 0 on login error
-      if (!isClosed)
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty(uidForFallback, email),
-            0,
-          ),
-        );
-    } catch (e, s) {
-      print("ServiceProviderBloc [Login]: Generic error: $e\n$s");
-      if (!isClosed)
-        emit(
-          const ServiceProviderError(
-            "An unexpected error occurred during login.",
-          ),
-        );
-      // Revert to step 0 on login error
-      if (!isClosed)
-        emit(
-          ServiceProviderDataLoaded(
-            ServiceProviderModel.empty(uidForFallback, email),
-            0,
-          ),
-        );
-    }
-  }
+       // Call the Save Use Case
+       final saveResult = await saveServiceProviderProfileUseCase(modelToSave);
 
-  /// Handles periodic checks for email verification status.
-  Future<void> _onCheckEmailVerificationStatus(
-    CheckEmailVerificationStatusEvent event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    final user = _currentUser;
-    if (user == null || state is! ServiceProviderAwaitingVerification) return;
-    print(
-      "ServiceProviderBloc [VerifyCheck]: Checking email status for ${user.email}...",
-    );
-    try {
-      await user.reload();
-      final refreshedUser = _auth.currentUser;
-      if (refreshedUser == null) {
-        print(
-          "ServiceProviderBloc [VerifyCheck]: User became null after reload.",
-        );
-        if (!isClosed) add(LoadInitialData());
-        return;
-      }
-      if (refreshedUser.emailVerified) {
-        print(
-          "ServiceProviderBloc [VerifyCheck]: Email verified. Emitting VerificationSuccess.",
-        );
-        if (!isClosed) emit(ServiceProviderVerificationSuccess());
-      } else {
-        print("ServiceProviderBloc [VerifyCheck]: Email still not verified.");
-      }
-    } on FirebaseAuthException catch (e) {
-      print(
-        "ServiceProviderBloc [VerifyCheck]: Warning - FirebaseAuthException during reload: ${e.code}",
-      );
-      if (e.code == 'user-token-expired' ||
-          e.code == 'user-disabled' ||
-          e.code == 'user-not-found') {
-        if (!isClosed) add(LoadInitialData());
-      }
-    } catch (e) {
-      print(
-        "ServiceProviderBloc [VerifyCheck]: Warning - Generic error reloading user: $e",
-      );
-    }
-  }
+       saveResult.fold(
+          (failure) {
+              // Emit error but keep user on the same step with the *unsaved* data
+              emit(ServiceProviderError(_mapFailureToMessage(failure)));
+              // Re-emit previous valid state to allow user to retry/correct
+              emit(currentState);
+          },
+          (_) {
+             print("Bloc [_onSaveStepData]: Save successful for step ${currentState.currentStep}.");
+             // Update the state with the successfully saved model, preserving step index
+             emit(ServiceProviderDataLoaded(modelToSave, currentState.currentStep));
+             // NOTE: Navigation is triggered by a separate NavigateToStep event sent from UI's handleNext
+          }
+       );
+   }
 
-  /// Generic handler for the consolidated step update events. Saves the data.
-  Future<void> _onUpdateAndSaveStepData(
-    ServiceProviderEvent event, // Use base class or union type if possible
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    if (state is! ServiceProviderDataLoaded) {
-      print(
-        "ServiceProviderBloc [_onUpdateAndSaveStepData]: Error - Cannot save data, state is not DataLoaded (${state.runtimeType}).",
-      );
-      return;
-    }
-    final currentState = state as ServiceProviderDataLoaded;
-    print(
-      "ServiceProviderBloc [_onUpdateAndSaveStepData]: Processing ${event.runtimeType} for step ${currentState.currentStep}.",
-    );
 
-    ServiceProviderModel modelToSave;
-    try {
-      // Apply updates based on the specific event type
-      if (event is UpdatePersonalIdDataEvent) {
-        modelToSave = currentState.model.copyWith(
-          name: event.name,
-          dob: event.dob,
-          gender: event.gender,
-          personalPhoneNumber: event.personalPhoneNumber,
-          idNumber: event.idNumber,
-        );
-      } else if (event is UpdateBusinessDataEvent) {
-        final String governorateId = getGovernorateId(
-          event.address['governorate'],
-        );
-        if (kDebugMode) {
-          print(
-            "DEBUG: Mapping gov '${event.address['governorate']}' to ID '$governorateId' before save.",
-          );
-        }
-        modelToSave = currentState.model.copyWith(
-          businessName: event.businessName,
-          businessDescription: event.businessDescription,
-          businessContactPhone: event.businessContactPhone,
-          businessContactEmail: event.businessContactEmail,
-          website: event.website,
-          businessCategory: event.businessCategory,
-          businessSubCategory: event.businessSubCategory,
-          address: event.address,
-          location: event.location,
-          openingHours: event.openingHours,
-          amenities: event.amenities,
-          governorateId: governorateId,
-        );
-      } else if (event is UpdatePricingDataEvent) {
-        modelToSave = currentState.model.copyWith(
-          pricingModel: event.pricingModel,
-          subscriptionPlans: event.subscriptionPlans,
-          bookableServices: event.bookableServices,
-          pricingInfo: event.pricingInfo,
-          supportedReservationTypes: event.supportedReservationTypes,
-          maxGroupSize: event.maxGroupSize,
-          accessOptions: event.accessOptions,
-          seatMapUrl: event.seatMapUrl,
-          reservationTypeConfigs: event.reservationTypeConfigs,
-        );
-      } else {
-        print(
-          "ServiceProviderBloc [_onUpdateAndSaveStepData]: Error - Unhandled consolidated event type: ${event.runtimeType}",
-        );
-        return;
-      }
+   // Navigation handler (No Use Case needed)
+   void _onNavigateToStep(NavigateToStep event, Emitter<ServiceProviderState> emit) {
+        if (state is! ServiceProviderDataLoaded) return;
+        final currentState = state as ServiceProviderDataLoaded;
+        final targetStep = event.targetStep.clamp(0, 4); // Ensure valid step index
+        print("Bloc [Navigate]: Navigating from ${currentState.currentStep} to $targetStep");
+        emit(ServiceProviderDataLoaded(currentState.model, targetStep));
+   }
 
-      // Save the updated model
-      await _saveProviderData(modelToSave, emit);
+   Future<void> _onUploadAssetAndUpdate(UploadAssetAndUpdateEvent event, Emitter<ServiceProviderState> emit) async {
+     if (state is! ServiceProviderDataLoaded) return;
+     final currentState = state as ServiceProviderDataLoaded;
+     final modelBeforeUpload = currentState.model;
 
-      // Check state *after* potential save errors
-      final postSaveState = state;
-      if (!isClosed && postSaveState is! ServiceProviderError) {
-        print(
-          "ServiceProviderBloc [_onUpdateAndSaveStepData]: Save successful. Emitting updated DataLoaded state.",
-        );
-        final latestModel =
-            (postSaveState is ServiceProviderDataLoaded)
-                ? postSaveState.model
-                : modelToSave;
-        // Ensure the step index from the *original* state is preserved when emitting success
-        emit(ServiceProviderDataLoaded(latestModel, currentState.currentStep));
-      } else if (!isClosed) {
-        print(
-          "ServiceProviderBloc [_onUpdateAndSaveStepData]: Save failed (state is ServiceProviderError). Re-emitting previous valid state.",
-        );
-        emit(
-          currentState,
-        ); // Re-emit the state *before* the failed save attempt
-      }
-    } catch (e, s) {
-      print(
-        "ServiceProviderBloc [_onUpdateAndSaveStepData]: Error saving updates for ${event.runtimeType}: $e\n$s",
-      );
-      if (!isClosed) {
-        emit(ServiceProviderError("Failed to save step data: ${e.toString()}"));
-        emit(currentState);
-      } // Re-emit previous state on error
-    }
-  }
+     print("Bloc [Upload]: Uploading for field ${event.targetField}");
+     // Emit AssetUploading state to show progress/disable inputs
+     emit(ServiceProviderAssetUploading(model: modelBeforeUpload, currentStep: currentState.currentStep, targetField: event.targetField));
 
-  // --- Specific Field Update Handlers (Do NOT save immediately) ---
-  void _onUpdateDob(UpdateDob event, Emitter<ServiceProviderState> emit) {
-    if (state is ServiceProviderDataLoaded) {
+     // Call Upload Use Case
+     final uploadResult = await uploadAssetUseCase(UploadAssetParams(
+       assetData: event.assetData,
+       targetFolder: event.assetTypeFolder,
+       uid: modelBeforeUpload.uid, // Pass UID for potential folder path
+     ));
+
+     await uploadResult.fold(
+       (failure) async {
+           emit(ServiceProviderError(_mapFailureToMessage(failure)));
+           emit(currentState); // Revert to pre-upload state on upload failure
+       },
+       (imageUrl) async {
+           print("Bloc [Upload]: Success. URL: $imageUrl. Applying to model...");
+           // Apply ONLY the URL update using copyWith
+           ServiceProviderEntity updatedModel = modelBeforeUpload;
+           if (event.targetField == 'addGalleryImageUrl') {
+              final currentGallery = List<String>.from(updatedModel.galleryImageUrls)..add(imageUrl);
+              updatedModel = updatedModel.copyWith(galleryImageUrls: currentGallery);
+           } else {
+               updatedModel = modelBeforeUpload.copyWith(
+                  idFrontImageUrl: event.targetField == 'idFrontImageUrl' ? imageUrl : modelBeforeUpload.idFrontImageUrl,
+                  idBackImageUrl: event.targetField == 'idBackImageUrl' ? imageUrl : modelBeforeUpload.idBackImageUrl,
+                  logoUrl: event.targetField == 'logoUrl' ? imageUrl : modelBeforeUpload.logoUrl,
+                  mainImageUrl: event.targetField == 'mainImageUrl' ? imageUrl : modelBeforeUpload.mainImageUrl,
+                  profilePictureUrl: event.targetField == 'profilePictureUrl' ? imageUrl : modelBeforeUpload.profilePictureUrl,
+               );
+           }
+
+           // Save the updated model via Save Use Case
+           final saveResult = await saveServiceProviderProfileUseCase(updatedModel);
+           saveResult.fold(
+             (saveFailure) {
+                 // Upload worked, but save failed - critical state?
+                 emit(ServiceProviderError("Upload succeeded but failed to save profile: ${_mapFailureToMessage(saveFailure)}"));
+                 // Revert state to before the upload attempt? Or keep the model with the URL but show error?
+                 // Reverting is safer to ensure consistency.
+                 emit(currentState);
+             },
+             (_) {
+                 // Save successful, emit DataLoaded with the updated model
+                 emit(ServiceProviderDataLoaded(updatedModel, currentState.currentStep));
+             }
+           );
+       }
+     );
+   }
+
+  Future<void> _onRemoveAssetUrl(RemoveAssetUrlEvent event, Emitter<ServiceProviderState> emit) async {
+      if (state is! ServiceProviderDataLoaded) return;
       final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(dob: event.dob),
-        ),
-      );
-      print("Bloc: Updated DOB in state to ${event.dob}");
-    }
+      print("Bloc [RemoveAsset]: Removing ${event.targetField}");
+
+      ServiceProviderEntity modelWithAssetRemoved = currentState.model;
+      String? urlToRemove;
+
+       // Update model locally first to get URL and prepare potential save state
+       switch (event.targetField) {
+         case 'logoUrl': urlToRemove = modelWithAssetRemoved.logoUrl; modelWithAssetRemoved = modelWithAssetRemoved.copyWith(logoUrl: null); break;
+         case 'mainImageUrl': urlToRemove = modelWithAssetRemoved.mainImageUrl; modelWithAssetRemoved = modelWithAssetRemoved.copyWith(mainImageUrl: null); break;
+         case 'idFrontImageUrl': urlToRemove = modelWithAssetRemoved.idFrontImageUrl; modelWithAssetRemoved = modelWithAssetRemoved.copyWith(idFrontImageUrl: null); break;
+         case 'idBackImageUrl': urlToRemove = modelWithAssetRemoved.idBackImageUrl; modelWithAssetRemoved = modelWithAssetRemoved.copyWith(idBackImageUrl: null); break;
+         case 'profilePictureUrl': urlToRemove = modelWithAssetRemoved.profilePictureUrl; modelWithAssetRemoved = modelWithAssetRemoved.copyWith(profilePictureUrl: null); break;
+         default: print("Bloc [RemoveAsset]: Unknown target field"); break;
+       }
+
+       if (modelWithAssetRemoved != currentState.model) {
+            // Attempt to delete from Cloudinary via Use Case (best effort)
+            if (urlToRemove != null) {
+                final deleteResult = await removeAssetUseCase(urlToRemove);
+                deleteResult.fold(
+                  (failure) => print("Bloc [RemoveAsset]: Cloudinary delete failed: ${_mapFailureToMessage(failure)}"),
+                  (_) => print("Bloc [RemoveAsset]: Cloudinary delete successful (or ignored).")
+                );
+            }
+
+            // Save the model with the URL removed via Save Use Case
+            final saveResult = await saveServiceProviderProfileUseCase(modelWithAssetRemoved);
+            saveResult.fold(
+              (failure) { emit(ServiceProviderError("Failed to update profile after removing asset: ${_mapFailureToMessage(failure)}")); emit(currentState); },
+              (_) { emit(ServiceProviderDataLoaded(modelWithAssetRemoved, currentState.currentStep)); }
+            );
+       } else {
+          emit(currentState); // Emit current state if no change
+       }
   }
 
-  void _onUpdateGender(UpdateGender event, Emitter<ServiceProviderState> emit) {
-    if (state is ServiceProviderDataLoaded) {
+   // Handles saving the updated gallery list
+   Future<void> _onUpdateGalleryUrls(UpdateGalleryUrlsEvent event, Emitter<ServiceProviderState> emit) async {
+       if (state is! ServiceProviderDataLoaded) return;
+       final currentState = state as ServiceProviderDataLoaded;
+        print("Bloc [UpdateGallery]: Saving updated gallery list.");
+        final updatedModel = currentState.model.copyWith(galleryImageUrls: event.updatedUrls);
+        // Call Save Use Case
+        final saveResult = await saveServiceProviderProfileUseCase(updatedModel);
+         saveResult.fold(
+               (failure) { emit(ServiceProviderError("Failed to update gallery: ${_mapFailureToMessage(failure)}")); emit(currentState); },
+               (_) { emit(ServiceProviderDataLoaded(updatedModel, currentState.currentStep)); }
+         );
+   }
+
+
+  Future<void> _onCompleteRegistration(CompleteRegistration event, Emitter<ServiceProviderState> emit) async {
+      if (state is! ServiceProviderDataLoaded) return;
       final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(gender: event.gender),
-        ),
-      );
-      print("Bloc: Updated Gender in state to ${event.gender}");
-    }
+       print("Bloc [CompleteReg]: Finalizing registration.");
+       emit(const ServiceProviderLoading(message: "Finalizing..."));
+       // Use the model passed in the event (should be latest state from step 4 handleNext)
+       final completedModel = event.finalModel.copyWith(isRegistrationComplete: true);
+       // Call Save Use Case
+       final saveResult = await saveServiceProviderProfileUseCase(completedModel);
+       saveResult.fold(
+         (failure) {
+             emit(ServiceProviderError("Failed to complete registration: ${_mapFailureToMessage(failure)}"));
+             // Revert to previous step state allows user to retry potentially
+             emit(ServiceProviderDataLoaded(currentState.model, currentState.currentStep));
+         },
+         (_) { emit(ServiceProviderRegistrationComplete()); } // Emit completion state
+       );
   }
 
-  void _onUpdateCategoryAndSubCategory(
-    UpdateCategoryAndSubCategory event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(
-            businessCategory: event.category,
-            businessSubCategory: event.subCategory,
-          ),
-        ),
-      );
-      print(
-        "Bloc: Updated Category to ${event.category}, SubCategory to ${event.subCategory}",
-      );
-    }
-  }
-
-  void _onUpdateGovernorate(
-    UpdateGovernorate event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      final Map<String, String> updatedAddress = Map.from(
-        currentState.model.address,
-      );
-      updatedAddress['governorate'] = event.governorateDisplayName ?? '';
-      final String governorateId = getGovernorateId(
-        event.governorateDisplayName,
-      );
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(
-            address: updatedAddress,
-            governorateId: governorateId,
-          ),
-        ),
-      );
-      print(
-        "Bloc: Updated Governorate DisplayName to ${event.governorateDisplayName}, ID to $governorateId",
-      );
-    }
-  }
-
-  void _onUpdateLocation(
-    UpdateLocation event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(location: event.location),
-        ),
-      );
-      print(
-        "Bloc: Updated Location in state to ${event.location?.latitude}, ${event.location?.longitude}",
-      );
-    }
-  }
-
-  void _onUpdateOpeningHours(
-    UpdateOpeningHours event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(openingHours: event.openingHours),
-        ),
-      );
-      print("Bloc: Updated OpeningHours in state");
-    }
-  }
-
-  void _onUpdateAmenities(
-    UpdateAmenities event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(amenities: event.amenities),
-        ),
-      );
-      print("Bloc: Updated Amenities in state");
-    }
-  }
-
-  void _onUpdatePricingModel(
-    UpdatePricingModel event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(pricingModel: event.pricingModel),
-        ),
-      );
-      print(
-        "Bloc: Updated PricingModel in state to ${event.pricingModel.name}",
-      );
-    }
-  }
-
-  void _onUpdateSubscriptionPlans(
-    UpdateSubscriptionPlans event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(subscriptionPlans: event.plans),
-        ),
-      );
-      print("Bloc: Updated SubscriptionPlans in state");
-    }
-  }
-
-  void _onUpdateBookableServices(
-    UpdateBookableServices event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(bookableServices: event.services),
-        ),
-      );
-      print("Bloc: Updated BookableServices in state");
-    }
-  }
-
-  void _onUpdateSupportedReservationTypes(
-    UpdateSupportedReservationTypes event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(
-            supportedReservationTypes: event.types,
-          ),
-        ),
-      );
-      print("Bloc: Updated SupportedReservationTypes in state");
-    }
-  }
-
-  void _onUpdateAccessOptions(
-    UpdateAccessOptions event,
-    Emitter<ServiceProviderState> emit,
-  ) {
-    if (state is ServiceProviderDataLoaded) {
-      final currentState = state as ServiceProviderDataLoaded;
-      emit(
-        currentState.copyWith(
-          model: currentState.model.copyWith(accessOptions: event.options),
-        ),
-      );
-      print("Bloc: Updated AccessOptions in state");
-    }
-  }
-  // --- End Specific Field Update Handlers ---
-
-  /// Handles navigation events.
-  Future<void> _onNavigateToStep(
-    NavigateToStep event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    if (state is! ServiceProviderDataLoaded) {
-      print(
-        "ServiceProviderBloc [Navigate]: Cannot navigate, state is not DataLoaded.",
-      );
-      add(LoadInitialData());
-      return;
-    }
-    final currentState = state as ServiceProviderDataLoaded;
-    final targetStep = event.targetStep;
-    const totalSteps = 5;
-    if (targetStep < 0 || targetStep >= totalSteps) {
-      print(
-        "ServiceProviderBloc [Navigate]: Error - Invalid target step $targetStep",
-      );
-      return;
-    }
-    print(
-      "ServiceProviderBloc [Navigate]: Navigating from step ${currentState.currentStep} to $targetStep",
-    );
-    emit(ServiceProviderDataLoaded(currentState.model, targetStep));
-  }
-
-  /// Handles asset uploads via Cloudinary. Saves URL and updates Firestore.
-  Future<void> _onUploadAssetAndUpdate(
-    UploadAssetAndUpdateEvent event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    if (state is! ServiceProviderDataLoaded) {
-      print(
-        "ServiceProviderBloc [Upload]: Error: Cannot upload asset, state is not DataLoaded (${state.runtimeType}).",
-      );
-      return;
-    }
-    final currentState = state as ServiceProviderDataLoaded;
-    final ServiceProviderModel modelBeforeUpload = currentState.model;
-    final user = _currentUser;
-    if (user == null) {
-      print(
-        "ServiceProviderBloc [Upload]: Error: Cannot upload asset, user is null.",
-      );
-      if (!isClosed)
-        emit(
-          const ServiceProviderError(
-            "Authentication error. Cannot upload file.",
-          ),
-        );
-      if (!isClosed) emit(currentState);
-      return;
-    }
-
-    print(
-      "ServiceProviderBloc [Upload]: Uploading asset for field '${event.targetField}'...",
-    );
-    emit(
-      ServiceProviderAssetUploading(
-        model: modelBeforeUpload,
-        currentStep: currentState.currentStep,
-        targetField: event.targetField,
-        progress: null,
-      ),
-    );
-
-    try {
-      String folder = 'serviceProviders/${user.uid}/${event.assetTypeFolder}';
-      final imageUrl = await CloudinaryService.uploadFile(
-        event.assetData,
-        folder: folder,
-      );
-      if (imageUrl == null || imageUrl.isEmpty) {
-        throw Exception("Upload failed. Received null or empty URL.");
-      }
-      print("ServiceProviderBloc [Upload]: Upload successful. URL: $imageUrl");
-
-      ServiceProviderModel updatedModel = modelBeforeUpload;
-      if (event.targetField == 'addGalleryImageUrl') {
-        final currentGallery = List<String>.from(updatedModel.galleryImageUrls)
-          ..add(imageUrl);
-        updatedModel = updatedModel.copyWith(galleryImageUrls: currentGallery);
-        print("ServiceProviderBloc [Upload]: Appended to gallery. Saving...");
-      } else {
-        updatedModel = modelBeforeUpload.copyWith(
-          idFrontImageUrl:
-              event.targetField == 'idFrontImageUrl'
-                  ? imageUrl
-                  : modelBeforeUpload.idFrontImageUrl,
-          idBackImageUrl:
-              event.targetField == 'idBackImageUrl'
-                  ? imageUrl
-                  : modelBeforeUpload.idBackImageUrl,
-          logoUrl:
-              event.targetField == 'logoUrl'
-                  ? imageUrl
-                  : modelBeforeUpload.logoUrl,
-          mainImageUrl:
-              event.targetField == 'mainImageUrl'
-                  ? imageUrl
-                  : modelBeforeUpload.mainImageUrl,
-          profilePictureUrl:
-              event.targetField == 'profilePictureUrl'
-                  ? imageUrl
-                  : modelBeforeUpload.profilePictureUrl,
-        );
-        print(
-          "ServiceProviderBloc [Upload]: Applied ${event.targetField}. Saving...",
-        );
-      }
-      await _saveProviderData(updatedModel, emit);
-
-      final postSaveState = state;
-      if (!isClosed && postSaveState is! ServiceProviderError) {
-        print(
-          "ServiceProviderBloc [Upload]: Save successful. Emitting DataLoaded.",
-        );
-        final latestModel =
-            (postSaveState is ServiceProviderDataLoaded)
-                ? postSaveState.model
-                : updatedModel;
-        emit(ServiceProviderDataLoaded(latestModel, currentState.currentStep));
-      } else if (!isClosed) {
-        print(
-          "ServiceProviderBloc [Upload]: Save failed after upload. Reverting.",
-        );
-        emit(currentState);
-      }
-    } catch (e, s) {
-      print(
-        "ServiceProviderBloc [Upload]: Error uploading/saving asset for ${event.targetField}: $e\n$s",
-      );
-      if (!isClosed) {
-        emit(
-          ServiceProviderError(
-            "Failed to upload ${event.targetField}: ${e.toString()}",
-          ),
-        );
-        emit(currentState);
-      }
-    }
-  }
-
-  /// Handles removing an asset URL from the model and saves.
-  Future<void> _onRemoveAssetUrl(
-    RemoveAssetUrlEvent event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    if (state is! ServiceProviderDataLoaded) {
-      print(
-        "ServiceProviderBloc [RemoveAsset]: Cannot remove, state not DataLoaded.",
-      );
-      if (state is! ServiceProviderError)
-        emit(
-          const ServiceProviderError(
-            "Cannot remove file now. Please try again.",
-          ),
-        );
-      return;
-    }
-    final currentState = state as ServiceProviderDataLoaded;
-    print(
-      "ServiceProviderBloc [RemoveAsset]: Removing asset for field: ${event.targetField}",
-    );
-    try {
-      ServiceProviderModel updatedModel;
-      switch (event.targetField) {
-        case 'logoUrl':
-          updatedModel = currentState.model.copyWith(logoUrl: null);
-          break;
-        case 'mainImageUrl':
-          updatedModel = currentState.model.copyWith(mainImageUrl: null);
-          break;
-        case 'idFrontImageUrl':
-          updatedModel = currentState.model.copyWith(idFrontImageUrl: null);
-          break;
-        case 'idBackImageUrl':
-          updatedModel = currentState.model.copyWith(idBackImageUrl: null);
-          break;
-        case 'profilePictureUrl':
-          updatedModel = currentState.model.copyWith(profilePictureUrl: null);
-          break;
-        default:
-          print(
-            "ServiceProviderBloc [RemoveAsset]: Warning - Unknown target field '${event.targetField}' for removal.",
-          );
-          updatedModel = currentState.model;
-          break;
-      }
-      if (updatedModel != currentState.model) {
-        await _saveProviderData(updatedModel, emit);
-        final postSaveState = state;
-        if (!isClosed && postSaveState is! ServiceProviderError) {
-          final latestModel =
-              (postSaveState is ServiceProviderDataLoaded)
-                  ? postSaveState.model
-                  : updatedModel;
-          print(
-            "ServiceProviderBloc [RemoveAsset]: Save successful. Emitting DataLoaded.",
-          );
-          emit(
-            ServiceProviderDataLoaded(latestModel, currentState.currentStep),
-          );
-        } else if (!isClosed) {
-          print(
-            "ServiceProviderBloc [RemoveAsset]: Save failed after removal. Reverting.",
-          );
-          emit(currentState);
-        }
-      } else {
-        print(
-          "ServiceProviderBloc [RemoveAsset]: No model change needed for removal.",
-        );
-        emit(currentState);
-      }
-    } catch (e, s) {
-      print(
-        "ServiceProviderBloc [RemoveAsset]: Error removing/saving asset for ${event.targetField}: $e\n$s",
-      );
-      if (!isClosed) {
-        emit(ServiceProviderError("Failed to remove asset: ${e.toString()}"));
-        emit(currentState);
-      }
-    }
-  }
-
-  /// Handles updating the gallery URLs list and saves.
-  Future<void> _onUpdateGalleryUrls(
-    UpdateGalleryUrlsEvent event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    if (state is! ServiceProviderDataLoaded) {
-      print(
-        "ServiceProviderBloc [UpdateGallery]: Cannot update, state not DataLoaded.",
-      );
-      return;
-    }
-    final currentState = state as ServiceProviderDataLoaded;
-    print("ServiceProviderBloc [UpdateGallery]: Updating gallery URLs.");
-    try {
-      final updatedModel = currentState.model.copyWith(
-        galleryImageUrls: event.updatedUrls,
-      );
-      await _saveProviderData(updatedModel, emit);
-      final postSaveState = state;
-      if (!isClosed && postSaveState is! ServiceProviderError) {
-        final latestModel =
-            (postSaveState is ServiceProviderDataLoaded)
-                ? postSaveState.model
-                : updatedModel;
-        print(
-          "ServiceProviderBloc [UpdateGallery]: Save successful. Emitting DataLoaded.",
-        );
-        emit(ServiceProviderDataLoaded(latestModel, currentState.currentStep));
-      } else if (!isClosed) {
-        print(
-          "ServiceProviderBloc [UpdateGallery]: Save failed after update. Reverting.",
-        );
-        emit(currentState);
-      }
-    } catch (e, s) {
-      print(
-        "ServiceProviderBloc [UpdateGallery]: Error updating/saving gallery: $e\n$s",
-      );
-      if (!isClosed) {
-        emit(ServiceProviderError("Failed to update gallery: ${e.toString()}"));
-        emit(currentState);
-      }
-    }
-  }
-
-  /// Handles the final step of registration.
-  Future<void> _onCompleteRegistration(
-    CompleteRegistration event,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    if (isClosed) return;
-    final ServiceProviderModel modelToComplete = event.finalModel;
-    final int currentStep =
-        (state is ServiceProviderDataLoaded)
-            ? (state as ServiceProviderDataLoaded).currentStep
-            : 4;
-    print(
-      "ServiceProviderBloc [CompleteReg]: Completing registration for UID: ${modelToComplete.uid}",
-    );
-    if (!isClosed)
-      emit(const ServiceProviderLoading(message: "Finalizing registration..."));
-    try {
-      final completedModel = modelToComplete.copyWith(
-        isRegistrationComplete: true,
-      );
-      await _saveProviderData(completedModel, emit);
-      if (!isClosed && state is! ServiceProviderError) {
-        print(
-          "ServiceProviderBloc [CompleteReg]: Registration complete. Emitting ServiceProviderRegistrationComplete.",
-        );
-        emit(ServiceProviderRegistrationComplete());
-      } else if (!isClosed) {
-        print(
-          "ServiceProviderBloc [CompleteReg]: Final save failed. Reverting.",
-        );
-        emit(ServiceProviderDataLoaded(modelToComplete, currentStep));
-      }
-    } catch (e, s) {
-      print(
-        "ServiceProviderBloc [CompleteReg]: Error completing registration: $e\n$s",
-      );
-      if (!isClosed) {
-        emit(
-          ServiceProviderError(
-            "Failed to finalize registration: ${e.toString()}",
-          ),
-        );
-        emit(ServiceProviderDataLoaded(modelToComplete, currentStep));
-      }
-    }
-  }
-
-  //--------------------------------------------------------------------------//
-  // Helper Methods                                                           //
-  //--------------------------------------------------------------------------//
-
-  /// Saves the provider data model to Firestore, merging with existing data.
-  Future<void> _saveProviderData(
-    ServiceProviderModel model,
-    Emitter<ServiceProviderState> emit,
-  ) async {
-    // ... (Keep existing _saveProviderData implementation including governorateId mapping) ...
-    if (isClosed) return;
-    final user = _currentUser;
-    if (user == null) {
-      print("DEBUG: _saveProviderData - Error: Cannot save, user is null.");
-      if (!isClosed)
-        emit(
-          const ServiceProviderError("Authentication error. Cannot save data."),
-        );
-      return;
-    }
-
-    String? finalGovernorateId = model.governorateId;
-    final String? selectedGovernorateName = model.address['governorate'];
-    bool governorateIdChanged = false;
-
-    if ((finalGovernorateId == null || finalGovernorateId.isEmpty) &&
-        selectedGovernorateName != null &&
-        selectedGovernorateName.isNotEmpty) {
-      final mappedId = getGovernorateId(selectedGovernorateName);
-      if (mappedId.isNotEmpty) {
-        finalGovernorateId = mappedId;
-        governorateIdChanged = true;
-        if (kDebugMode) {
-          print(
-            "DEBUG: _saveProviderData - Mapped Gov Name '$selectedGovernorateName' to NEW ID '$finalGovernorateId'.",
-          );
-        }
-      } else {
-        print(
-          "WARN: _saveProviderData - Could not map governorate '$selectedGovernorateName' to an ID.",
-        );
-      }
-    } else if (finalGovernorateId != null &&
-        finalGovernorateId.isNotEmpty &&
-        selectedGovernorateName != null &&
-        selectedGovernorateName.isNotEmpty) {
-      final mappedIdCheck = getGovernorateId(selectedGovernorateName);
-      if (mappedIdCheck.isNotEmpty && mappedIdCheck != finalGovernorateId) {
-        print(
-          "WARN: _saveProviderData - Governorate name ('$selectedGovernorateName' -> '$mappedIdCheck') and existing ID ('$finalGovernorateId') mismatch. Updating ID to $mappedIdCheck.",
-        );
-        finalGovernorateId = mappedIdCheck;
-        governorateIdChanged = true;
-      }
-    }
-
-    final ServiceProviderModel modelToSave =
-        governorateIdChanged
-            ? model.copyWith(governorateId: finalGovernorateId)
-            : model;
-
-    print(
-      "DEBUG: _saveProviderData - Saving Data for User: ${user.uid}. GovernoratedID: ${modelToSave.governorateId}",
-    );
-    final modelData = modelToSave.toMap();
-
-    try {
-      await _providersCollection
-          .doc(user.uid)
-          .set(modelData, SetOptions(merge: true));
-      print(
-        "DEBUG: _saveProviderData - Firestore save/merge successful for ${user.uid}.",
-      );
-      if (!isClosed &&
-          governorateIdChanged &&
-          state is ServiceProviderDataLoaded) {
-        print(
-          "DEBUG: _saveProviderData - Emitting state with updated governorateId after save.",
-        );
-        emit(
-          ServiceProviderDataLoaded(
-            modelToSave,
-            (state as ServiceProviderDataLoaded).currentStep,
-          ),
-        );
-      }
-    } on FirebaseException catch (e) {
-      print(
-        "DEBUG: _saveProviderData - Firebase Error saving data for ${user.uid}: ${e.code} - ${e.message}",
-      );
-      if (!isClosed)
-        emit(
-          ServiceProviderError("Failed to save data: ${e.message ?? e.code}"),
-        );
-      throw e;
-    } catch (e, s) {
-      print(
-        "DEBUG: _saveProviderData - Generic Error saving data for ${user.uid}: $e\n$s",
-      );
-      if (!isClosed)
-        emit(
-          ServiceProviderError(
-            "An unexpected error occurred while saving: ${e.toString()}",
-          ),
-        );
-      throw e;
-    }
-  }
-
-  String _handleAuthError(FirebaseAuthException e) {
-    // ... (Keep existing implementation) ...
-    String message = "An authentication error occurred.";
-    print("Bloc AuthError: Code: ${e.code}, Msg: ${e.message}");
-    switch (e.code) {
-      case 'weak-password':
-        message = "Password too weak (min 6 chars).";
-        break;
-      case 'email-already-in-use':
-        message = "Email already in use. Try logging in.";
-        break;
-      case 'invalid-email':
-        message = "Invalid email format.";
-        break;
-      case 'operation-not-allowed':
-        message = "Email/password auth not enabled.";
-        break;
-      case 'user-not-found':
-      case 'wrong-password':
-      case 'invalid-credential':
-        message = "Incorrect email or password.";
-        break;
-      case 'user-disabled':
-        message = "Account disabled.";
-        break;
-      case 'too-many-requests':
-        message = "Too many attempts. Try later.";
-        break;
-      default:
-        message = e.message ?? message;
-        break;
-    }
-    return message;
-  }
 } // End ServiceProviderBloc
