@@ -1,83 +1,83 @@
 /// File: lib/features/auth/views/page/widgets/bookable_services_widget.dart
 /// --- Widget for managing Bookable Services in Pricing Step ---
+/// --- UPDATED: Internal dialog now handles ReservationType and conditional fields ---
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For input formatters
 
 // Import Models and Utils
-// Adjust paths as needed
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_field_templates.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
-import 'package:shamil_web_app/features/auth/data/bookable_service.dart'; // For feedback
+import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
+// Import ReservationType enum
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'
+    show ReservationType;
+import 'package:shamil_web_app/features/dashboard/helper/dashboard_widgets.dart'; // For buildEmptyState
 
 /// A widget to display, add, edit, and remove bookable services.
-/// Used within the PricingStep when the model is Reservation or Hybrid.
+/// Used within the PricingStep.
 class BookableServicesWidget extends StatelessWidget {
   final List<BookableService> initialServices;
   final ValueChanged<List<BookableService>> onServicesChanged;
   final bool enabled;
+  // ** NEW: Pass supported types to filter options in dialog **
+  final Set<ReservationType> supportedParentTypes;
 
   const BookableServicesWidget({
     super.key,
     required this.initialServices,
     required this.onServicesChanged,
+    required this.supportedParentTypes, // ** NEW **
     this.enabled = true,
   });
 
   /// Shows a dialog containing the form to add or edit a bookable service.
-  /// [editIndex] is the index of the service to edit, or null if adding.
   Future<void> _showAddEditServiceDialog(
     BuildContext context, [
-    int? editIndex,
+    BookableService? serviceToEdit, // Pass the whole service object
   ]) async {
-    final bool isEditing = editIndex != null;
-    final BookableService? existingService =
-        isEditing ? initialServices[editIndex] : null;
-    print(
-      "Showing Add/Edit Bookable Service Dialog. Editing: $isEditing, Index: $editIndex",
-    );
+    final bool isEditing = serviceToEdit != null;
+    print("Showing Add/Edit Bookable Service Dialog. Editing: $isEditing");
 
-    // Key to access the state of the form widget within the dialog
     final GlobalKey<_AddEditServiceFormState> formWidgetKey =
         GlobalKey<_AddEditServiceFormState>();
 
     final result = await showDialog<BookableService?>(
-      // Dialog returns BookableService on success, null on cancel
       context: context,
-      barrierDismissible:
-          !enabled, // Prevent closing by tapping outside if enabled
+      barrierDismissible: !enabled,
       builder: (dialogContext) {
         return AlertDialog(
-          title: Text(
-            isEditing ? 'Edit Bookable Service' : 'Add Bookable Service',
-          ),
-          // Content is now a stateful widget managing its own controllers and form key
+          title: Text(isEditing ? 'Edit Service/Class' : 'Add Service/Class'),
           content: _AddEditServiceForm(
-            key: formWidgetKey, // Assign key
-            initialService: existingService,
+            key: formWidgetKey,
+            initialService: serviceToEdit,
+            // ** NEW: Pass relevant types to the dialog **
+            availableTypes:
+                supportedParentTypes
+                    .where(
+                      (t) =>
+                          // Filter types typically managed here (exclude accessBased?)
+                          t != ReservationType.accessBased,
+                    )
+                    .toList(),
           ),
           actions: <Widget>[
             TextButton(
-              onPressed:
-                  () => Navigator.of(
-                    dialogContext,
-                  ).pop(null), // Cancel returns null
+              onPressed: () => Navigator.of(dialogContext).pop(null),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryColor,
-                foregroundColor: AppColors.white, // Text color
+                foregroundColor: AppColors.white,
               ),
               onPressed: () {
-                // Access the state of the form widget via the key to validate and get data
                 final BookableService? newService =
                     formWidgetKey.currentState?.validateAndGetService();
                 if (newService != null) {
-                  // If form is valid and service object created, pop dialog with the result
                   Navigator.of(dialogContext).pop(newService);
                 }
               },
@@ -91,162 +91,156 @@ class BookableServicesWidget extends StatelessWidget {
     // Update list if dialog returned a valid service object
     if (result != null) {
       print("Dialog returned service: ${result.toMap()}. Updating list.");
-      List<BookableService> updatedList = List.from(
-        initialServices,
-      ); // Create mutable copy
+      List<BookableService> updatedList = List.from(initialServices);
       if (isEditing) {
-        updatedList[editIndex] = result; // Update existing service at index
+        final index = updatedList.indexWhere((s) => s.id == serviceToEdit!.id);
+        if (index != -1) {
+          updatedList[index] = result;
+        } else {
+          updatedList.add(result);
+        } // Fallback add
       } else {
-        updatedList.add(result); // Add new service to the list
+        updatedList.add(result);
       }
-      onServicesChanged(updatedList); // Trigger callback to update parent state
+      onServicesChanged(updatedList);
     } else {
       print("Add/Edit Bookable Service Dialog cancelled or returned null.");
     }
-    // No need to dispose controllers here, the _AddEditServiceFormState handles it
   }
 
   /// Removes a service from the list and triggers the callback.
-  void _removeService(int index, BuildContext context) {
-    print("Removing bookable service at index $index.");
-    List<BookableService> updatedList = List.from(
-      initialServices,
-    ); // Create mutable copy
-    final removedServiceName = updatedList[index].name; // Get name for feedback
-    updatedList.removeAt(index); // Remove item
-    onServicesChanged(updatedList); // Trigger callback to update parent state
-    showGlobalSnackBar(
-      context,
-      "Service '$removedServiceName' removed.",
-    ); // Provide feedback
+  void _removeService(BookableService serviceToRemove, BuildContext context) {
+    print("Removing bookable service: ${serviceToRemove.name}");
+    List<BookableService> updatedList = List.from(initialServices);
+    updatedList.removeWhere((s) => s.id == serviceToRemove.id); // Remove by ID
+    onServicesChanged(updatedList);
+    showGlobalSnackBar(context, "Service '${serviceToRemove.name}' removed.");
   }
 
   @override
   Widget build(BuildContext context) {
+    // Filter services to show based on parent supported types (optional refinement)
+    // final displayServices = initialServices.where((s) => supportedParentTypes.contains(s.type)).toList();
+    final displayServices = initialServices; // Show all for now
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header Row with Add Button
         Row(
+          // Header Row
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Section Title
             Text(
-              "Bookable Services / Classes*",
-              style: getTitleStyle(fontSize: 18, fontWeight: FontWeight.w500),
-            ),
-            // Add Service Button
-            IconButton(
-              icon: const Icon(
-                Icons.add_circle_outline,
-                color: AppColors.primaryColor,
+              "Services / Classes",
+              style: getTitleStyle(fontSize: 17, fontWeight: FontWeight.w600),
+            ), // Updated Title
+            if (enabled)
+              IconButton(
+                icon: const Icon(
+                  Icons.add_circle,
+                  color: AppColors.primaryColor,
+                  size: 28,
+                ),
+                tooltip: 'Add Service/Class',
+                onPressed: () => _showAddEditServiceDialog(context),
               ),
-              tooltip: 'Add Bookable Service',
-              // Disable button if parent form is disabled
-              onPressed:
-                  enabled ? () => _showAddEditServiceDialog(context) : null,
-            ),
           ],
         ),
         const SizedBox(height: 10),
-
-        // Display List or Placeholder
-        initialServices.isEmpty
-            ? Container(
-              // Placeholder shown when no services are added
-              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
-              decoration: BoxDecoration(
-                color: AppColors.lightGrey.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: AppColors.mediumGrey.withOpacity(0.3),
-                ),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                "No bookable services added yet.\nClick '+' to add one.", // Updated placeholder text
-                style: getbodyStyle(color: AppColors.mediumGrey),
-                textAlign: TextAlign.center,
-              ),
-            )
+        displayServices.isEmpty
+            ? buildEmptyState(
+              "No services or classes defined yet.",
+              icon: Icons.class_outlined,
+            ) // Updated Placeholder
             : ListView.builder(
-              // Build list view for existing services
-              shrinkWrap: true, // Important inside Column/ListView
-              physics:
-                  const NeverScrollableScrollPhysics(), // Disable internal scrolling
-              itemCount: initialServices.length,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: displayServices.length,
               itemBuilder: (context, index) {
-                final service = initialServices[index];
+                final service = displayServices[index];
+                // Determine subtitle based on type and available data
+                String subtitle = '';
+                if (service.durationMinutes != null)
+                  subtitle += "${service.durationMinutes} min";
+                if (service.capacity != null) {
+                  if (subtitle.isNotEmpty) subtitle += " • ";
+                  subtitle += "${service.capacity} person(s)";
+                }
+                if (service.description.isNotEmpty) {
+                  if (subtitle.isNotEmpty) subtitle += " | ";
+                  subtitle += service.description;
+                }
+
                 return Card(
-                  // Display each service in a Card
                   margin: const EdgeInsets.only(bottom: 10),
                   elevation: 1,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: ListTile(
-                    // Display service details
                     title: Text(
                       service.name,
                       style: getbodyStyle(fontWeight: FontWeight.w500),
                     ),
                     subtitle: Text(
-                      // Show key details in subtitle
-                      "${service.durationMinutes} min | ${service.capacity} person(s)${service.description.isNotEmpty ? ' | ${service.description}' : ''}",
+                      subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
+                      style: getSmallStyle(color: AppColors.secondaryColor),
                     ),
                     trailing: Row(
-                      // Action buttons on the right
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Display formatted price
-                        Text(
-                          '\$${service.price.toStringAsFixed(2)}',
-                          style: getbodyStyle(
-                            color: AppColors.primaryColor,
-                            fontWeight: FontWeight.w500,
+                        if (service.price !=
+                            null) // Only show price if it exists
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: Text(
+                              '\$${service.price!.toStringAsFixed(2)}',
+                              style: getbodyStyle(
+                                color: AppColors.primaryColor,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8), // Add spacing
-                        // Edit Button
-                        IconButton(
-                          icon: const Icon(
-                            Icons.edit_outlined,
-                            size: 20,
-                            color: AppColors.secondaryColor,
+                        if (enabled) ...[
+                          IconButton(
+                            icon: const Icon(
+                              Icons.edit_outlined,
+                              size: 20,
+                              color: AppColors.secondaryColor,
+                            ),
+                            tooltip: 'Edit Service',
+                            onPressed:
+                                () =>
+                                    _showAddEditServiceDialog(context, service),
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
-                          tooltip: 'Edit Service',
-                          // Disable button if parent form is disabled
-                          onPressed:
-                              enabled
-                                  ? () =>
-                                      _showAddEditServiceDialog(context, index)
-                                  : null, // Pass index for editing
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero, // Reduce padding
-                          constraints:
-                              const BoxConstraints(), // Reduce constraints
-                        ),
-                        // Remove Button
-                        IconButton(
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: AppColors.redColor,
+                          IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              size: 20,
+                              color: AppColors.redColor,
+                            ),
+                            tooltip: 'Remove Service',
+                            onPressed: () => _removeService(service, context),
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
-                          tooltip: 'Remove Service',
-                          // Disable button if parent form is disabled
-                          onPressed:
-                              enabled
-                                  ? () => _removeService(index, context)
-                                  : null,
-                          splashRadius: 20,
-                          padding: EdgeInsets.zero, // Reduce padding
-                          constraints:
-                              const BoxConstraints(), // Reduce constraints
-                        ),
+                        ],
                       ],
+                    ),
+                    leading: Chip(
+                      // Show service type
+                      label: Text(
+                        service.type.name,
+                        style: getSmallStyle(fontSize: 10),
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
                     ),
                   ),
                 );
@@ -258,49 +252,61 @@ class BookableServicesWidget extends StatelessWidget {
 }
 
 // --- Private StatefulWidget for the Dialog Form Content ---
-
+// Handles type selection and conditional fields
 class _AddEditServiceForm extends StatefulWidget {
-  final BookableService? initialService; // Pass existing service if editing
+  final BookableService? initialService;
+  // ** NEW: Receive list of types allowed by the provider **
+  final List<ReservationType> availableTypes;
 
-  const _AddEditServiceForm({super.key, this.initialService});
+  const _AddEditServiceForm({
+    super.key,
+    this.initialService,
+    required this.availableTypes,
+  });
 
   @override
   State<_AddEditServiceForm> createState() => _AddEditServiceFormState();
 }
 
 class _AddEditServiceFormState extends State<_AddEditServiceForm> {
-  // Form key and controllers managed within this stateful widget's lifecycle
   final formKey = GlobalKey<FormState>();
   late TextEditingController nameController;
   late TextEditingController descriptionController;
   late TextEditingController durationController;
   late TextEditingController capacityController;
   late TextEditingController priceController;
+  late ReservationType selectedServiceType; // Local state for type dropdown
 
   @override
   void initState() {
     super.initState();
-    // Initialize controllers from the initialService passed to the widget
+    // Initialize type first, default if needed or editing
+    selectedServiceType =
+        widget.initialService?.type ??
+        (widget.availableTypes.isNotEmpty
+            ? widget.availableTypes.first
+            : ReservationType.timeBased); // Fallback
+
     nameController = TextEditingController(
       text: widget.initialService?.name ?? '',
     );
     descriptionController = TextEditingController(
       text: widget.initialService?.description ?? '',
     );
+    // Initialize with null check for nullable fields
     durationController = TextEditingController(
-      text: widget.initialService?.durationMinutes.toString() ?? '60',
+      text: widget.initialService?.durationMinutes?.toString() ?? '',
     );
     capacityController = TextEditingController(
-      text: widget.initialService?.capacity.toString() ?? '1',
-    );
+      text: widget.initialService?.capacity?.toString() ?? '1',
+    ); // Default capacity 1?
     priceController = TextEditingController(
-      text: widget.initialService?.price.toStringAsFixed(2) ?? '',
+      text: widget.initialService?.price?.toStringAsFixed(2) ?? '',
     );
   }
 
   @override
   void dispose() {
-    // Dispose all controllers when this widget is removed from the tree
     nameController.dispose();
     descriptionController.dispose();
     durationController.dispose();
@@ -312,113 +318,192 @@ class _AddEditServiceFormState extends State<_AddEditServiceForm> {
   /// Validates the form and returns the constructed BookableService if valid.
   BookableService? validateAndGetService() {
     if (formKey.currentState?.validate() ?? false) {
-      // Construct the service object
+      // Construct the service object, handling nullable fields based on type
+      final String? durationText = durationController.text.trim();
+      final String? capacityText = capacityController.text.trim();
+      final String? priceText = priceController.text.trim();
+
       final newService = BookableService(
-        // Use existing ID if editing, generate new one if adding
         id:
             widget.initialService?.id ??
             DateTime.now().millisecondsSinceEpoch.toString(),
         name: nameController.text.trim(),
         description: descriptionController.text.trim(),
+        type: selectedServiceType, // Use selected type
+        // Parse conditionally based on type requirements (could refine further)
         durationMinutes:
-            int.tryParse(durationController.text) ??
-            60, // Default if parse fails
+            (durationText?.isNotEmpty == true &&
+                    _isDurationRequired(selectedServiceType))
+                ? int.tryParse(durationText ?? '')
+                : null,
         capacity:
-            int.tryParse(capacityController.text) ??
-            1, // Default if parse fails
+            (capacityText != null && capacityText.isNotEmpty &&
+                    _isCapacityRequired(selectedServiceType))
+                ? int.tryParse(capacityText)
+                : (_isCapacityRequired(selectedServiceType)
+                    ? 1
+                    : null), // Default capacity 1 if required and empty? Or null?
         price:
-            double.tryParse(priceController.text) ??
-            0.0, // Default if parse fails
+            (priceText != null && priceText.isNotEmpty && _isPriceRequired(selectedServiceType))
+                ? double.tryParse(priceText)
+                : null,
+        // configData: Handle configData if needed via another field
       );
       return newService;
     }
-    return null; // Return null if validation fails
+    return null;
   }
+
+  // --- Helpers to determine if field is required/relevant based on type ---
+  bool _isDurationRequired(ReservationType type) {
+    return [
+      ReservationType.timeBased,
+      ReservationType.recurring,
+      ReservationType.group,
+      ReservationType.seatBased,
+    ].contains(type);
+  }
+
+  bool _isCapacityRequired(ReservationType type) {
+    return [
+      ReservationType.timeBased,
+      ReservationType.recurring,
+      ReservationType.group,
+      ReservationType.seatBased,
+    ].contains(type);
+  }
+
+  bool _isPriceRequired(ReservationType type) {
+    // Price is usually required unless maybe for sequence based?
+    return type !=
+        ReservationType
+            .sequenceBased; // Example: Make price optional for sequence
+  }
+  // --- End Helpers ---
 
   @override
   Widget build(BuildContext context) {
-    // Build the form content (similar to what was inside the AlertDialog before)
+    // Determine which fields to show/require based on selectedServiceType
+    bool showDuration = _isDurationRequired(selectedServiceType);
+    bool showCapacity = _isCapacityRequired(selectedServiceType);
+    bool showPrice = _isPriceRequired(selectedServiceType);
+
     return Form(
-      key: formKey, // Assign key to form
+      key: formKey,
       child: SingleChildScrollView(
-        // Prevent overflow if keyboard appears
         child: Column(
-          mainAxisSize: MainAxisSize.min, // Take minimum space
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Service Name (Required)
+            // Service Name (Always Required)
             RequiredTextFormField(
               controller: nameController,
-              labelText: 'Service Name*',
-              hintText: 'e.g., Consultation, Class A',
+              labelText: 'Service/Class Name*',
+              hintText: 'e.g., Consultation, Yoga Class, Counter',
             ),
             const SizedBox(height: 15),
 
-            // Description (Optional)
+            // ** NEW: Service Type Dropdown **
+            GlobalDropdownFormField<ReservationType>(
+              labelText: "Service Type*",
+              hintText: "Select the type",
+              value: selectedServiceType,
+              items:
+                  widget
+                      .availableTypes // Use filtered list from parent
+                      .map(
+                        (type) => DropdownMenuItem<ReservationType>(
+                          value: type,
+                          child: Text(type.name),
+                        ),
+                      )
+                      .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() => selectedServiceType = value);
+                }
+              },
+              validator:
+                  (value) => value == null ? 'Please select a type' : null,
+            ),
+            const SizedBox(height: 15),
+
+            // Description (Always Optional)
             TextAreaFormField(
               controller: descriptionController,
               labelText: 'Description',
-              hintText: 'Briefly describe the service (optional)',
+              hintText: 'Briefly describe (optional)',
               minLines: 2,
               maxLines: 3,
-              validator: (v) => null, // Optional field
+              validator: (v) => null,
             ),
             const SizedBox(height: 15),
 
-            // Duration (Required, Positive Integer)
-            GlobalTextFormField(
-              controller: durationController,
-              labelText: 'Duration (minutes)*',
-              hintText: 'e.g., 60',
-              prefixIcon: const Icon(Icons.timer_outlined, size: 20),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              validator: (v) {
-                if (v == null || v.isEmpty) return 'Duration required';
-                final d = int.tryParse(v);
-                if (d == null || d <= 0) return 'Must be > 0';
-                return null;
-              },
-            ),
-            const SizedBox(height: 15),
-
-            // Capacity (Required, Positive Integer)
-            GlobalTextFormField(
-              controller: capacityController,
-              labelText: 'Capacity (persons)*',
-              hintText: 'e.g., 1 for individual',
-              prefixIcon: const Icon(Icons.people_alt_outlined, size: 20),
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              validator: (v) {
-                if (v == null || v.isEmpty) return 'Capacity required';
-                final c = int.tryParse(v);
-                if (c == null || c <= 0) return 'Must be > 0';
-                return null;
-              },
-            ),
-            const SizedBox(height: 15),
-
-            // Price (Required, Non-negative Double)
-            GlobalTextFormField(
-              controller: priceController,
-              labelText: 'Price per Booking*',
-              hintText: 'e.g., 75.00',
-              prefixIcon: const Icon(Icons.attach_money, size: 20),
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+            // Conditional Duration
+            if (showDuration) ...[
+              GlobalTextFormField(
+                controller: durationController,
+                labelText: 'Duration (minutes)*',
+                hintText: 'e.g., 60',
+                prefixIcon: const Icon(Icons.timer_outlined, size: 20),
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: (v) {
+                  if (showDuration && (v == null || v.isEmpty))
+                    return 'Duration required';
+                  final d = int.tryParse(v ?? '');
+                  if (showDuration && (d == null || d <= 0))
+                    return 'Must be > 0';
+                  return null;
+                },
               ),
-              inputFormatters: [
-                FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
-              ], // Allow decimals
-              validator: (v) {
-                if (v == null || v.isEmpty) return 'Price required';
-                final p = double.tryParse(v);
-                if (p == null || p < 0) {
-                  return 'Invalid price (must be 0 or more)';
-                }
-                return null; // Valid
-              },
-            ),
+              const SizedBox(height: 15),
+            ],
+
+            // Conditional Capacity
+            if (showCapacity) ...[
+              GlobalTextFormField(
+                controller: capacityController,
+                labelText: 'Capacity (persons)*',
+                hintText: 'e.g., 1 for individual',
+                prefixIcon: const Icon(Icons.people_alt_outlined, size: 20),
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                validator: (v) {
+                  if (showCapacity && (v == null || v.isEmpty))
+                    return 'Capacity required';
+                  final c = int.tryParse(v ?? '');
+                  if (showCapacity && (c == null || c <= 0))
+                    return 'Must be > 0';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 15),
+            ],
+
+            // Conditional Price
+            if (showPrice) ...[
+              GlobalTextFormField(
+                controller: priceController,
+                labelText: 'Price per Booking*',
+                hintText: 'e.g., 75.00',
+                prefixIcon: const Icon(Icons.attach_money, size: 20),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+                ],
+                validator: (v) {
+                  if (showPrice && (v == null || v.isEmpty))
+                    return 'Price required';
+                  final p = double.tryParse(v ?? '');
+                  if (showPrice && (p == null || p < 0))
+                    return 'Invalid price (must be 0 or more)';
+                  return null;
+                },
+              ),
+              // No final SizedBox needed here
+            ],
           ],
         ),
       ),

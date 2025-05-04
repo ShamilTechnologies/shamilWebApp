@@ -1,62 +1,44 @@
-// Keep for File type check
-// Keep for Uint8List type check
+// File: lib/features/auth/views/page/steps/assets_upload_step.dart
+// *** UPDATED: Dispatch specific asset upload/remove events ***
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-// Import file_selector for cross-platform file picking
 import 'package:file_selector/file_selector.dart';
 
 // Import Bloc, State, Event, Model
-// Ensure these paths are correct for your project structure
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
-// Ensure this path points to the file with the UPDATED events (service_provider_event_update_02 / service_provider_event_full_code_02)
-import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart'; // Use UPDATED Event
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart';
-// Ensure this path points to the file with the UPDATED ServiceProviderModel (service_provider_model_fix_04 / service_provider_model_full_code_01)
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 
-// Import UI utils
+// Import UI utils & Widgets
 import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
-// Import the shared ModernUploadField
 import 'package:shamil_web_app/features/auth/views/page/widgets/modern_upload_field_widget.dart';
 import 'package:shamil_web_app/features/auth/views/page/widgets/step_container.dart';
-// Import Cloudinary Service (Assuming static upload method or accessible instance)
 
 /// Registration Step 4: Upload Business Assets.
-/// Handles Logo, Main Image, and Gallery uploads.
-/// Performs final validation before completing registration.
 class AssetsUploadStep extends StatefulWidget {
-  // Key is passed in RegistrationFlow when creating the instance
   const AssetsUploadStep({super.key});
-
   @override
-  // Make state public for key access from RegistrationFlow
   State<AssetsUploadStep> createState() => AssetsUploadStepState();
 }
 
-// Made state public for key access from RegistrationFlow
 class AssetsUploadStepState extends State<AssetsUploadStep> {
-  // No form key needed here unless adding text fields
-
-  // --- Local State Variables ---
-  // Track loading state for individual uploads triggered from this step
+  // Local State Variables
   bool _isUploadingLogo = false;
   bool _isUploadingMainImage = false;
-  bool _isUploadingGallery = false; // General flag for gallery add operations
-
-  // Local preview for gallery image before upload (optional)
-  // We currently upload directly after picking for simplicity.
-  // dynamic _pickedGalleryImage;
+  bool _isUploadingGallery = false;
+  dynamic _pickedLogo;
+  dynamic _pickedMainImage;
 
   @override
   void initState() {
     super.initState();
     print("AssetsUploadStep(Step 4): initState");
-    // Initial state setup if needed
   }
 
   @override
@@ -66,34 +48,27 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
   }
 
   /// Picks a single image using file_selector package.
-  /// Returns image path (String) for native or image bytes (Uint8List) for web.
   Future<dynamic> _pickImage() async {
+    /* ... No changes ... */
     if (kIsWeb) print("AssetsUploadStep: Opening file selector for web...");
-    if (!kIsWeb) {
+    if (!kIsWeb)
       print("AssetsUploadStep: Opening file selector for desktop/mobile...");
-    }
     try {
-      // Define accepted image types
       const XTypeGroup typeGroup = XTypeGroup(
         label: 'Images',
         extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
       );
-      // Open file selector
       final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
-
       if (file != null) {
         print("AssetsUploadStep: File selected: ${file.name}");
-        // Return bytes for web, path for native platforms
         return kIsWeb ? await file.readAsBytes() : file.path;
       } else {
         print("AssetsUploadStep: No file selected.");
-        return null; // User cancelled picker
+        return null;
       }
     } catch (e) {
-      // Handle potential errors during file picking
       print("AssetsUploadStep: Error picking file: $e");
       if (mounted) {
-        // Show error only if widget is still active
         showGlobalSnackBar(context, "Error picking file: $e", isError: true);
       }
       return null;
@@ -101,109 +76,91 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
   }
 
   // --- Image Upload Trigger Functions ---
-
-  /// Picks and uploads the Logo image.
   Future<void> _pickAndUploadLogo() async {
     print("AssetsUploadStep: Initiating Logo pick & upload.");
     final fileData = await _pickImage();
     if (fileData != null && mounted) {
-      setState(() => _isUploadingLogo = true); // Show loading on the logo field
-      print(
-        "AssetsUploadStep: Dispatching UploadAssetAndUpdateEvent for Logo.",
-      );
+      setState(() {
+        _pickedLogo = fileData;
+        _isUploadingLogo = true;
+      });
+      print("AssetsUploadStep: Dispatching UploadLogoEvent.");
       context.read<ServiceProviderBloc>().add(
-        UploadAssetAndUpdateEvent(
-          assetData: fileData,
-          targetField: 'logoUrl', // Target field in the model
-          assetTypeFolder: 'logos', // Cloudinary folder hint
-          // No need to pass other step data here
-        ),
-      );
-      // Loading state will be reset by the listener when DataLoaded/Error is emitted
+        UploadLogoEvent(assetData: fileData),
+      ); // Use specific event
     }
   }
 
-  /// Picks and uploads the Main Business image.
   Future<void> _pickAndUploadMainImage() async {
     print("AssetsUploadStep: Initiating Main Image pick & upload.");
     final fileData = await _pickImage();
     if (fileData != null && mounted) {
-      setState(
-        () => _isUploadingMainImage = true,
-      ); // Show loading on main image field
-      print(
-        "AssetsUploadStep: Dispatching UploadAssetAndUpdateEvent for Main Image.",
-      );
+      setState(() {
+        _pickedMainImage = fileData;
+        _isUploadingMainImage = true;
+      });
+      print("AssetsUploadStep: Dispatching UploadMainImageEvent.");
       context.read<ServiceProviderBloc>().add(
-        UploadAssetAndUpdateEvent(
-          assetData: fileData,
-          targetField: 'mainImageUrl', // Target field in the model
-          assetTypeFolder: 'main_images', // Cloudinary folder hint
-        ),
-      );
+        UploadMainImageEvent(assetData: fileData),
+      ); // Use specific event
     }
   }
 
-  /// Picks ONE gallery image and dispatches event to add it.
   Future<void> _pickAndAddGalleryImage() async {
     print("AssetsUploadStep: Initiating Gallery Image pick & upload.");
     final fileData = await _pickImage();
     if (fileData != null && mounted) {
-      setState(
-        () => _isUploadingGallery = true,
-      ); // Show general gallery loading indicator?
-      print(
-        "AssetsUploadStep: Dispatching UploadAssetAndUpdateEvent for Gallery Image Add.",
-      );
-      // Use the special targetField 'addGalleryImageUrl' which the Bloc event handler uses to append to the list
+      setState(() => _isUploadingGallery = true);
+      print("AssetsUploadStep: Dispatching AddGalleryImageEvent.");
       context.read<ServiceProviderBloc>().add(
-        UploadAssetAndUpdateEvent(
-          assetData: fileData,
-          targetField:
-              'addGalleryImageUrl', // Special target field for appending
-          assetTypeFolder: 'gallery', // Cloudinary folder hint
-        ),
-      );
+        AddGalleryImageEvent(assetData: fileData),
+      ); // Use specific event
     }
   }
 
   // --- Image Removal Functions ---
-
-  /// Dispatches event to remove Logo or Main Image URL.
   void _removeUploadedAsset(String targetField) {
     print(
-      "AssetsUploadStep: Dispatching RemoveAssetUrlEvent for field '$targetField'.",
+      "AssetsUploadStep: Dispatching specific Remove event for field '$targetField'.",
     );
-    context.read<ServiceProviderBloc>().add(RemoveAssetUrlEvent(targetField));
-    // Reset specific loading flag if removal is triggered during upload (edge case)
-    if (targetField == 'logoUrl' && _isUploadingLogo) {
-      setState(() => _isUploadingLogo = false);
+    ServiceProviderEvent event;
+    switch (targetField) {
+      case 'logoUrl':
+        event = RemoveLogoEvent();
+        break;
+      case 'mainImageUrl':
+        event = RemoveMainImageEvent();
+        break;
+      default:
+        print("Error: Unknown targetField for removal: $targetField");
+        return;
     }
-    if (targetField == 'mainImageUrl' && _isUploadingMainImage) {
-      setState(() => _isUploadingMainImage = false);
+    context.read<ServiceProviderBloc>().add(event); // Dispatch specific event
+    if (mounted) {
+      setState(() {
+        if (targetField == 'logoUrl') {
+          _pickedLogo = null;
+          _isUploadingLogo = false;
+        } else if (targetField == 'mainImageUrl') {
+          _pickedMainImage = null;
+          _isUploadingMainImage = false;
+        }
+      });
     }
   }
 
-  /// Removes a gallery image by dispatching an event with the updated list.
-  void _removeGalleryImage(String urlToRemove, List<String> currentGallery) {
-    print("AssetsUploadStep: Removing gallery image '$urlToRemove'.");
-    // Create a new list excluding the image to remove
-    final updatedList = List<String>.from(currentGallery)..remove(urlToRemove);
+  void _removeGalleryImage(String urlToRemove) {
     print(
-      "AssetsUploadStep: Dispatching UpdateGalleryUrlsEvent with updated list: $updatedList",
+      "AssetsUploadStep: Dispatching RemoveGalleryImageEvent for '$urlToRemove'.",
     );
-    // Dispatch event to update the entire gallery list in the model/Firestore
     context.read<ServiceProviderBloc>().add(
-      UpdateGalleryUrlsEvent(updatedList),
-    );
+      RemoveGalleryImageEvent(urlToRemove: urlToRemove),
+    ); // Use specific event
   }
 
   /// --- Public Submission Logic ---
-  /// Called by RegistrationFlow's "Next/Finish" button when this step (Step 4) is active.
-  /// Validates required assets and dispatches CompleteRegistration event.
   void handleNext(int currentStep) {
     print("AssetsUploadStep(Step 4): handleNext called.");
-    // 1. Get current model state from Bloc
     final currentState = context.read<ServiceProviderBloc>().state;
     if (currentState is! ServiceProviderDataLoaded) {
       print("AssetsUploadStep: Cannot proceed, state is not DataLoaded.");
@@ -216,7 +173,6 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
     }
     final currentModel = currentState.model;
 
-    // 2. Validate required assets (Logo and Main Image)
     final bool isLogoUploaded =
         currentModel.logoUrl != null && currentModel.logoUrl!.isNotEmpty;
     final bool isMainImageUploaded =
@@ -225,17 +181,14 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
 
     if (isLogoUploaded && isMainImageUploaded) {
       print(
-        "AssetsUploadStep: Required assets are uploaded. Dispatching CompleteRegistration.",
+        "AssetsUploadStep: Required assets uploaded. Dispatching CompleteRegistration.",
       );
-      // 3. Dispatch completion event with the final model state
-      // The Bloc handler will set isRegistrationComplete = true and save.
       context.read<ServiceProviderBloc>().add(
         CompleteRegistration(currentModel),
       );
-      // RegistrationFlow listener will handle navigation upon ServiceProviderRegistrationComplete state
     } else {
       print(
-        "AssetsUploadStep: Validation failed. Logo Uploaded: $isLogoUploaded, Main Image Uploaded: $isMainImageUploaded",
+        "AssetsUploadStep: Validation failed. Logo: $isLogoUploaded, Main Image: $isMainImageUploaded",
       );
       String errorMsg = "Please upload the required images before finishing:";
       if (!isLogoUploaded) errorMsg += "\n- Business Logo";
@@ -246,76 +199,91 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
 
   @override
   Widget build(BuildContext context) {
+    /* ... Build method structure remains the same ... */
     print("AssetsUploadStep(Step 4): build");
     return BlocConsumer<ServiceProviderBloc, ServiceProviderState>(
       listener: (context, state) {
         print(
           "AssetsUploadStep Listener: Detected State Change -> ${state.runtimeType}",
         );
-        // Listener primarily to reset loading flags after upload attempt completes (success or error)
         if (state is ServiceProviderDataLoaded ||
             state is ServiceProviderError) {
-          // Use addPostFrameCallback to ensure setState runs after build phase
-          // This prevents errors if the state emission happens during a build.
           SchedulerBinding.instance.addPostFrameCallback((_) {
-            // Check if widget is still mounted and if any loading flags are true
             if (mounted &&
                 (_isUploadingLogo ||
                     _isUploadingMainImage ||
                     _isUploadingGallery)) {
               print("Listener (PostFrame): Resetting upload loading flags.");
-              // Reset flags in setState
               setState(() {
-                _isUploadingLogo = false;
-                _isUploadingMainImage = false;
-                _isUploadingGallery = false;
+                if (_isUploadingLogo &&
+                    state is! ServiceProviderAssetUploading) {
+                  _isUploadingLogo = false;
+                  if (state is ServiceProviderDataLoaded &&
+                      state.model.logoUrl?.isNotEmpty == true) {
+                    _pickedLogo = null;
+                  }
+                }
+                if (_isUploadingMainImage &&
+                    state is! ServiceProviderAssetUploading) {
+                  _isUploadingMainImage = false;
+                  if (state is ServiceProviderDataLoaded &&
+                      state.model.mainImageUrl?.isNotEmpty == true) {
+                    _pickedMainImage = null;
+                  }
+                }
+                if (_isUploadingGallery &&
+                    state is! ServiceProviderAssetUploading) {
+                  _isUploadingGallery = false;
+                }
               });
             }
           });
         }
-        // Global errors shown by RegistrationFlow listener
       },
       builder: (context, state) {
         print(
           "AssetsUploadStep Builder: Building UI for State -> ${state.runtimeType}",
         );
         ServiceProviderModel? currentModel;
-        // Determine if inputs should be enabled based on Bloc state
-        bool enableInputs = state is ServiceProviderDataLoaded;
-
+        bool enableInputs = false;
         if (state is ServiceProviderDataLoaded) {
           currentModel = state.model;
+          enableInputs = true;
+        } else if (state is ServiceProviderAssetUploading) {
+          currentModel = state.model;
+          enableInputs = false;
         }
-        // Keep inputs disabled during loading, error, or initial states
-
-        // Get current asset URLs from the model safely
         final String? logoUrl = currentModel?.logoUrl;
         final String? mainImageUrl = currentModel?.mainImageUrl;
-        // Ensure galleryImageUrls is always a List<String>, even if null in model
         final List<String> galleryImageUrls = List<String>.from(
           currentModel?.galleryImageUrls ?? [],
         );
-
-        // Determine if upload buttons should be enabled
-        final bool enableLogoUpload = enableInputs && !_isUploadingLogo;
-        final bool enableMainImageUpload =
-            enableInputs && !_isUploadingMainImage;
+        final bool enableLogoPick =
+            enableInputs || state is ServiceProviderAssetUploading;
+        final bool enableMainImagePick =
+            enableInputs || state is ServiceProviderAssetUploading;
         final bool enableGalleryAdd =
-            enableInputs && !_isUploadingGallery; // Enable add button
-
+            enableInputs || state is ServiceProviderAssetUploading;
+        final bool enableRemoveButtons = enableInputs;
+        final bool isCurrentlyUploadingLogo =
+            (state is ServiceProviderAssetUploading &&
+                state.targetField == 'logoUrl');
+        final bool isCurrentlyUploadingMain =
+            (state is ServiceProviderAssetUploading &&
+                state.targetField == 'mainImageUrl');
+        final bool isCurrentlyUploadingGallery =
+            (state is ServiceProviderAssetUploading &&
+                state.targetField == 'addGalleryImageUrl');
         return StepContainer(
           child: Column(
-            // Use Column for layout
             children: [
               Expanded(
-                // Make ListView scrollable
                 child: ListView(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 24.0,
                     vertical: 16.0,
                   ),
                   children: [
-                    // --- Header ---
                     Text(
                       "Business Assets",
                       style: getTitleStyle(
@@ -332,49 +300,38 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                       ),
                     ),
                     const SizedBox(height: 30),
-
-                    // --- Logo Upload ---
                     ModernUploadField(
-                      // Ensure this widget exists and is implemented
                       title: "Business Logo*",
-                      description:
-                          "Visible on your profile and search results (e.g., PNG, JPG).",
-                      file: logoUrl, // Display URL from model
-                      onTap:
-                          enableLogoUpload
-                              ? _pickAndUploadLogo
-                              : null, // Trigger upload
+                      description: "Visible on your profile...",
+                      file: _pickedLogo ?? logoUrl,
+                      onTap: enableLogoPick ? _pickAndUploadLogo : null,
                       onRemove:
-                          enableInputs && logoUrl != null
+                          enableRemoveButtons &&
+                                  (_pickedLogo != null ||
+                                      (logoUrl != null && logoUrl.isNotEmpty))
                               ? () => _removeUploadedAsset('logoUrl')
-                              : null, // Trigger removal
-                      isLoading: _isUploadingLogo, // Show loading indicator
+                              : null,
+                      isLoading: isCurrentlyUploadingLogo,
                     ),
                     const SizedBox(height: 25),
-
-                    // --- Main Image Upload ---
                     ModernUploadField(
-                      // Ensure this widget exists and is implemented
                       title: "Main Business Image*",
                       description:
-                          "Primary image shown on your profile page (e.g., storefront, main area).",
-                      file: mainImageUrl, // Display URL from model
+                          "Primary image shown on your profile page...",
+                      file: _pickedMainImage ?? mainImageUrl,
                       onTap:
-                          enableMainImageUpload
-                              ? _pickAndUploadMainImage
-                              : null, // Trigger upload
+                          enableMainImagePick ? _pickAndUploadMainImage : null,
                       onRemove:
-                          enableInputs && mainImageUrl != null
+                          enableRemoveButtons &&
+                                  (_pickedMainImage != null ||
+                                      (mainImageUrl != null &&
+                                          mainImageUrl.isNotEmpty))
                               ? () => _removeUploadedAsset('mainImageUrl')
-                              : null, // Trigger removal
-                      isLoading:
-                          _isUploadingMainImage, // Show loading indicator
+                              : null,
+                      isLoading: isCurrentlyUploadingMain,
                     ),
                     const SizedBox(height: 30),
-
-                    // --- Gallery Images Section ---
                     Row(
-                      // Header for gallery section
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
@@ -384,14 +341,12 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        // Add Button for Gallery
                         IconButton(
                           icon: const Icon(
                             Icons.add_photo_alternate_outlined,
                             color: AppColors.primaryColor,
                           ),
                           tooltip: 'Add Gallery Image',
-                          // Disable button if inputs disabled or gallery upload in progress
                           onPressed:
                               enableGalleryAdd ? _pickAndAddGalleryImage : null,
                         ),
@@ -399,18 +354,15 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      "Upload additional photos showcasing your facility, services, or atmosphere.",
+                      "Upload additional photos showcasing your facility...",
                       style: getbodyStyle(
                         fontSize: 14,
                         color: AppColors.mediumGrey,
                       ),
                     ),
                     const SizedBox(height: 15),
-
-                    // Display Gallery Images (e.g., in a Grid)
                     galleryImageUrls.isEmpty
                         ? Container(
-                          // Placeholder if no gallery images
                           padding: const EdgeInsets.symmetric(vertical: 30),
                           alignment: Alignment.center,
                           child: Text(
@@ -419,25 +371,21 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                           ),
                         )
                         : GridView.builder(
-                          shrinkWrap: true, // Important inside ListView
-                          physics:
-                              const NeverScrollableScrollPhysics(), // Disable internal scrolling
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
                           gridDelegate:
                               const SliverGridDelegateWithMaxCrossAxisExtent(
-                                maxCrossAxisExtent:
-                                    150.0, // Max width for each item
+                                maxCrossAxisExtent: 150.0,
                                 mainAxisSpacing: 10.0,
                                 crossAxisSpacing: 10.0,
-                                childAspectRatio: 1.0, // Make items square
+                                childAspectRatio: 1.0,
                               ),
                           itemCount: galleryImageUrls.length,
                           itemBuilder: (context, index) {
                             final imageUrl = galleryImageUrls[index];
                             return Stack(
-                              // Use Stack to overlay remove button
                               alignment: Alignment.topRight,
                               children: [
-                                // Display the image (using Image.network or your custom widget)
                                 Container(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(8),
@@ -447,30 +395,21 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                                       ),
                                     ),
                                     image: DecorationImage(
-                                      image: NetworkImage(
-                                        imageUrl,
-                                      ), // Assumes URL is valid
+                                      image: NetworkImage(imageUrl),
                                       fit: BoxFit.cover,
-                                      // Optional: Add error builder for NetworkImage
-                                      // onError: (exception, stackTrace) => const Icon(Icons.error),
                                     ),
                                   ),
                                 ),
-                                // Remove Button
-                                if (enableInputs) // Only show remove button if enabled
+                                if (enableRemoveButtons)
                                   Positioned(
                                     top: -5,
-                                    right: -5, // Adjust position
+                                    right: -5,
                                     child: Material(
-                                      // Material for InkWell splash effect
                                       color: Colors.black54,
                                       shape: const CircleBorder(),
                                       child: InkWell(
                                         onTap:
-                                            () => _removeGalleryImage(
-                                              imageUrl,
-                                              galleryImageUrls,
-                                            ),
+                                            () => _removeGalleryImage(imageUrl),
                                         customBorder: const CircleBorder(),
                                         child: const Padding(
                                           padding: EdgeInsets.all(4.0),
@@ -487,22 +426,21 @@ class AssetsUploadStepState extends State<AssetsUploadStep> {
                             );
                           },
                         ),
-
-                    // Optional: Show indicator while gallery image is uploading
-                    if (_isUploadingGallery)
+                    if (isCurrentlyUploadingGallery)
                       const Padding(
                         padding: EdgeInsets.only(top: 15.0),
-                        child: Center(child: CircularProgressIndicator()),
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       ),
-
-                    const SizedBox(height: 40), // Space at end
+                    const SizedBox(height: 40),
                   ],
                 ),
-              ), // End Expanded ListView
-            ], // End Column children
-          ), // End StepContainer
-        ); // End BlocBuilder
+              ),
+            ],
+          ),
+        );
       },
-    ); // End BlocConsumer
+    );
   }
 } // End AssetsUploadStepState

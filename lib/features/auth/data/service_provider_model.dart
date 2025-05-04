@@ -1,8 +1,5 @@
 /// File: lib/features/auth/data/service_provider_model.dart
-/// --- UPDATED: Added governorateId, supportedReservationTypes, type-specific configs ---
-/// --- CONSOLIDATED: Includes SubscriptionPlan, PricingModel, OpeningHours ---
-/// --- UPDATED AGAIN: Added maxGroupSize, accessOptions, seatMapUrl ---
-/// --- UPDATED AGAIN: Ensured all fields are in toMap/copyWith/fromFirestore ---
+/// --- UPDATED: Added force...Null flags to copyWith method ---
 library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -55,7 +52,7 @@ PricingModel pricingModelFromString(String? modelString) {
   }
 }
 
-/// ** NEW ** Defines the different types of reservations supported.
+/// ** NEW & UPDATED ** Defines the different types of reservations supported.
 enum ReservationType {
   timeBased, // Simple time slot booking
   serviceBased, // Booking a specific service without a fixed time slot (e.g., drop-in)
@@ -63,6 +60,7 @@ enum ReservationType {
   recurring, // Booking a recurring slot (e.g., weekly class)
   group, // Booking for multiple people
   accessBased, // Booking access for a duration (e.g., gym day pass)
+  sequenceBased, // Booking based on sequence/queue (e.g., waiting list) <-- NEW
 }
 
 /// Helper to convert string to ReservationType enum.
@@ -82,6 +80,8 @@ ReservationType reservationTypeFromString(String? typeString) {
       return ReservationType.group;
     case 'accessbased':
       return ReservationType.accessBased;
+    case 'sequencebased': // <-- Handle new type
+      return ReservationType.sequenceBased;
     default:
       // Default to timeBased or throw an error if type is mandatory and unknown
       print(
@@ -99,7 +99,6 @@ class OpeningHours extends Equatable {
 
   bool isOpenAt(DateTime dateTime) {
     // TODO: Implement actual logic based on stored hours
-    // Basic example (needs proper time parsing):
     final dayName =
         DateFormat('EEEE').format(dateTime).toLowerCase(); // e.g., 'monday'
     final dayHours = hours[dayName];
@@ -114,14 +113,11 @@ class OpeningHours extends Equatable {
     if (data == null) return const OpeningHours.empty();
     final Map<String, Map<String, String>> parsedHours = {};
     data.forEach((day, timeMap) {
-      // Ensure day key is lowercase for consistency
       final dayKey = day.toString().toLowerCase();
       if (timeMap is Map) {
-        // Ensure keys are strings and values are strings
         final String? openTime = timeMap['open']?.toString();
         final String? closeTime = timeMap['close']?.toString();
         if (openTime != null && closeTime != null) {
-          // Store with lowercase day key
           parsedHours[dayKey] = {'open': openTime, 'close': closeTime};
         }
       }
@@ -136,7 +132,6 @@ class OpeningHours extends Equatable {
 }
 
 /// Represents a subscription plan offered by a service provider.
-/// NOTE: This replaces the definition in subscription_plan.dart
 class SubscriptionPlan extends Equatable {
   final String id;
   final String name;
@@ -255,82 +250,60 @@ class AccessPassOption extends Equatable {
 /// Represents the main data model for a Service Provider user. (Merged & Updated)
 class ServiceProviderModel extends Equatable {
   // --- Core Identifiers ---
-  final String uid; // Firebase Auth UID (usually same as document ID)
-  final String ownerUid; // UID of the primary owner
+  final String uid;
+  final String ownerUid;
 
   // --- Personal Info (Merged) ---
-  final String name; // Personal name of owner/contact
-  final String email; // Contact email (validated)
-  final DateTime? dob; // Date of Birth (from old model)
-  final String? gender; // Gender (from old model)
-  final String personalPhoneNumber; // Personal phone (renamed from 'phone')
-  final String idNumber; // National ID Number (from old model)
-  final String?
-  idFrontImageUrl; // URL for National ID image (from old model, nullable)
-  final String?
-  idBackImageUrl; // URL for National ID image (from old model, nullable)
-  final String? profilePictureUrl; // URL for Profile Picture (nullable)
+  final String name;
+  final String email;
+  final DateTime? dob;
+  final String? gender;
+  final String personalPhoneNumber;
+  final String idNumber;
+  final String? idFrontImageUrl;
+  final String? idBackImageUrl;
+  final String? profilePictureUrl;
 
   // --- Business Details (Merged & Updated) ---
   final String businessName;
   final String businessDescription;
   final String businessCategory;
-  final String? businessSubCategory; // Optional subcategory
-  final String businessContactEmail; // Business contact email (validated)
-  final String businessContactPhone; // Business contact phone
+  final String? businessSubCategory;
+  final String businessContactEmail;
+  final String businessContactPhone;
   final String website;
-  // Address Map: Keys should be 'street', 'city', 'governorate', 'postalCode'
   final Map<String, String> address;
-  final GeoPoint? location; // Geolocation point
-  final OpeningHours? openingHours; // Use OpeningHours class
+  final GeoPoint? location;
+  final OpeningHours? openingHours;
   final List<String> amenities;
-  // ** NEW ** Governorate ID (essential for partitioning)
-  final String?
-  governorateId; // Can be null initially, but should be set. Use sanitized ID or Firestore ID.
+  final String? governorateId; // ** NEW **
 
   // --- Pricing and Services (Merged & Updated) ---
   final PricingModel pricingModel;
-  final List<SubscriptionPlan>
-  subscriptionPlans; // List of defined plans (includes features, interval)
-  final List<BookableService>
-  bookableServices; // List of defined services/classes
-  final String pricingInfo; // For 'Other' pricing model description
-  // ** NEW ** List of supported reservation types (strings matching ReservationType enum names)
-  final List<String> supportedReservationTypes;
-  // ** NEW ** Type-specific configurations (Map for flexibility)
-  final Map<String, dynamic>
-  reservationTypeConfigs; // Renamed from serviceSpecificConfigs for clarity
-  /* Example reservationTypeConfigs structure:
-  {
-    "seatBased": { "seatMapUrl": "...", "maxSeatsPerBooking": 2 }, // seatMapUrl is separate now
-    "group": { "maxGroupSize": 10 }, // maxGroupSize is separate now
-    "accessBased": { "durations": ["Full Day", "2 Hours"], "prices": [100, 40] }, // Replaced by accessOptions
-    "recurring": { "allowedFrequencies": ["weekly", "bi-weekly"] }
-    // Add other configs as needed, e.g. 'bufferTimeMinutes', 'cancellationPolicyDays'
-  }
-  */
-  // ** NEW Fields Added Based on Firestore Schema **
-  final int? maxGroupSize; // Global max group size (nullable)
-  final List<AccessPassOption>?
-  accessOptions; // Specific options for access-based (nullable)
-  final String? seatMapUrl; // URL for seat map (nullable)
+  final List<SubscriptionPlan> subscriptionPlans;
+  final List<BookableService> bookableServices;
+  final String pricingInfo;
+  final List<String> supportedReservationTypes; // List of ReservationType enum names
+  final Map<String, dynamic> reservationTypeConfigs;
+  final int? maxGroupSize;
+  final List<AccessPassOption>? accessOptions;
+  final String? seatMapUrl;
 
   // --- Assets (Merged) ---
-  final String? logoUrl; // Nullable
-  final String? mainImageUrl; // Nullable
-  final List<String> galleryImageUrls; // Non-nullable list
+  final String? logoUrl;
+  final String? mainImageUrl;
+  final List<String> galleryImageUrls;
 
   // --- Status & Metadata (Merged) ---
-  final bool isApproved; // Approval status (from old model)
-  final bool isRegistrationComplete; // Registration flag
-  final bool isActive; // Active status (from old model)
-  final bool isFeatured; // Featured status (from old model)
-  final Timestamp createdAt; // Non-nullable, set on creation
-  final Timestamp? updatedAt; // Set by Firestore on update
-  final double rating; // Renamed from averageRating for consistency
-  final int ratingCount; // Number of ratings (from old model)
-  final List<String>?
-  staffUids; // List of staff UIDs (from old model, nullable list)
+  final bool isApproved;
+  final bool isRegistrationComplete;
+  final bool isActive;
+  final bool isFeatured;
+  final Timestamp createdAt;
+  final Timestamp? updatedAt;
+  final double rating;
+  final int ratingCount;
+  final List<String>? staffUids;
 
   // Constructor with merged fields and defaults
   const ServiceProviderModel({
@@ -343,10 +316,10 @@ class ServiceProviderModel extends Equatable {
     this.dob,
     this.gender,
     this.personalPhoneNumber = '',
-    this.idNumber = '', // Added from old
-    this.idFrontImageUrl, // Added from old (nullable)
-    this.idBackImageUrl, // Added from old (nullable)
-    this.profilePictureUrl, // Made nullable
+    this.idNumber = '',
+    this.idFrontImageUrl,
+    this.idBackImageUrl,
+    this.profilePictureUrl,
     // Business
     this.businessName = '',
     this.businessDescription = '',
@@ -363,29 +336,28 @@ class ServiceProviderModel extends Equatable {
     this.amenities = const [],
     // Pricing & Reservations
     this.pricingModel = PricingModel.other,
-    this.subscriptionPlans = const [], // Non-nullable list
-    this.bookableServices = const [], // Non-nullable list
+    this.subscriptionPlans = const [],
+    this.bookableServices = const [],
     this.pricingInfo = '',
-    this.supportedReservationTypes =
-        const [], // ** NEW ** Default empty // Changed from required here
-    this.reservationTypeConfigs = const {}, // ** NEW ** Default empty
-    this.maxGroupSize, // ** NEW ** Nullable
-    this.accessOptions, // ** NEW ** Nullable List
-    this.seatMapUrl, // ** NEW ** Nullable
+    this.supportedReservationTypes = const [],
+    this.reservationTypeConfigs = const {},
+    this.maxGroupSize,
+    this.accessOptions,
+    this.seatMapUrl,
     // Assets
-    this.logoUrl, // Made nullable
-    this.mainImageUrl, // Made nullable
-    this.galleryImageUrls = const [], // Non-nullable list
+    this.logoUrl,
+    this.mainImageUrl,
+    this.galleryImageUrls = const [],
     // Metadata & Status
-    this.isApproved = false, // Added from old
+    this.isApproved = false,
     this.isRegistrationComplete = false,
-    this.isActive = false, // Added from old
-    this.isFeatured = false, // Added from old
-    required this.createdAt, // Required, usually set on creation
+    this.isActive = false,
+    this.isFeatured = false,
+    required this.createdAt,
     this.updatedAt,
-    this.rating = 0.0, // Added from old, renamed
-    this.ratingCount = 0, // Added from old
-    this.staffUids, // Added from old (nullable list)
+    this.rating = 0.0,
+    this.ratingCount = 0,
+    this.staffUids,
   });
 
   /// Creates an empty ServiceProviderModel, useful for initial state.
@@ -410,10 +382,7 @@ class ServiceProviderModel extends Equatable {
       businessContactPhone: '',
       website: '',
       address: const {
-        'street': '',
-        'city': '',
-        'governorate': '',
-        'postalCode': '',
+        'street': '', 'city': '', 'governorate': '', 'postalCode': '',
       },
       location: null,
       governorateId: null, // ** NEW **
@@ -439,7 +408,7 @@ class ServiceProviderModel extends Equatable {
       updatedAt: null,
       rating: 0.0,
       ratingCount: 0,
-      staffUids: null, // Default to null for nullable list
+      staffUids: null,
     );
   }
 
@@ -450,153 +419,84 @@ class ServiceProviderModel extends Equatable {
     // Safely parse nested maps and lists
     final Map<String, String> addressMap = {};
     (data['address'] as Map?)?.forEach((key, value) {
-      if (key is String && value is String) {
-        addressMap[key] = value;
-      }
+      if (key is String && value is String) { addressMap[key] = value; }
     });
-    final List<String> amenitiesList = List<String>.from(
-      data['amenities'] as List? ?? [],
-    );
-    final List<String> galleryUrls = List<String>.from(
-      data['galleryImageUrls'] as List? ?? [],
-    );
-    final List<String>? staffUidsList =
-        data['staffUids'] == null
-            ? null
-            : List<String>.from(data['staffUids'] as List? ?? []);
+    final List<String> amenitiesList = List<String>.from(data['amenities'] as List? ?? []);
+    final List<String> galleryUrls = List<String>.from(data['galleryImageUrls'] as List? ?? []);
+    final List<String>? staffUidsList = data['staffUids'] == null ? null : List<String>.from(data['staffUids'] as List? ?? []);
 
     // Parse OpeningHours
     OpeningHours? hours;
-    try {
-      hours = OpeningHours.fromMap(
-        data['openingHours'] as Map<String, dynamic>?,
-      );
-    } catch (e) {
-      print("Error parsing openingHours: $e");
-      hours = null;
-    }
+    try { hours = OpeningHours.fromMap(data['openingHours'] as Map<String, dynamic>?,); }
+    catch (e) { print("Error parsing openingHours: $e"); hours = null; }
 
     // Parse BookableService list
-    final List<BookableService> bookableServicesList =
-        (data['bookableServices'] as List<dynamic>? ?? [])
-            .map((serviceData) {
-              if (serviceData is Map<String, dynamic>) {
-                try {
-                  return BookableService.fromMap(serviceData);
-                } catch (e) {
-                  print(
-                    "Error parsing BookableService: $e. Data: $serviceData",
-                  );
-                  return null;
-                }
-              }
-              return null;
-            })
-            .whereType<BookableService>()
-            .toList();
+    final List<BookableService> bookableServicesList = (data['bookableServices'] as List<dynamic>? ?? [])
+        .map((serviceData) {
+          if (serviceData is Map<String, dynamic>) {
+            try { return BookableService.fromMap(serviceData); }
+            catch (e) { print("Error parsing BookableService: $e. Data: $serviceData"); return null; }
+          } return null;
+        }).whereType<BookableService>().toList();
 
     // Parse SubscriptionPlan list
-    final List<SubscriptionPlan> subscriptionPlansList =
-        (data['subscriptionPlans'] as List<dynamic>? ?? [])
-            .map((planData) {
-              if (planData is Map<String, dynamic>) {
-                final String planId =
-                    planData['id']?.toString() ??
-                    DateTime.now().millisecondsSinceEpoch.toString();
-                try {
-                  return SubscriptionPlan.fromMap(planData, planId);
-                } catch (e) {
-                  print("Error parsing SubscriptionPlan: $e. Data: $planData");
-                  return null;
-                }
-              }
-              return null;
-            })
-            .whereType<SubscriptionPlan>()
-            .toList();
+    final List<SubscriptionPlan> subscriptionPlansList = (data['subscriptionPlans'] as List<dynamic>? ?? [])
+        .map((planData) {
+          if (planData is Map<String, dynamic>) {
+            final String planId = planData['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString();
+            try { return SubscriptionPlan.fromMap(planData, planId); }
+            catch (e) { print("Error parsing SubscriptionPlan: $e. Data: $planData"); return null; }
+          } return null;
+        }).whereType<SubscriptionPlan>().toList();
 
     // Parse Pricing Model
     PricingModel pricing = PricingModel.other;
-    try {
-      pricing = pricingModelFromString(data['pricingModel'] as String?);
-    } catch (e) {
-      print("Error parsing pricingModel: $e");
-    }
+    try { pricing = pricingModelFromString(data['pricingModel'] as String?); }
+    catch (e) { print("Error parsing pricingModel: $e"); }
 
     // ** NEW ** Parse supportedReservationTypes (expecting List<String>)
-    final List<String> supportedTypes = List<String>.from(
-      data['supportedReservationTypes'] as List? ?? [],
-    );
+    final List<String> supportedTypes = List<String>.from(data['supportedReservationTypes'] as List? ?? []);
 
     // ** NEW ** Parse reservationTypeConfigs (expecting Map<String, dynamic>)
-    final Map<String, dynamic> typeConfigs = Map<String, dynamic>.from(
-      data['reservationTypeConfigs'] as Map? ?? // Use model name
-          data['serviceSpecificConfigs']
-              as Map? ?? // Fallback to Firestore name if needed
-          {},
-    );
+    final Map<String, dynamic> typeConfigs = Map<String, dynamic>.from(data['reservationTypeConfigs'] as Map? ?? {});
 
     // ** NEW ** Parse maxGroupSize
     final int? maxGroupSizeValue = (data['maxGroupSize'] as num?)?.toInt();
 
     // ** NEW ** Parse accessOptions using the new class
-    final List<AccessPassOption>? accessOptionsList =
-        (data['accessOptions'] as List<dynamic>?)
-            ?.map((optionData) {
-              if (optionData is Map<String, dynamic>) {
-                try {
-                  return AccessPassOption.fromMap(optionData);
-                } catch (e) {
-                  print(
-                    "Error parsing AccessPassOption: $e. Data: $optionData",
-                  );
-                  return null;
-                }
-              }
-              return null;
-            })
-            .whereType<AccessPassOption>()
-            .toList();
+    final List<AccessPassOption>? accessOptionsList = (data['accessOptions'] as List<dynamic>?)
+        ?.map((optionData) {
+          if (optionData is Map<String, dynamic>) {
+            try { return AccessPassOption.fromMap(optionData); }
+            catch (e) { print("Error parsing AccessPassOption: $e. Data: $optionData"); return null; }
+          } return null;
+        }).whereType<AccessPassOption>().toList();
 
     // ** NEW ** Parse seatMapUrl
     final String? seatMapUrlValue = data['seatMapUrl'] as String?;
 
     return ServiceProviderModel(
       // Core
-      uid: doc.id,
-      ownerUid: data['ownerUid'] as String? ?? doc.id,
+      uid: doc.id, ownerUid: data['ownerUid'] as String? ?? doc.id,
       // Personal
-      email: data['email'] as String? ?? '',
-      name: data['name'] as String? ?? '',
-      dob: (data['dob'] as Timestamp?)?.toDate(), // Added
-      gender: data['gender'] as String?, // Added
-      personalPhoneNumber:
-          data['personalPhoneNumber'] as String? ??
-          data['phone'] as String? ??
-          '', // Use new name, fallback to old
-      idNumber: data['idNumber'] as String? ?? '', // Added
-      idFrontImageUrl: data['idFrontImageUrl'] as String?, // Added
-      idBackImageUrl: data['idBackImageUrl'] as String?, // Added
-      profilePictureUrl: data['profilePictureUrl'] as String?, // Nullable now
+      email: data['email'] as String? ?? '', name: data['name'] as String? ?? '',
+      dob: (data['dob'] as Timestamp?)?.toDate(), gender: data['gender'] as String?,
+      personalPhoneNumber: data['personalPhoneNumber'] as String? ?? data['phone'] as String? ?? '',
+      idNumber: data['idNumber'] as String? ?? '',
+      idFrontImageUrl: data['idFrontImageUrl'] as String?, idBackImageUrl: data['idBackImageUrl'] as String?,
+      profilePictureUrl: data['profilePictureUrl'] as String?,
       // Business
-      businessName: data['businessName'] as String? ?? '',
-      businessDescription: data['businessDescription'] as String? ?? '',
-      businessCategory: data['businessCategory'] as String? ?? '',
-      businessSubCategory: data['businessSubCategory'] as String?,
-      businessContactEmail: data['businessContactEmail'] as String? ?? '',
-      businessContactPhone: data['businessContactPhone'] as String? ?? '',
+      businessName: data['businessName'] as String? ?? '', businessDescription: data['businessDescription'] as String? ?? '',
+      businessCategory: data['businessCategory'] as String? ?? '', businessSubCategory: data['businessSubCategory'] as String?,
+      businessContactEmail: data['businessContactEmail'] as String? ?? '', businessContactPhone: data['businessContactPhone'] as String? ?? '',
       website: data['website'] as String? ?? '',
       // Location
-      address: addressMap,
-      location: data['location'] as GeoPoint?,
+      address: addressMap, location: data['location'] as GeoPoint?,
       governorateId: data['governorateId'] as String?, // ** NEW **
       // Operations
-      openingHours: hours,
-      amenities: amenitiesList,
+      openingHours: hours, amenities: amenitiesList,
       // Pricing & Reservations
-      pricingModel: pricing,
-      subscriptionPlans: subscriptionPlansList,
-      bookableServices: bookableServicesList,
+      pricingModel: pricing, subscriptionPlans: subscriptionPlansList, bookableServices: bookableServicesList,
       pricingInfo: data['pricingInfo'] as String? ?? '',
       supportedReservationTypes: supportedTypes, // ** NEW **
       reservationTypeConfigs: typeConfigs, // ** NEW **
@@ -604,410 +504,220 @@ class ServiceProviderModel extends Equatable {
       accessOptions: accessOptionsList, // ** NEW **
       seatMapUrl: seatMapUrlValue, // ** NEW **
       // Assets
-      logoUrl: data['logoUrl'] as String?, // Nullable now
-      mainImageUrl: data['mainImageUrl'] as String?, // Nullable now
-      galleryImageUrls: galleryUrls,
+      logoUrl: data['logoUrl'] as String?, mainImageUrl: data['mainImageUrl'] as String?, galleryImageUrls: galleryUrls,
       // Metadata & Status
-      isApproved: data['isApproved'] as bool? ?? false, // Added
-      isRegistrationComplete: data['isRegistrationComplete'] as bool? ?? false,
-      isActive: data['isActive'] as bool? ?? false, // Added
-      isFeatured: data['isFeatured'] as bool? ?? false, // Added
-      createdAt:
-          data['createdAt'] as Timestamp? ??
-          Timestamp.now(), // Default if missing
-      updatedAt: data['updatedAt'] as Timestamp?,
-      rating:
-          (data['rating'] as num?)?.toDouble() ??
-          (data['averageRating'] as num?)?.toDouble() ??
-          0.0, // Added, use model name 'rating', fallback to Firestore 'averageRating'
-      ratingCount: (data['ratingCount'] as num?)?.toInt() ?? 0, // Added
-      staffUids: staffUidsList, // Added
+      isApproved: data['isApproved'] as bool? ?? false, isRegistrationComplete: data['isRegistrationComplete'] as bool? ?? false,
+      isActive: data['isActive'] as bool? ?? false, isFeatured: data['isFeatured'] as bool? ?? false,
+      createdAt: data['createdAt'] as Timestamp? ?? Timestamp.now(), updatedAt: data['updatedAt'] as Timestamp?,
+      rating: (data['rating'] as num?)?.toDouble() ?? (data['averageRating'] as num?)?.toDouble() ?? 0.0,
+      ratingCount: (data['ratingCount'] as num?)?.toInt() ?? 0, staffUids: staffUidsList,
     );
   }
 
+  /// ** UPDATED: Explicitly sends null values for optional fields **
   Map<String, dynamic> toMap() {
-    // Keep existing logging to verify values *before* map creation
     print("DEBUG: ServiceProviderModel.toMap() called.");
-    print("  toMap - this.dob value: ${this.dob}");
-    print("  toMap - this.gender value: ${this.gender}");
-    print(
-      "  toMap - this.governorateId value: ${this.governorateId}",
-    ); // Log new field
-    print(
-      "  toMap - this.supportedReservationTypes value: ${this.supportedReservationTypes}",
-    ); // Log new field
+    // ... (optional detailed logging of 'this' fields) ...
 
     final mapData = {
       // --- Core & Personal ---
-      'ownerUid': ownerUid, // Included
+      'ownerUid': ownerUid,
       'email': email,
       'name': name,
-      'personalPhoneNumber': personalPhoneNumber, // Included
+      'personalPhoneNumber': personalPhoneNumber,
       'idNumber': idNumber,
-      // Use Timestamp or null for dob
-      'dob': dob == null ? null : Timestamp.fromDate(dob!),
-      'gender': gender, // Add gender directly (null if this.gender is null)
-      // Keep null checks for other optional fields
-      if (idFrontImageUrl != null) 'idFrontImageUrl': idFrontImageUrl,
-      if (idBackImageUrl != null) 'idBackImageUrl': idBackImageUrl,
-      if (profilePictureUrl != null) 'profilePictureUrl': profilePictureUrl,
+      'dob': dob == null ? null : Timestamp.fromDate(dob!), // Explicitly send null
+      'gender': gender, // Explicitly send null if null
+      'idFrontImageUrl': idFrontImageUrl, // Explicitly send null if null
+      'idBackImageUrl': idBackImageUrl, // Explicitly send null if null
+      'profilePictureUrl': profilePictureUrl, // Explicitly send null if null
 
-      // --- Business Details (Includes new fields) ---
+      // --- Business Details ---
       'businessName': businessName,
       'businessDescription': businessDescription,
       'businessCategory': businessCategory,
-      if (businessSubCategory != null)
-        'businessSubCategory': businessSubCategory,
-      'businessContactEmail': businessContactEmail, // Included
-      'businessContactPhone': businessContactPhone, // Included
+      'businessSubCategory': businessSubCategory, // Explicitly send null if null
+      'businessContactEmail': businessContactEmail,
+      'businessContactPhone': businessContactPhone,
       'website': website,
-      'address': address,
-      if (governorateId != null) 'governorateId': governorateId, // Included
-      if (location != null) 'location': location,
-      if (openingHours != null) 'openingHours': openingHours!.toMap(),
-      'amenities': amenities,
+      'address': address, // Send map (can be empty)
+      'governorateId': governorateId, // Explicitly send null if null
+      'location': location, // Explicitly send null if null (GeoPoint or null)
+      'openingHours': openingHours?.toMap(), // Send map or null
+      'amenities': amenities, // Send list (can be empty [])
 
-      // --- Pricing & Reservation (Includes new fields) ---
+      // --- Pricing & Reservation ---
       'pricingModel': pricingModel.name,
-      'subscriptionPlans':
-          subscriptionPlans.map((plan) => plan.toMap()).toList(),
-      'bookableServices':
-          bookableServices.map((service) => service.toMap()).toList(),
+      'subscriptionPlans': subscriptionPlans.map((plan) => plan.toMap()).toList(), // Send list (can be empty [])
+      'bookableServices': bookableServices.map((service) => service.toMap()).toList(), // Send list (can be empty [])
       'pricingInfo': pricingInfo,
-      // Ensure this is List<String> as expected by Firestore
-      'supportedReservationTypes': supportedReservationTypes,
-      'reservationTypeConfigs': reservationTypeConfigs,
-      if (maxGroupSize != null) 'maxGroupSize': maxGroupSize,
-      // Ensure accessOptions is converted to a list of maps
-      if (accessOptions != null)
-        'accessOptions':
-            accessOptions!.map((option) => option.toMap()).toList(),
-      if (seatMapUrl != null) 'seatMapUrl': seatMapUrl,
+      'supportedReservationTypes': supportedReservationTypes, // Send list (can be empty [])
+      'reservationTypeConfigs': reservationTypeConfigs, // Send map (can be empty {})
+      'maxGroupSize': maxGroupSize, // Explicitly send null if null
+      'accessOptions': accessOptions?.map((option) => option.toMap()).toList(), // Send list or null
+      'seatMapUrl': seatMapUrl, // Explicitly send null if null
 
-      // --- Assets (Included) ---
-      if (logoUrl != null) 'logoUrl': logoUrl,
-      if (mainImageUrl != null) 'mainImageUrl': mainImageUrl,
-      'galleryImageUrls': galleryImageUrls,
+      // --- Assets ---
+      'logoUrl': logoUrl, // Explicitly send null if null
+      'mainImageUrl': mainImageUrl, // Explicitly send null if null
+      'galleryImageUrls': galleryImageUrls, // Send list (can be empty [])
 
-      // --- Status & Metadata (Included) ---
+      // --- Status & Metadata ---
       'isApproved': isApproved,
       'isRegistrationComplete': isRegistrationComplete,
       'isActive': isActive,
       'isFeatured': isFeatured,
-      'createdAt': createdAt, // Included
-      'updatedAt': FieldValue.serverTimestamp(), // Keep this for updates
+      'createdAt': createdAt, // Should always have a value
+      'updatedAt': FieldValue.serverTimestamp(), // Use server timestamp for updates
       'rating': rating,
       'ratingCount': ratingCount,
-      if (staffUids != null) 'staffUids': staffUids,
+      'staffUids': staffUids, // Explicitly send null if null
     };
 
-    // Optional: Explicitly remove keys with null values if Firestore merge isn't behaving
-    // mapData.removeWhere((key, value) => value == null);
-
-    // Log the keys *after* map construction, before returning
     print("  toMap - Generated Map Keys: ${mapData.keys.join(', ')}");
+    print("  >>> MAP TO SAVE (Explicit Nulls): $mapData"); // Log the final map
     return mapData;
   }
 
-  /// Creates a copy of this model with optional updated values.
+  /// ** UPDATED: Added force...Null flags for explicit null setting **
   ServiceProviderModel copyWith({
-    String? uid,
-    String? ownerUid,
-    String? email,
-    String? name,
-    DateTime? dob,
-    String? gender,
-    String? personalPhoneNumber,
-    String? idNumber, // Included
-    String? idFrontImageUrl,
-    String? idBackImageUrl,
-    String? profilePictureUrl,
-    String? businessName,
-    String? businessDescription,
-    String? businessCategory,
-    String? businessSubCategory,
-    String? businessContactEmail,
-    String? businessContactPhone, // Included
-    String? website,
-    Map<String, String>? address,
-    GeoPoint? location,
-    String? governorateId, // ** NEW ** Included
-    OpeningHours? openingHours,
-    List<String>? amenities,
-    PricingModel? pricingModel,
-    List<SubscriptionPlan>? subscriptionPlans,
-    List<BookableService>? bookableServices,
-    String? pricingInfo,
-    List<String>? supportedReservationTypes, // ** NEW ** Included
-    Map<String, dynamic>? reservationTypeConfigs, // ** NEW ** Included
-    int? maxGroupSize, // ** NEW ** Included
-    List<AccessPassOption>? accessOptions, // ** NEW ** Included
-    String? seatMapUrl, // ** NEW ** Included
-    String? logoUrl,
-    String? mainImageUrl,
-    List<String>? galleryImageUrls,
-    bool? isApproved,
-    bool? isRegistrationComplete,
-    bool? isActive,
-    bool? isFeatured,
-    Timestamp? createdAt,
-    Timestamp? updatedAt, // Included
-    double? rating,
-    int? ratingCount,
-    List<String>? staffUids,
+    String? uid, String? ownerUid, String? email, String? name, DateTime? dob, String? gender,
+    String? personalPhoneNumber, String? idNumber, String? idFrontImageUrl, String? idBackImageUrl, String? profilePictureUrl,
+    String? businessName, String? businessDescription, String? businessCategory, String? businessSubCategory,
+    String? businessContactEmail, String? businessContactPhone, String? website, Map<String, String>? address,
+    GeoPoint? location, String? governorateId, OpeningHours? openingHours, List<String>? amenities,
+    PricingModel? pricingModel, List<SubscriptionPlan>? subscriptionPlans, List<BookableService>? bookableServices,
+    String? pricingInfo, List<String>? supportedReservationTypes, Map<String, dynamic>? reservationTypeConfigs,
+    int? maxGroupSize, List<AccessPassOption>? accessOptions, String? seatMapUrl,
+    String? logoUrl, String? mainImageUrl, List<String>? galleryImageUrls,
+    bool? isApproved, bool? isRegistrationComplete, bool? isActive, bool? isFeatured,
+    Timestamp? createdAt, Timestamp? updatedAt, double? rating, int? ratingCount, List<String>? staffUids,
+    // --- ADDED Force Null Flags ---
+    bool forceDobNull = false, bool forceGenderNull = false, bool forceIdFrontNull = false, bool forceIdBackNull = false,
+    bool forceProfilePicNull = false, bool forceSubCategoryNull = false, bool forceLocationNull = false,
+    bool forceGovernorateIdNull = false, bool forceOpeningHoursNull = false, bool forceMaxGroupSizeNull = false,
+    bool forceAccessOptionsNull = false, bool forceSeatMapUrlNull = false, bool forceLogoNull = false,
+    bool forceMainImageNull = false, bool forceStaffNull = false, bool forceUpdatedAtNull = false,
   }) {
-    // Handle setting nullable fields back to null explicitly
-    bool explicitlySetDobNull = dob == null && this.dob != null;
-    bool explicitlySetGenderNull = gender == null && this.gender != null;
-    bool explicitlySetIdFrontNull =
-        idFrontImageUrl == null && this.idFrontImageUrl != null;
-    bool explicitlySetIdBackNull =
-        idBackImageUrl == null && this.idBackImageUrl != null;
-    bool explicitlySetProfilePicNull =
-        profilePictureUrl == null && this.profilePictureUrl != null;
-    bool explicitlySetSubCategoryNull =
-        businessSubCategory == null && this.businessSubCategory != null;
-    bool explicitlySetLocationNull = location == null && this.location != null;
-    bool explicitlySetGovernorateIdNull =
-        governorateId == null && this.governorateId != null;
-    bool explicitlySetOpeningHoursNull =
-        openingHours == null && this.openingHours != null;
-    bool explicitlySetLogoNull = logoUrl == null && this.logoUrl != null;
-    bool explicitlySetMainImageNull =
-        mainImageUrl == null && this.mainImageUrl != null;
-    bool explicitlySetStaffNull = staffUids == null && this.staffUids != null;
-    bool explicitlySetUpdatedAtNull =
-        updatedAt == null && this.updatedAt != null;
-    bool explicitlySetMaxGroupSizeNull =
-        maxGroupSize == null && this.maxGroupSize != null; // ** NEW **
-    bool explicitlySetAccessOptionsNull =
-        accessOptions == null && this.accessOptions != null; // ** NEW **
-    bool explicitlySetSeatMapUrlNull =
-        seatMapUrl == null && this.seatMapUrl != null; // ** NEW **
-
+    // Use flags to determine if null should be explicitly set
     return ServiceProviderModel(
       // Core
-      uid: uid ?? this.uid,
-      ownerUid: ownerUid ?? this.ownerUid,
+      uid: uid ?? this.uid, ownerUid: ownerUid ?? this.ownerUid,
       // Personal
-      email: email ?? this.email,
-      name: name ?? this.name,
-      dob: explicitlySetDobNull ? null : (dob ?? this.dob),
-      gender: explicitlySetGenderNull ? null : (gender ?? this.gender),
+      email: email ?? this.email, name: name ?? this.name,
+      dob: forceDobNull ? null : (dob ?? this.dob),
+      gender: forceGenderNull ? null : (gender ?? this.gender),
       personalPhoneNumber: personalPhoneNumber ?? this.personalPhoneNumber,
-      idNumber: idNumber ?? this.idNumber, // Included
-      idFrontImageUrl:
-          explicitlySetIdFrontNull
-              ? null
-              : (idFrontImageUrl ?? this.idFrontImageUrl),
-      idBackImageUrl:
-          explicitlySetIdBackNull
-              ? null
-              : (idBackImageUrl ?? this.idBackImageUrl),
-      profilePictureUrl:
-          explicitlySetProfilePicNull
-              ? null
-              : (profilePictureUrl ?? this.profilePictureUrl),
+      idNumber: idNumber ?? this.idNumber,
+      idFrontImageUrl: forceIdFrontNull ? null : (idFrontImageUrl ?? this.idFrontImageUrl),
+      idBackImageUrl: forceIdBackNull ? null : (idBackImageUrl ?? this.idBackImageUrl),
+      profilePictureUrl: forceProfilePicNull ? null : (profilePictureUrl ?? this.profilePictureUrl),
       // Business
-      businessName: businessName ?? this.businessName,
-      businessDescription: businessDescription ?? this.businessDescription,
+      businessName: businessName ?? this.businessName, businessDescription: businessDescription ?? this.businessDescription,
       businessCategory: businessCategory ?? this.businessCategory,
-      businessSubCategory:
-          explicitlySetSubCategoryNull
-              ? null
-              : (businessSubCategory ?? this.businessSubCategory),
+      businessSubCategory: forceSubCategoryNull ? null : (businessSubCategory ?? this.businessSubCategory),
       businessContactEmail: businessContactEmail ?? this.businessContactEmail,
-      businessContactPhone:
-          businessContactPhone ?? this.businessContactPhone, // Included
-      website: website ?? this.website,
-      address: address ?? this.address,
-      location: explicitlySetLocationNull ? null : (location ?? this.location),
-      governorateId:
-          explicitlySetGovernorateIdNull
-              ? null
-              : (governorateId ?? this.governorateId), // ** NEW ** Included
+      businessContactPhone: businessContactPhone ?? this.businessContactPhone, website: website ?? this.website,
+      address: address ?? this.address, location: forceLocationNull ? null : (location ?? this.location),
+      governorateId: forceGovernorateIdNull ? null : (governorateId ?? this.governorateId),
       // Operations
-      openingHours:
-          explicitlySetOpeningHoursNull
-              ? null
-              : (openingHours ?? this.openingHours),
+      openingHours: forceOpeningHoursNull ? null : (openingHours ?? this.openingHours),
       amenities: amenities ?? this.amenities,
       // Pricing & Reservations
       pricingModel: pricingModel ?? this.pricingModel,
       subscriptionPlans: subscriptionPlans ?? this.subscriptionPlans,
       bookableServices: bookableServices ?? this.bookableServices,
       pricingInfo: pricingInfo ?? this.pricingInfo,
-      supportedReservationTypes:
-          supportedReservationTypes ??
-          this.supportedReservationTypes, // ** NEW ** Included
-      reservationTypeConfigs:
-          reservationTypeConfigs ??
-          this.reservationTypeConfigs, // ** NEW ** Included
-      maxGroupSize:
-          explicitlySetMaxGroupSizeNull
-              ? null
-              : (maxGroupSize ?? this.maxGroupSize), // ** NEW ** Included
-      accessOptions:
-          explicitlySetAccessOptionsNull
-              ? null
-              : (accessOptions ?? this.accessOptions), // ** NEW ** Included
-      seatMapUrl:
-          explicitlySetSeatMapUrlNull
-              ? null
-              : (seatMapUrl ?? this.seatMapUrl), // ** NEW ** Included
+      supportedReservationTypes: supportedReservationTypes ?? this.supportedReservationTypes,
+      reservationTypeConfigs: reservationTypeConfigs ?? this.reservationTypeConfigs,
+      maxGroupSize: forceMaxGroupSizeNull ? null : (maxGroupSize ?? this.maxGroupSize),
+      accessOptions: forceAccessOptionsNull ? null : (accessOptions ?? this.accessOptions),
+      seatMapUrl: forceSeatMapUrlNull ? null : (seatMapUrl ?? this.seatMapUrl),
       // Assets
-      logoUrl: explicitlySetLogoNull ? null : (logoUrl ?? this.logoUrl),
-      mainImageUrl:
-          explicitlySetMainImageNull
-              ? null
-              : (mainImageUrl ?? this.mainImageUrl),
+      logoUrl: forceLogoNull ? null : (logoUrl ?? this.logoUrl),
+      mainImageUrl: forceMainImageNull ? null : (mainImageUrl ?? this.mainImageUrl),
       galleryImageUrls: galleryImageUrls ?? this.galleryImageUrls,
       // Status & Metadata
-      isApproved: isApproved ?? this.isApproved,
-      isRegistrationComplete:
-          isRegistrationComplete ?? this.isRegistrationComplete,
-      isActive: isActive ?? this.isActive,
-      isFeatured: isFeatured ?? this.isFeatured,
+      isApproved: isApproved ?? this.isApproved, isRegistrationComplete: isRegistrationComplete ?? this.isRegistrationComplete,
+      isActive: isActive ?? this.isActive, isFeatured: isFeatured ?? this.isFeatured,
       createdAt: createdAt ?? this.createdAt,
-      updatedAt:
-          explicitlySetUpdatedAtNull
-              ? null
-              : (updatedAt ?? this.updatedAt), // Included
-      rating: rating ?? this.rating,
-      ratingCount: ratingCount ?? this.ratingCount,
-      staffUids: explicitlySetStaffNull ? null : (staffUids ?? this.staffUids),
+      updatedAt: forceUpdatedAtNull ? null : (updatedAt ?? this.updatedAt),
+      rating: rating ?? this.rating, ratingCount: ratingCount ?? this.ratingCount,
+      staffUids: forceStaffNull ? null : (staffUids ?? this.staffUids),
     );
   }
 
   // Equatable props
   @override
   List<Object?> get props => [
-    uid, ownerUid, email, name, dob, gender, personalPhoneNumber, idNumber,
-    idFrontImageUrl, idBackImageUrl, profilePictureUrl,
-    businessName, businessDescription, businessCategory, businessSubCategory,
-    businessContactEmail,
-    businessContactPhone,
-    website,
-    address,
-    location,
-    governorateId, // ** NEW ** Included
-    openingHours, amenities,
-    pricingModel, subscriptionPlans, bookableServices, pricingInfo,
-    supportedReservationTypes, reservationTypeConfigs, // ** NEW ** Included
-    maxGroupSize, accessOptions, seatMapUrl, // ** NEW ** Included
+    uid, ownerUid, email, name, dob, gender, personalPhoneNumber, idNumber, idFrontImageUrl, idBackImageUrl, profilePictureUrl,
+    businessName, businessDescription, businessCategory, businessSubCategory, businessContactEmail, businessContactPhone, website,
+    address, location, governorateId, openingHours, amenities,
+    pricingModel, subscriptionPlans, bookableServices, pricingInfo, supportedReservationTypes, reservationTypeConfigs,
+    maxGroupSize, accessOptions, seatMapUrl,
     logoUrl, mainImageUrl, galleryImageUrls,
-    isApproved, isRegistrationComplete, isActive, isFeatured,
-    createdAt, updatedAt, rating, ratingCount, staffUids,
+    isApproved, isRegistrationComplete, isActive, isFeatured, createdAt, updatedAt, rating, ratingCount, staffUids,
   ];
 
   // --- Validation Logic (Example - Updated) ---
   bool isPersonalDataValid() {
-    // Added checks for new required fields like idNumber
-    return name.isNotEmpty &&
-        email.isNotEmpty &&
-        emailValidate(email) && // Added email validation
-        personalPhoneNumber.isNotEmpty &&
-        idNumber.isNotEmpty && // Added check
-        idFrontImageUrl != null &&
-        idFrontImageUrl!.isNotEmpty &&
-        idBackImageUrl != null &&
-        idBackImageUrl!.isNotEmpty &&
-        // profilePictureUrl != null && profilePictureUrl!.isNotEmpty && // Profile pic might be optional
-        dob != null && // Added check
-        gender != null &&
-        gender!.isNotEmpty; // Added check
+    return name.isNotEmpty && email.isNotEmpty && emailValidate(email) && personalPhoneNumber.isNotEmpty &&
+           idNumber.isNotEmpty && idFrontImageUrl != null && idFrontImageUrl!.isNotEmpty &&
+           idBackImageUrl != null && idBackImageUrl!.isNotEmpty && dob != null && gender != null && gender!.isNotEmpty;
   }
 
   bool isBusinessDataValid() {
-    bool addressValid =
-        address['street'] != null &&
-        address['street']!.isNotEmpty &&
-        address['city'] != null &&
-        address['city']!.isNotEmpty &&
-        address['governorate'] != null &&
-        address['governorate']!.isNotEmpty;
-    // ** NEW ** Governorate ID should also be validated once required
+    bool addressValid = address['street'] != null && address['street']!.isNotEmpty &&
+                        address['city'] != null && address['city']!.isNotEmpty &&
+                        address['governorate'] != null && address['governorate']!.isNotEmpty;
     bool govIdValid = governorateId != null && governorateId!.isNotEmpty;
-    return businessName.isNotEmpty &&
-        businessDescription.isNotEmpty &&
-        businessCategory.isNotEmpty &&
-        businessContactEmail.isNotEmpty &&
-        emailValidate(businessContactEmail) && // Added email validation
-        businessContactPhone.isNotEmpty &&
-        addressValid &&
-        govIdValid && // ** NEW ** Check governorateId
-        location != null &&
-        openingHours != null &&
-        openingHours!.hours.isNotEmpty;
+    return businessName.isNotEmpty && businessDescription.isNotEmpty && businessCategory.isNotEmpty &&
+           businessContactEmail.isNotEmpty && emailValidate(businessContactEmail) && businessContactPhone.isNotEmpty &&
+           addressValid && govIdValid && location != null && openingHours != null && openingHours!.hours.isNotEmpty;
   }
 
   bool isPricingValid() {
-    // ** NEW ** Also validate supportedReservationTypes and reservationTypeConfigs if needed
-    bool typesValid =
-        supportedReservationTypes
-            .isNotEmpty; // Example: require at least one type
-    // Add validation for reservationTypeConfigs based on supported types if necessary
-    bool accessOptionsValid = true;
-    // Normalize type names for comparison
-    final normalizedSupportedTypes =
-        supportedReservationTypes
-            .map((t) => t.toLowerCase().replaceAll('-', ''))
-            .toSet();
-    if (normalizedSupportedTypes.contains(
-          ReservationType.accessBased.name.toLowerCase(),
-        ) &&
-        (accessOptions == null || accessOptions!.isEmpty)) {
-      accessOptionsValid =
-          false; // Require accessOptions if accessBased is supported
-    }
-    bool seatMapValid = true;
-    if (normalizedSupportedTypes.contains(
-          ReservationType.seatBased.name.toLowerCase(),
-        ) &&
-        (seatMapUrl == null || seatMapUrl!.isEmpty)) {
-      seatMapValid = false; // Require seatMapUrl if seatBased is supported
-    }
-
+    // Basic check: is the selected model generally validly configured?
     switch (pricingModel) {
-      case PricingModel.subscription:
-        return subscriptionPlans.isNotEmpty &&
-            typesValid &&
-            accessOptionsValid &&
-            seatMapValid;
-      case PricingModel.reservation:
-        return bookableServices.isNotEmpty &&
-            typesValid &&
-            accessOptionsValid &&
-            seatMapValid;
-      case PricingModel.hybrid:
-        return (subscriptionPlans.isNotEmpty || bookableServices.isNotEmpty) &&
-            typesValid &&
-            accessOptionsValid &&
-            seatMapValid;
-      case PricingModel.other:
-        return pricingInfo.isNotEmpty &&
-            typesValid &&
-            accessOptionsValid &&
-            seatMapValid;
+        case PricingModel.subscription:
+            return subscriptionPlans.isNotEmpty;
+        case PricingModel.reservation:
+            // Needs at least one supported type and its config
+            return supportedReservationTypes.isNotEmpty && _hasValidConfigForSupportedTypes();
+        case PricingModel.hybrid:
+             // Needs plans OR (supported types AND their config)
+            return subscriptionPlans.isNotEmpty || (supportedReservationTypes.isNotEmpty && _hasValidConfigForSupportedTypes());
+        case PricingModel.other:
+            return pricingInfo.isNotEmpty;
     }
   }
+  // Helper for isPricingValid
+  bool _hasValidConfigForSupportedTypes() {
+      if (supportedReservationTypes.isEmpty) return false; // No types selected is invalid config
+
+      bool hasAnyConfig = false;
+      // Check if *any* configuration exists that corresponds to a selected type
+      if (supportedReservationTypes.any((t) => [ReservationType.timeBased.name, ReservationType.recurring.name, ReservationType.group.name, ReservationType.seatBased.name, ReservationType.sequenceBased.name, ReservationType.serviceBased.name].contains(t)) && bookableServices.isNotEmpty) {
+          hasAnyConfig = true;
+      }
+      if (!hasAnyConfig && supportedReservationTypes.contains(ReservationType.accessBased.name) && (accessOptions?.isNotEmpty ?? false)) {
+          hasAnyConfig = true;
+      }
+      // Add other checks if needed
+
+      return hasAnyConfig;
+  }
+
 
   bool isAssetsValid() {
-    return logoUrl != null &&
-        logoUrl!.isNotEmpty &&
-        mainImageUrl != null &&
-        mainImageUrl!.isNotEmpty;
+    return logoUrl != null && logoUrl!.isNotEmpty && mainImageUrl != null && mainImageUrl!.isNotEmpty;
   }
 
-  // Determine the current step based on completed data (for resuming registration)
-  // ** UPDATED ** to include governorateId check in business data step
   int get currentProgressStep {
-    if (!isPersonalDataValid()) return 1; // Step 1: Personal ID
-    if (!isBusinessDataValid())
-      return 2; // Step 2: Business Details (includes govId now)
-    if (!isPricingValid())
-      return 3; // Step 3: Pricing (includes reservation types/options/seatmap)
-    if (!isAssetsValid()) return 4; // Step 4: Assets
-    return 4; // Default to last step if all seem valid
+    if (!isPersonalDataValid()) return 1;
+    if (!isBusinessDataValid()) return 2;
+    if (!isPricingValid()) return 3;
+    if (!isAssetsValid()) return 4;
+    return 4; // If all valid, stay on last step (assets) until completion
   }
 }

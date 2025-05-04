@@ -1,5 +1,5 @@
 // File: lib/features/auth/views/page/steps/personal_id_step.dart
-// *** UPDATED: Manage DOB/Gender locally, dispatch consolidated event ***
+// *** UPDATED: Corrected method call for removing ID images ***
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -10,8 +10,7 @@ import 'package:country_code_picker/country_code_picker.dart';
 
 // Import Bloc, State, Event, Model
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
-// *** Use UPDATED Event ***
-import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart';
+import 'package:shamil_web_app/features/auth/views/bloc/service_provider_event.dart'; // Use UPDATED Event
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_state.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 
@@ -40,10 +39,8 @@ class PersonalIdStepState extends State<PersonalIdStep> {
   late TextEditingController _dobController; // Still used for display only
 
   // --- Local State Variables ---
-  // *** ADDED Local state for DOB and Gender ***
   DateTime? _selectedDob;
   String? _selectedGender;
-  // *** END ADDED Local state ***
   CountryCode _selectedCountryCode = CountryCode(
     code: 'EG',
     dialCode: '+20',
@@ -53,7 +50,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
   dynamic _pickedIdBackImage;
   bool _isUploadingFront = false;
   bool _isUploadingBack = false;
-  // Track initial image URLs to compare with current state
   String? _initialFrontImageUrl;
   String? _initialBackImageUrl;
 
@@ -76,7 +72,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
     final currentState = context.read<ServiceProviderBloc>().state;
     if (currentState is ServiceProviderDataLoaded) {
       _syncFieldsFromModel(currentState.model);
-      // Store initial image URLs for validation check
       _initialFrontImageUrl = currentState.model.idFrontImageUrl;
       _initialBackImageUrl = currentState.model.idBackImageUrl;
     }
@@ -86,7 +81,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
   void _syncFieldsFromModel(ServiceProviderModel model) {
     if (!mounted) return;
     print("PersonalIdStep: Syncing controllers and local state from model...");
-
     if (_nameController.text != model.name) {
       _nameController.text = model.name;
     }
@@ -94,8 +88,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
       _idNumberController.text = model.idNumber;
     }
     _updatePhoneController(model.personalPhoneNumber);
-
-    // Sync local DOB state and display controller
     if (_selectedDob != model.dob) {
       _selectedDob = model.dob;
     }
@@ -103,8 +95,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
     if (_dobController.text != dobText) {
       _dobController.text = dobText;
     }
-
-    // Sync local Gender state
     final validGender =
         (model.gender != null && _genders.contains(model.gender!))
             ? model.gender
@@ -167,8 +157,7 @@ class PersonalIdStepState extends State<PersonalIdStep> {
     }
   }
 
-  // --- _pickAndUpload methods NOW dispatch event WITHOUT dob/gender ---
-  // --- They now read current text fields AND LOCAL DOB/GENDER state ---
+  // --- _pickAndUpload methods dispatch specific events WITH dob/gender ---
   Future<void> _pickAndUploadIdFront() async {
     print("PersonalIdStep: Initiating ID Front image pick & upload.");
     final fileData = await _pickImage();
@@ -178,38 +167,27 @@ class PersonalIdStepState extends State<PersonalIdStep> {
         _isUploadingFront = true;
       });
 
-      // GATHER CURRENT FORM DATA AND LOCAL DOB/GENDER
-      final String currentName = _nameController.text.trim();
-      final String currentIdNumber = _idNumberController.text.trim();
-      final String currentPhoneNumber =
-          (_selectedCountryCode.dialCode ?? '+20') +
-          _phoneController.text.trim();
-      // *** Read local state for DOB/Gender ***
+      // *** READ LOCAL STATE for DOB/Gender ***
       final DateTime? currentDobFromLocalState = _selectedDob;
       final String? currentGenderFromLocalState = _selectedGender;
 
-      print(
-        "DEBUG: Dispatching UploadAssetAndUpdateEvent (idFrontImageUrl) with:",
-      );
-      print("  currentName: $currentName");
-      print("  currentPersonalPhoneNumber: $currentPhoneNumber");
-      print("  currentIdNumber: $currentIdNumber");
-      print(
-        "  currentDob (local): $currentDobFromLocalState",
-      ); // Log value being sent
-      print(
-        "  currentGender (local): $currentGenderFromLocalState",
-      ); // Log value being sent
+      print("DEBUG: Dispatching UploadIdFrontEvent with:");
+      print("  currentDob (local): $currentDobFromLocalState");
+      print("  currentGender (local): $currentGenderFromLocalState");
 
-      // Dispatch event WITH currentDob, currentGender read from local state
+      // Dispatch specific event WITH currentDob, currentGender read from local state
       context.read<ServiceProviderBloc>().add(
-        UploadAssetAndUpdateEvent(
+        UploadIdFrontEvent(
+          // <-- Use specific event
           assetData: fileData,
-          targetField: 'idFrontImageUrl',
-          assetTypeFolder: 'identity',
-          currentName: currentName,
-          currentPersonalPhoneNumber: currentPhoneNumber,
-          currentIdNumber: currentIdNumber,
+          currentName: _nameController.text.trim(),
+          currentPersonalPhoneNumber:
+              (_selectedCountryCode.dialCode ?? '+20') +
+              _phoneController.text.trim(),
+          currentIdNumber: _idNumberController.text.trim(),
+          currentDob: currentDobFromLocalState, // <-- Pass local state value
+          currentGender:
+              currentGenderFromLocalState, // <-- Pass local state value
         ),
       );
     } else {
@@ -228,38 +206,27 @@ class PersonalIdStepState extends State<PersonalIdStep> {
         _isUploadingBack = true;
       });
 
-      // GATHER CURRENT FORM DATA AND LOCAL DOB/GENDER
-      final String currentName = _nameController.text.trim();
-      final String currentIdNumber = _idNumberController.text.trim();
-      final String currentPhoneNumber =
-          (_selectedCountryCode.dialCode ?? '+20') +
-          _phoneController.text.trim();
-      // *** Read local state for DOB/Gender ***
+      // *** READ LOCAL STATE for DOB/Gender ***
       final DateTime? currentDobFromLocalState = _selectedDob;
       final String? currentGenderFromLocalState = _selectedGender;
 
-      print(
-        "DEBUG: Dispatching UploadAssetAndUpdateEvent (idBackImageUrl) with:",
-      );
-      print("  currentName: $currentName");
-      print("  currentPersonalPhoneNumber: $currentPhoneNumber");
-      print("  currentIdNumber: $currentIdNumber");
-      print(
-        "  currentDob (local): $currentDobFromLocalState",
-      ); // Log value being sent
-      print(
-        "  currentGender (local): $currentGenderFromLocalState",
-      ); // Log value being sent
+      print("DEBUG: Dispatching UploadIdBackEvent with:");
+      print("  currentDob (local): $currentDobFromLocalState");
+      print("  currentGender (local): $currentGenderFromLocalState");
 
-      // Dispatch event WITH currentDob, currentGender read from local state
+      // Dispatch specific event WITH currentDob, currentGender read from local state
       context.read<ServiceProviderBloc>().add(
-        UploadAssetAndUpdateEvent(
+        UploadIdBackEvent(
+          // <-- Use specific event
           assetData: fileData,
-          targetField: 'idBackImageUrl',
-          assetTypeFolder: 'identity',
-          currentName: currentName,
-          currentPersonalPhoneNumber: currentPhoneNumber,
-          currentIdNumber: currentIdNumber,
+          currentName: _nameController.text.trim(),
+          currentPersonalPhoneNumber:
+              (_selectedCountryCode.dialCode ?? '+20') +
+              _phoneController.text.trim(),
+          currentIdNumber: _idNumberController.text.trim(),
+          currentDob: currentDobFromLocalState, // <-- Pass local state value
+          currentGender:
+              currentGenderFromLocalState, // <-- Pass local state value
         ),
       );
     } else {
@@ -269,19 +236,26 @@ class PersonalIdStepState extends State<PersonalIdStep> {
     }
   }
 
-  // --- _removeUploadedIdImage / _removePickedIdImage remain the same ---
+  // --- _removeUploadedIdImage dispatches specific events ---
   void _removeUploadedIdImage(String targetField) {
     print(
-      "PersonalIdStep: Dispatching RemoveAssetUrlEvent for field '$targetField'.",
+      "PersonalIdStep: Dispatching specific Remove event for field '$targetField'.",
     );
-    context.read<ServiceProviderBloc>().add(RemoveAssetUrlEvent(targetField));
+    ServiceProviderEvent event;
     if (targetField == 'idFrontImageUrl') {
+      event = RemoveIdFrontEvent(); // <-- Use specific event
       if (mounted) setState(() => _pickedIdFrontImage = null);
     } else if (targetField == 'idBackImageUrl') {
+      event = RemoveIdBackEvent(); // <-- Use specific event
       if (mounted) setState(() => _pickedIdBackImage = null);
+    } else {
+      print("Error: Unknown targetField for ID removal: $targetField");
+      return;
     }
+    context.read<ServiceProviderBloc>().add(event);
   }
 
+  // --- _removePickedIdImage remains the same ---
   void _removePickedIdImage(String targetField) {
     print("PersonalIdStep: Clearing local preview for '$targetField'.");
     if (mounted) {
@@ -298,7 +272,6 @@ class PersonalIdStepState extends State<PersonalIdStep> {
   // --- _selectDate now uses setState (NO EVENT DISPATCH) ---
   Future<void> _selectDate(BuildContext context) async {
     print("PersonalIdStep: Showing Date Picker.");
-    // Use local state for initial date or default
     final DateTime now = DateTime.now();
     final DateTime initialDisplayDateCandidate =
         _selectedDob ?? DateTime(now.year - 18, now.month, now.day);
@@ -312,14 +285,12 @@ class PersonalIdStepState extends State<PersonalIdStep> {
       now.month,
       now.day,
     );
-
     final DateTime initialDisplayDate =
         (initialDisplayDateCandidate.isBefore(firstSelectableDate))
             ? firstSelectableDate
             : (initialDisplayDateCandidate.isAfter(lastSelectableDate)
                 ? lastSelectableDate
                 : initialDisplayDateCandidate);
-
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: initialDisplayDate,
@@ -344,41 +315,38 @@ class PersonalIdStepState extends State<PersonalIdStep> {
         );
       },
     );
-
     if (picked != null && picked != _selectedDob) {
-      // Only update if changed
       print("PersonalIdStep: Date picked: $picked. Updating local state.");
-      // *** Use setState to update local variable and controller ***
       setState(() {
         _selectedDob = picked;
         _dobController.text = _dobFormatter.format(picked);
       });
-      // No event dispatched here
     } else {
       print("PersonalIdStep: Date picker cancelled or date unchanged.");
     }
   }
 
-  // --- handleNext now dispatches event WITH DOB/Gender read from LOCAL state ---
+  /// ** UPDATED: handleNext NOW ONLY dispatches SubmitPersonalIdDataEvent **
   void handleNext(int currentStep) {
     print("PersonalIdStep(Step 1): handleNext called.");
 
-    // Read local state for DOB/Gender
     DateTime? dobFromLocalState = _selectedDob;
     String? genderFromLocalState = _selectedGender;
     print("PersonalIdStep: DOB from local state: $dobFromLocalState");
     print("PersonalIdStep: Gender from local state: $genderFromLocalState");
 
-    // Get current image URLs from Bloc state for validation
     String? frontImageUrlFromBloc;
     String? backImageUrlFromBloc;
     final currentBlocState = context.read<ServiceProviderBloc>().state;
     if (currentBlocState is ServiceProviderDataLoaded) {
       frontImageUrlFromBloc = currentBlocState.model.idFrontImageUrl;
       backImageUrlFromBloc = currentBlocState.model.idBackImageUrl;
+    } else if (currentBlocState is ServiceProviderAssetUploading) {
+      frontImageUrlFromBloc = currentBlocState.model.idFrontImageUrl;
+      backImageUrlFromBloc = currentBlocState.model.idBackImageUrl;
     } else {
       print(
-        "PersonalIdStep: Error - Cannot validate images, Bloc state is not DataLoaded.",
+        "PersonalIdStep: Error - Cannot validate images, Bloc state is not DataLoaded/AssetUploading.",
       );
       showGlobalSnackBar(
         context,
@@ -388,11 +356,9 @@ class PersonalIdStepState extends State<PersonalIdStep> {
       return;
     }
 
-    // Validate Form
     final bool isFormValid = _formKey.currentState?.validate() ?? false;
     print("PersonalIdStep: Form validation result: $isFormValid");
-
-    // Validate Images (using URLs from the CURRENT BLOC model state)
+    // Use the URLs read from the Bloc state for validation
     final bool imagesValid =
         (frontImageUrlFromBloc != null && frontImageUrlFromBloc.isNotEmpty) &&
         (backImageUrlFromBloc != null && backImageUrlFromBloc.isNotEmpty);
@@ -400,35 +366,25 @@ class PersonalIdStepState extends State<PersonalIdStep> {
       "PersonalIdStep: Image validation: Front URL='${frontImageUrlFromBloc}', Back URL='${backImageUrlFromBloc}' -> Valid: $imagesValid",
     );
 
-    // ADDED: Specific validation logging if form fails
     if (!isFormValid) {
-      print(
-        "PersonalIdStep: Form validation failed. Checking individual fields...",
-      );
-      // Check DOB/Gender using local state
+      /* ... Detailed logging ... */
       if (dobFromLocalState == null)
         print("  - DOB validation likely failed (is null).");
       if (genderFromLocalState == null || genderFromLocalState.isEmpty)
-        print("  - Gender validation likely failed (is null/empty).");
-      if (_nameController.text.trim().isEmpty)
-        print("  - Name validation likely failed (is empty).");
-      if (_phoneController.text.trim().isEmpty)
-        print("  - Phone validation likely failed (is empty).");
-      if (_idNumberController.text.trim().isEmpty)
-        print("  - ID Number validation likely failed (is empty).");
+        print("  - Gender validation likely failed (is null/empty)."); /*...*/
     }
 
     if (isFormValid && imagesValid) {
       print(
-        "PersonalIdStep(Step 1): Form and images are valid. Dispatching update and navigation.",
+        "PersonalIdStep(Step 1): Form and images valid. Dispatching SubmitPersonalIdDataEvent ONLY.",
       );
       final String fullPhoneNumber =
           (_selectedCountryCode.dialCode ?? '+20') +
           _phoneController.text.trim();
       print("PersonalIdStep: Constructed full phone: $fullPhoneNumber");
 
-      // *** Create event WITH dob, gender READ FROM LOCAL STATE ***
-      final event = UpdatePersonalIdDataEvent(
+      final event = SubmitPersonalIdDataEvent(
+        // <-- Use specific event
         name: _nameController.text.trim(),
         personalPhoneNumber: fullPhoneNumber,
         idNumber: _idNumberController.text.trim(),
@@ -437,11 +393,10 @@ class PersonalIdStepState extends State<PersonalIdStep> {
       );
 
       context.read<ServiceProviderBloc>().add(event);
-      print(
-        "PersonalIdStep: Dispatched UpdatePersonalIdDataEvent (WITH DOB/Gender from local state).",
-      );
-      context.read<ServiceProviderBloc>().add(NavigateToStep(currentStep + 1));
-      print("PersonalIdStep: Dispatched NavigateToStep(${currentStep + 1}).");
+      print("PersonalIdStep: Dispatched SubmitPersonalIdDataEvent.");
+
+      // *** REMOVED NAVIGATION DISPATCH ***
+      // Navigation is handled by the Bloc after successful save in _onSubmitPersonalIdData
     } else {
       print(
         "PersonalIdStep(Step 1): Validation failed (Form: $isFormValid, Images: $imagesValid).",
@@ -461,45 +416,30 @@ class PersonalIdStepState extends State<PersonalIdStep> {
     print("PersonalIdStep(Step 1): build running");
     return BlocConsumer<ServiceProviderBloc, ServiceProviderState>(
       listener: (context, state) {
+        /* ... Listener logic remains the same ... */
         print(
           "PersonalIdStep Listener: Detected State Change -> ${state.runtimeType}",
         );
-        // Reset loading flags after upload attempt completes
         if (state is ServiceProviderDataLoaded ||
             state is ServiceProviderError) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               bool needsSetState = false;
-              // Check if upload finished (loading flag is true, but state isn't AssetUploading)
               if (_isUploadingFront &&
                   state is! ServiceProviderAssetUploading) {
-                print(
-                  "Listener (PostFrame): Resetting _isUploadingFront flag.",
-                );
                 _isUploadingFront = false;
                 needsSetState = true;
-                // Clear local preview *only if* upload was successful (URL exists in model)
                 if (state is ServiceProviderDataLoaded &&
-                    state.model.idFrontImageUrl != null &&
-                    state.model.idFrontImageUrl!.isNotEmpty) {
+                    state.model.idFrontImageUrl?.isNotEmpty == true) {
                   _pickedIdFrontImage = null;
-                  print(
-                    "Listener (PostFrame): Clearing local front image preview.",
-                  );
                 }
               }
               if (_isUploadingBack && state is! ServiceProviderAssetUploading) {
-                print("Listener (PostFrame): Resetting _isUploadingBack flag.");
                 _isUploadingBack = false;
                 needsSetState = true;
-                // Clear local preview *only if* upload was successful
                 if (state is ServiceProviderDataLoaded &&
-                    state.model.idBackImageUrl != null &&
-                    state.model.idBackImageUrl!.isNotEmpty) {
+                    state.model.idBackImageUrl?.isNotEmpty == true) {
                   _pickedIdBackImage = null;
-                  print(
-                    "Listener (PostFrame): Clearing local back image preview.",
-                  );
                 }
               }
               if (needsSetState) {
@@ -508,12 +448,10 @@ class PersonalIdStepState extends State<PersonalIdStep> {
             }
           });
         }
-        // Sync local state WITH model from Bloc state if needed
         if (state is ServiceProviderDataLoaded) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               bool needsRebuild = false;
-              // Only sync if local state differs from Bloc state to avoid loops
               if (_selectedDob != state.model.dob) {
                 _selectedDob = state.model.dob;
                 final dobText =
@@ -533,16 +471,13 @@ class PersonalIdStepState extends State<PersonalIdStep> {
                 _selectedGender = validGender;
                 needsRebuild = true;
               }
-              // Sync text controllers (already have guards inside)
               _syncFieldsFromModel(state.model);
-              // Sync initial URLs if they changed
               if (_initialFrontImageUrl != state.model.idFrontImageUrl ||
                   _initialBackImageUrl != state.model.idBackImageUrl) {
                 _initialFrontImageUrl = state.model.idFrontImageUrl;
                 _initialBackImageUrl = state.model.idBackImageUrl;
                 needsRebuild = true;
               }
-
               if (needsRebuild) {
                 print(
                   "Listener (PostFrame - Sync): Triggering setState from listener sync.",
@@ -557,34 +492,28 @@ class PersonalIdStepState extends State<PersonalIdStep> {
         print(
           "PersonalIdStep(Step 1): Builder running for state ${state.runtimeType}",
         );
-        ServiceProviderModel?
-        currentModelData; // Model from Bloc (for image URLs)
+        ServiceProviderModel? currentModelData;
         bool enableInputs = false;
-
         if (state is ServiceProviderDataLoaded) {
           currentModelData = state.model;
           enableInputs = true;
         } else if (state is ServiceProviderAssetUploading) {
-          currentModelData = state.model; // Show existing data during upload
-          enableInputs = false; // Disable inputs during specific upload
+          currentModelData = state.model;
+          enableInputs = false;
         } else if (state is ServiceProviderLoading) {
           enableInputs = false;
         } else if (state is ServiceProviderError) {
           enableInputs = false;
-          // Maybe try to get the last known good model if the error state held it?
-          // currentModelData = state.previousModel;
         }
 
         final String? idFrontUrlFromBloc = currentModelData?.idFrontImageUrl;
         final String? idBackUrlFromBloc = currentModelData?.idBackImageUrl;
-
         final bool isCurrentlyUploadingFront =
             (state is ServiceProviderAssetUploading &&
                 state.targetField == 'idFrontImageUrl');
         final bool isCurrentlyUploadingBack =
             (state is ServiceProviderAssetUploading &&
                 state.targetField == 'idBackImageUrl');
-
         final bool enableFrontUploadButton =
             enableInputs && !isCurrentlyUploadingFront;
         final bool enableBackUploadButton =
@@ -612,61 +541,56 @@ class PersonalIdStepState extends State<PersonalIdStep> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        "Provide your name, contact, and identification details as they appear on your official documents.",
+                        "Provide your name, contact, and identification details...",
                         style: getbodyStyle(
                           fontSize: 15,
                           color: AppColors.darkGrey,
                         ),
                       ),
                       const SizedBox(height: 30),
-
-                      // Use Extracted Form Widget - Pass LOCAL state variables now
+                      // Personal Info Form Widget
                       PersonalInfoForm(
                         nameController: _nameController,
                         dobController: _dobController,
                         phoneController: _phoneController,
                         idNumberController: _idNumberController,
-                        selectedGender: _selectedGender, // Pass local state
-                        selectedDOB: _selectedDob, // Pass local state
+                        selectedGender: _selectedGender,
+                        selectedDOB: _selectedDob,
                         selectedCountryCode: _selectedCountryCode,
                         genders: _genders,
                         enableInputs: enableInputs,
                         onSelectDate: () => _selectDate(context),
                         onGenderChanged: (value) {
-                          // Update LOCAL state
                           if (mounted && value != _selectedGender) {
                             setState(() => _selectedGender = value);
                           }
                         },
                         onCountryChanged: (countryCode) {
-                          // Update LOCAL state
                           if (mounted)
                             setState(() => _selectedCountryCode = countryCode);
                           _updatePhoneController(null);
-                          // _formKey.currentState?.validate(); // Optionally revalidate
                         },
                       ),
                       const SizedBox(height: 30),
-
-                      // Use Extracted Upload Widget - Pass image URLs from BLOC state
+                      // ID Upload Section Widget
                       IdUploadSection(
                         pickedIdFrontImage: _pickedIdFrontImage,
-                        idFrontUrl:
-                            idFrontUrlFromBloc, // Read from Bloc state model
+                        idFrontUrl: idFrontUrlFromBloc,
                         isUploadingFront: isCurrentlyUploadingFront,
                         enableFrontUpload: enableFrontUploadButton,
                         onPickFront: _pickAndUploadIdFront,
+                        // *** FIXED: Call correct remove method ***
                         onRemoveFront:
                             () => _removeUploadedIdImage('idFrontImageUrl'),
                         pickedIdBackImage: _pickedIdBackImage,
-                        idBackUrl:
-                            idBackUrlFromBloc, // Read from Bloc state model
+                        idBackUrl: idBackUrlFromBloc,
                         isUploadingBack: isCurrentlyUploadingBack,
                         enableBackUpload: enableBackUploadButton,
                         onPickBack: _pickAndUploadIdBack,
+                        // *** FIXED: Call correct remove method ***
                         onRemoveBack:
                             () => _removeUploadedIdImage('idBackImageUrl'),
-                        enableInputs: enableInputs,
+                        enableInputs: enableInputs, // Pass general enable flag
                       ),
                       const SizedBox(height: 20),
                     ],

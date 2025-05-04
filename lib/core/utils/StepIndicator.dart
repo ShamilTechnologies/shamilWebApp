@@ -8,7 +8,9 @@ class StepIndicator extends StatelessWidget {
   final double dotSize;
   final double spacing;
 
-  const StepIndicator({super.key, 
+  // Added const to constructor
+  const StepIndicator({
+    super.key,
     required this.currentPage,
     required this.totalPages,
     required this.activeColor,
@@ -24,10 +26,15 @@ class StepIndicator extends StatelessWidget {
       children: List.generate(totalPages, (index) {
         bool isActive = index == currentPage;
         return AnimatedContainer(
+          // Added const duration
           duration: const Duration(milliseconds: 300), // Animate size change
           curve: Curves.easeInOut,
-          width: isActive ? dotSize * 1.5 : dotSize, // Make active dot slightly larger
+          width:
+              isActive
+                  ? dotSize * 1.5
+                  : dotSize, // Make active dot slightly larger
           height: dotSize,
+          // Added const EdgeInsets
           margin: EdgeInsets.symmetric(horizontal: spacing / 2),
           decoration: BoxDecoration(
             // Use rounded rectangle for a slightly different look

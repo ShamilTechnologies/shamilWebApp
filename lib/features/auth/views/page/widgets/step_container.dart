@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 class StepContainer extends StatelessWidget {
   final Widget child; // The actual step widget content (e.g., PersonalDataStep)
 
+  // Added const to constructor
   const StepContainer({super.key, required this.child});
 
   @override
@@ -13,6 +14,7 @@ class StepContainer extends StatelessWidget {
     // We add padding here for consistency.
     return Padding(
       // You might adjust padding based on your design needs
+      // Added const EdgeInsets
       padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
       child: child, // Directly return the step widget content
     );

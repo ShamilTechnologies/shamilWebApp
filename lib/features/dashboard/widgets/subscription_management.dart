@@ -1,19 +1,19 @@
 /// File: lib/features/dashboard/widgets/subscription_management.dart
 /// --- Section for displaying recent subscriptions ---
+/// --- UPDATED: Limit displayed items to 2 to prevent overflow ---
 library;
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // For date formatting
+import 'package:intl/intl.dart'; // For date and currency formatting
 
 // Import Models and Utils needed
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 // Import common helper widgets/functions
-import '../helper/dashboard_widgets.dart'; // For ListTableSection, buildStatusChip
+import '../helper/dashboard_widgets.dart'; // Import the corrected helpers
 
 class SubscriptionManagementSection extends StatelessWidget {
-  // Use the correct model name from dashboard_models.dart (response #82)
   final List<Subscription> subscriptions;
   const SubscriptionManagementSection({super.key, required this.subscriptions});
 
@@ -21,8 +21,8 @@ class SubscriptionManagementSection extends StatelessWidget {
   void _showSubscriptionDetailsDialog(BuildContext context, Subscription sub) {
     final DateFormat dateFormat = DateFormat('d MMM, yyyy'); // Format for dates
     final currencyFormat = NumberFormat.currency(
-      locale: 'en_EG',
-      symbol: 'EGP ',
+      locale: 'en_EG', // Use appropriate locale
+      symbol: 'EGP ', // Use appropriate currency symbol
       decimalDigits: 2,
     );
 
@@ -38,10 +38,7 @@ class SubscriptionManagementSection extends StatelessWidget {
                   _buildDetailRow("User ID:", sub.userId),
                   _buildDetailRow("User Name:", sub.userName),
                   _buildDetailRow("Plan Name:", sub.planName),
-                  _buildDetailRow(
-                    "Status:",
-                    sub.status,
-                  ), // Consider using buildStatusChip here if desired
+                  _buildDetailRow("Status:", sub.status),
                   _buildDetailRow(
                     "Start Date:",
                     dateFormat.format(sub.startDate.toDate()),
@@ -69,25 +66,15 @@ class SubscriptionManagementSection extends StatelessWidget {
             actions: <Widget>[
               TextButton(
                 child: const Text('Close'),
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                },
+                onPressed: () => Navigator.of(dialogContext).pop(),
               ),
               // Optional: Add more actions like "Cancel Subscription" etc.
-              // TextButton(
-              //   child: const Text('Cancel Subscription', style: TextStyle(color: AppColors.redColor)),
-              //   onPressed: () {
-              //     // TODO: Implement cancellation logic (e.g., dispatch event to Bloc)
-              //     Navigator.of(dialogContext).pop();
-              //     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cancel action not implemented.")));
-              //   },
-              // ),
             ],
           ),
     );
   }
 
-  // Helper for dialog rows (copied from AccessLogSection for consistency)
+  // Helper for dialog rows
   Widget _buildDetailRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
@@ -104,121 +91,144 @@ class SubscriptionManagementSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Display up to 5 recent subscriptions on the dashboard
-    final displayedSubscriptions = subscriptions.take(5).toList();
+    // *** Limit items shown on dashboard to 2 ***
+    final displayedSubscriptions = subscriptions.take(2).toList();
 
-    return ListTableSection(
-      title: "Recent Subscriptions",
-      items:
-          displayedSubscriptions
-              .map((sub) => {'data': sub})
-              .toList(), // Pass original model
-      onViewAllPressed: () {
-        // TODO: Implement navigation to a screen showing all subscriptions
-        print("View All Subscriptions button tapped");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Navigate to All Subscriptions not implemented."),
-          ),
-        );
-      },
-      rowBuilder: (item, index, isLast) {
-        // Builder function for each row
-        final Subscription sub = item['data'];
-        // Use expiryDate field from the Subscription model and format it safely
-        final formattedEndDate =
-            sub.expiryDate != null
-                ? DateFormat('d MMM, yyyy').format(
-                  sub.expiryDate!.toDate(),
-                ) // Ensure .toDate() is called
-                : 'N/A';
-        return InkWell(
-          // *** UPDATED onTap ***
-          onTap:
-              () => _showSubscriptionDetailsDialog(
-                context,
-                sub,
-              ), // Call helper to show dialog
-          borderRadius: BorderRadius.circular(8.0),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              vertical: 14.0,
-              horizontal: 0,
-            ), // No horizontal needed from ListTableSection
-            decoration: BoxDecoration(
-              border:
-                  !isLast
-                      ? Border(
-                        bottom: BorderSide(
-                          color: AppColors.lightGrey.withOpacity(0.7),
-                          width: 1.0,
+    // Uses the SectionContainer class wrapper which handles context correctly
+    return SectionContainer(
+      // No title needed here, ListHeader handles it
+      padding: const EdgeInsets.all(0), // Let content manage padding
+      child: Column(
+        // Column to stack header and list
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Use ListHeaderWithViewAll for the title and "View All"
+          ListHeaderWithViewAll(
+            title: "Recent Subscriptions",
+            // Show total count only if there are more items than displayed
+            totalItemCount:
+                subscriptions.length > displayedSubscriptions.length
+                    ? subscriptions.length
+                    : null,
+            onViewAllPressed:
+                subscriptions.length > displayedSubscriptions.length
+                    ? () {
+                      print("View All Subscriptions button tapped");
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Navigate to All Subscriptions not implemented.",
+                          ),
                         ),
-                      )
-                      : null,
+                      );
+                    }
+                    : null,
+            padding: const EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: 8, // Added top padding
             ),
-            child: Row(
-              children: [
-                // Avatar
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppColors.accentColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8.0),
+          ),
+          // Conditionally display list or empty state
+          if (displayedSubscriptions.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20.0,
+                vertical: 8.0,
+              ),
+              child: buildEmptyState("No recent subscriptions."),
+            )
+          else
+            // Use ListView.separated for the limited list
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: displayedSubscriptions.length,
+              separatorBuilder:
+                  (_, __) => const Divider(
+                    height: 1,
+                    thickness: 0.5,
+                    indent: 20,
+                    endIndent: 20,
                   ),
-                  child: Center(
+              itemBuilder: (context, index) {
+                final sub = displayedSubscriptions[index];
+                final formattedEndDate =
+                    sub.expiryDate != null
+                        ? DateFormat('d MMM, yy').format(
+                          sub.expiryDate!.toDate(),
+                        ) // Short format for list
+                        : 'N/A';
+
+                // Use the enhanced DashboardListTile
+                return DashboardListTile(
+                  key: ValueKey(sub.id),
+                  // isLast is not needed with separatorBuilder
+                  onTap: () => _showSubscriptionDetailsDialog(context, sub),
+                  leading: CircleAvatar(
+                    radius: 18, // Slightly smaller avatar
+                    backgroundColor: AppColors.primaryColor.withOpacity(0.1),
                     child: Text(
                       sub.userName.isNotEmpty
                           ? sub.userName[0].toUpperCase()
                           : "?",
                       style: getTitleStyle(
                         color: AppColors.primaryColor,
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                // User & Plan (Expanded)
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        sub.userName,
-                        style: getbodyStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "Plan: ${sub.planName}",
-                        style: getSmallStyle(color: AppColors.secondaryColor),
-                      ),
-                    ],
+                  title: Text(
+                    sub.userName,
+                    style: getbodyStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                const SizedBox(width: 16),
-                // Status (Fixed width or Expanded)
-                Expanded(
-                  flex: 2,
-                  child: buildStatusChip(sub.status),
-                ), // Use public helper
-                const SizedBox(width: 16),
-                // End Date (Fixed width or Expanded)
-                Expanded(
-                  flex: 2,
-                  child: Text(
-                    sub.expiryDate != null ? formattedEndDate : "N/A",
-                    style: getSmallStyle(color: AppColors.mediumGrey),
-                    textAlign: TextAlign.end,
+                  subtitle: Text(
+                    "Plan: ${sub.planName}",
+                    style: getSmallStyle(
+                      color: AppColors.secondaryColor,
+                      fontSize: 11,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-              ],
+                  trailing: SizedBox(
+                    width: 160, // Adjust trailing width as needed
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: buildStatusChip(sub.status),
+                        ), // Status chip
+                        const SizedBox(width: 12),
+                        Expanded(
+                          // Ensure date fits
+                          child: Text(
+                            formattedEndDate,
+                            style: getSmallStyle(
+                              color: AppColors.mediumGrey,
+                              fontSize: 11,
+                            ),
+                            textAlign: TextAlign.end,
+                            overflow: TextOverflow.ellipsis,
+                          ), // Handle potential overflow
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
-        );
-      },
+          const SizedBox(height: 12), // Bottom padding inside card
+        ],
+      ),
     );
   }
 }

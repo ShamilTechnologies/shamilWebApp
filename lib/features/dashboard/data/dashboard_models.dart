@@ -1,33 +1,29 @@
 /// File: lib/features/dashboard/data/dashboard_models.dart
 /// --- UPDATED: Reservation model with governorateId, type, groupSize, etc. ---
-/// --- NOTE: Subscription model here might be redundant if used from service_provider_model.dart ---
+/// --- UPDATED: Added queuePosition, estimatedEntryTime to Reservation ---
 library;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
-// *** UPDATED: Import ReservationType enum and helper function ***
-import 'package:shamil_web_app/features/auth/data/service_provider_model.dart' show ReservationType, reservationTypeFromString;
+import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'
+    show ReservationType, reservationTypeFromString;
 
 //----------------------------------------------------------------------------//
 // Dashboard Data Models                                                      //
-// Based on user-provided structure.                                          //
 //----------------------------------------------------------------------------//
 
-/// Represents a user's subscription to a service provider's plan.
-/// !!! CONSIDER REMOVING: Duplicates definition in service_provider_model.dart !!!
-/// If kept, ensure fields are synchronized.
-
+// --- Subscription Model (Keep as is or remove if using one from auth/data) ---
 class Subscription extends Equatable {
-  final String id; // Firestore document ID
-  final String userId; // ID of the subscribing user
-  final String providerId; // ID of the service provider
-  final String userName; // Denormalized user name
-  final String planName; // Name of the subscription plan
-  final String status; // e.g., 'Active', 'Cancelled', 'Expired'
-  final Timestamp startDate; // When the subscription period started
-  final Timestamp? expiryDate; // When the current subscription period ends
-  final String? paymentMethodInfo; // Optional: e.g., "Visa **** 1234"
-  final double? pricePaid; // Optional: Price paid for this period
+  final String id;
+  final String userId;
+  final String providerId;
+  final String userName;
+  final String planName;
+  final String status;
+  final Timestamp startDate;
+  final Timestamp? expiryDate;
+  final String? paymentMethodInfo;
+  final double? pricePaid;
 
   const Subscription({
     required this.id,
@@ -43,6 +39,7 @@ class Subscription extends Equatable {
   });
 
   factory Subscription.fromMap(String id, Map<String, dynamic> data) {
+    /* ... as before ... */
     return Subscription(
       id: id,
       userId: data['userId'] as String? ?? '',
@@ -51,18 +48,19 @@ class Subscription extends Equatable {
       planName: data['planName'] as String? ?? 'Unknown Plan',
       status: data['status'] as String? ?? 'Unknown',
       startDate: data['startDate'] as Timestamp? ?? Timestamp.now(),
-      expiryDate: data['expiryDate'] as Timestamp? ?? data['endDate'] as Timestamp?,
+      expiryDate:
+          data['expiryDate'] as Timestamp? ?? data['endDate'] as Timestamp?,
       paymentMethodInfo: data['paymentMethodInfo'] as String?,
       pricePaid: (data['pricePaid'] as num?)?.toDouble(),
     );
   }
-
   factory Subscription.fromSnapshot(DocumentSnapshot doc) {
+    /* ... as before ... */
     final data = doc.data() as Map<String, dynamic>? ?? {};
     return Subscription.fromMap(doc.id, data);
   }
-
   Map<String, dynamic> toMap() {
+    /* ... as before ... */
     return {
       'userId': userId,
       'providerId': providerId,
@@ -77,6 +75,7 @@ class Subscription extends Equatable {
   }
 
   Subscription copyWith({
+    /* ... as before ... */
     String? id,
     String? userId,
     String? providerId,
@@ -104,56 +103,62 @@ class Subscription extends Equatable {
 
   @override
   List<Object?> get props => [
-    id, userId, providerId, userName, planName, status, startDate, expiryDate, paymentMethodInfo, pricePaid,
+    /* ... as before ... */
+    id,
+    userId,
+    providerId,
+    userName,
+    planName,
+    status,
+    startDate,
+    expiryDate,
+    paymentMethodInfo,
+    pricePaid,
   ];
 }
 
-// --- Reservation Model (UPDATED) ---
+// --- Reservation Model (UPDATED with sequence fields) ---
 class Reservation extends Equatable {
-  final String id; // Firestore document ID (within partitioned structure)
+  final String id;
   final String userId;
   final String providerId;
-  final String governorateId; // ** NEW & REQUIRED ** For partitioning
+  final String governorateId;
   final String userName;
-  final Timestamp dateTime; // Start time for time-based, or booking time for others
-  final String status; // e.g., Confirmed, Pending, Cancelled, Completed, NoShow
-  final String? serviceName; // Optional service name if applicable
-  final int? durationMinutes; // Duration for time-based or access-based
+  final Timestamp dateTime;
+  final String status;
+  final String? serviceName;
+  final int? durationMinutes;
   final String? notes;
-  // ** NEW Fields **
-  final ReservationType type; // Enum indicating the reservation type
-  final bool isRecurring; // Flag for recurring reservations
-  final int groupSize; // Number of attendees (default 1)
-  // ** NEW Type-Specific Data (Map for flexibility) **
+  final ReservationType type;
+  final bool isRecurring;
+  final int groupSize;
   final Map<String, dynamic> typeSpecificData;
-  /* Example typeSpecificData structure:
-  {
-    "seatInfo": { "section": "A", "row": 5, "seat": 12 }, // for seatBased
-    "recurringRule": { "frequency": "weekly", "dayOfWeek": "Monday", "endDate": "..." }, // for recurring
-    "accessPassId": "full_day", // for accessBased (referencing option in ServiceProviderModel)
-    // Add other type-specific fields as needed
-  }
-  */
+  final int? queuePosition; // <-- NEW: Optional position in sequence
+  final Timestamp? estimatedEntryTime; // <-- NEW: Optional estimated time
 
-  // Calculated properties
   DateTime get startTime => dateTime.toDate();
-  DateTime? get endTime => durationMinutes != null ? startTime.add(Duration(minutes: durationMinutes!)) : null;
+  DateTime? get endTime =>
+      durationMinutes != null
+          ? startTime.add(Duration(minutes: durationMinutes!))
+          : null;
 
   const Reservation({
     required this.id,
     required this.userId,
     required this.providerId,
-    required this.governorateId, // ** NEW ** Required
+    required this.governorateId,
     required this.userName,
     required this.dateTime,
     required this.status,
     this.serviceName,
     this.durationMinutes,
     this.notes,
-    required this.type,       // ** NEW ** Required
-    this.isRecurring = false, // ** NEW ** Default false
-    this.groupSize = 1,       // ** NEW ** Default 1
-    this.typeSpecificData = const {}, // ** NEW ** Default empty
+    required this.type,
+    this.isRecurring = false,
+    this.groupSize = 1,
+    this.typeSpecificData = const {},
+    this.queuePosition, // <-- NEW
+    this.estimatedEntryTime, // <-- NEW
   });
 
   factory Reservation.fromMap(String id, Map<String, dynamic> data) {
@@ -161,7 +166,6 @@ class Reservation extends Equatable {
       id: id,
       userId: data['userId'] as String? ?? '',
       providerId: data['providerId'] as String? ?? '',
-      // ** NEW ** Parse governorateId (should not be null in new data)
       governorateId: data['governorateId'] as String? ?? '',
       userName: data['userName'] as String? ?? 'Unknown User',
       dateTime: data['dateTime'] as Timestamp? ?? Timestamp.now(),
@@ -169,14 +173,14 @@ class Reservation extends Equatable {
       serviceName: data['serviceName'] as String?,
       durationMinutes: data['durationMinutes'] as int?,
       notes: data['notes'] as String?,
-      // ** NEW ** Parse type using helper function
       type: reservationTypeFromString(data['type'] as String?),
-      // ** NEW ** Parse isRecurring
       isRecurring: data['isRecurring'] as bool? ?? false,
-      // ** NEW ** Parse groupSize
       groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
-      // ** NEW ** Parse typeSpecificData
-      typeSpecificData: Map<String, dynamic>.from(data['typeSpecificData'] as Map? ?? {}),
+      typeSpecificData: Map<String, dynamic>.from(
+        data['typeSpecificData'] as Map? ?? {},
+      ),
+      queuePosition: data['queuePosition'] as int?, // <-- NEW
+      estimatedEntryTime: data['estimatedEntryTime'] as Timestamp?, // <-- NEW
     );
   }
 
@@ -189,19 +193,19 @@ class Reservation extends Equatable {
     return {
       'userId': userId,
       'providerId': providerId,
-      'governorateId': governorateId, // ** NEW ** Include in map
+      'governorateId': governorateId,
       'userName': userName,
-      'dateTime': dateTime,
-      'status': status,
+      'dateTime': dateTime, 'status': status,
       if (serviceName != null) 'serviceName': serviceName,
       if (durationMinutes != null) 'durationMinutes': durationMinutes,
       if (notes != null) 'notes': notes,
-      // ** NEW ** Store enum name as string
       'type': type.name,
-      // ** NEW ** Include other new fields
       'isRecurring': isRecurring,
       'groupSize': groupSize,
       'typeSpecificData': typeSpecificData,
+      if (queuePosition != null) 'queuePosition': queuePosition, // <-- NEW
+      if (estimatedEntryTime != null)
+        'estimatedEntryTime': estimatedEntryTime, // <-- NEW
     };
   }
 
@@ -209,63 +213,91 @@ class Reservation extends Equatable {
     String? id,
     String? userId,
     String? providerId,
-    String? governorateId, // ** NEW **
+    String? governorateId,
     String? userName,
     Timestamp? dateTime,
     String? status,
     String? serviceName,
     int? durationMinutes,
     String? notes,
-    ReservationType? type, // ** NEW **
-    bool? isRecurring, // ** NEW **
-    int? groupSize, // ** NEW **
-    Map<String, dynamic>? typeSpecificData, // ** NEW **
+    ReservationType? type,
+    bool? isRecurring,
+    int? groupSize,
+    Map<String, dynamic>? typeSpecificData,
+    int? queuePosition, // <-- NEW
+    Timestamp? estimatedEntryTime, // <-- NEW
   }) {
-    // Handle explicit null assignment for nullable fields if necessary
-    bool explicitlySetServiceNameNull = serviceName == null && this.serviceName != null;
-    bool explicitlySetDurationNull = durationMinutes == null && this.durationMinutes != null;
+    bool explicitlySetServiceNameNull =
+        serviceName == null && this.serviceName != null;
+    bool explicitlySetDurationNull =
+        durationMinutes == null && this.durationMinutes != null;
     bool explicitlySetNotesNull = notes == null && this.notes != null;
+    bool explicitlySetQueuePositionNull =
+        queuePosition == null && this.queuePosition != null; // <-- NEW
+    bool explicitlySetEstimatedTimeNull =
+        estimatedEntryTime == null &&
+        this.estimatedEntryTime != null; // <-- NEW
 
     return Reservation(
       id: id ?? this.id,
       userId: userId ?? this.userId,
       providerId: providerId ?? this.providerId,
-      governorateId: governorateId ?? this.governorateId, // ** NEW **
+      governorateId: governorateId ?? this.governorateId,
       userName: userName ?? this.userName,
       dateTime: dateTime ?? this.dateTime,
       status: status ?? this.status,
-      serviceName: explicitlySetServiceNameNull ? null : (serviceName ?? this.serviceName),
-      durationMinutes: explicitlySetDurationNull ? null : (durationMinutes ?? this.durationMinutes),
+      serviceName:
+          explicitlySetServiceNameNull
+              ? null
+              : (serviceName ?? this.serviceName),
+      durationMinutes:
+          explicitlySetDurationNull
+              ? null
+              : (durationMinutes ?? this.durationMinutes),
       notes: explicitlySetNotesNull ? null : (notes ?? this.notes),
-      type: type ?? this.type, // ** NEW **
-      isRecurring: isRecurring ?? this.isRecurring, // ** NEW **
-      groupSize: groupSize ?? this.groupSize, // ** NEW **
-      typeSpecificData: typeSpecificData ?? this.typeSpecificData, // ** NEW **
+      type: type ?? this.type,
+      isRecurring: isRecurring ?? this.isRecurring,
+      groupSize: groupSize ?? this.groupSize,
+      typeSpecificData: typeSpecificData ?? this.typeSpecificData,
+      queuePosition:
+          explicitlySetQueuePositionNull
+              ? null
+              : (queuePosition ?? this.queuePosition), // <-- NEW
+      estimatedEntryTime:
+          explicitlySetEstimatedTimeNull
+              ? null
+              : (estimatedEntryTime ?? this.estimatedEntryTime), // <-- NEW
     );
   }
 
   @override
   List<Object?> get props => [
-    id, userId, providerId, governorateId, userName, dateTime, status, serviceName,
-    durationMinutes, notes, type, isRecurring, groupSize, typeSpecificData, // ** NEW ** Added new fields
+    /* ... existing props ... */
+    id,
+    userId,
+    providerId,
+    governorateId,
+    userName,
+    dateTime,
+    status,
+    serviceName,
+    durationMinutes, notes, type, isRecurring, groupSize, typeSpecificData,
+    queuePosition, estimatedEntryTime, // <-- NEW
   ];
 }
 
-
-// --- AccessLog Model ---
-/// Represents an entry in the access control log (e.g., QR or NFC scan).
+// --- AccessLog Model (Keep as is) ---
 class AccessLog extends Equatable {
-  String? id; // Firestore document ID (set after creation or when reading)
+  String? id;
   final String providerId;
   final String userId;
-  final String userName; // Denormalized
-  final Timestamp timestamp; // Time of the access attempt
-  final String status; // e.g., 'Granted', 'Denied_SubscriptionExpired', etc.
-  final String? method; // Optional: e.g., 'QR', 'NFC', 'Manual'
-  final String? denialReason; // Optional
-
+  final String userName;
+  final Timestamp timestamp;
+  final String status;
+  final String? method;
+  final String? denialReason;
   AccessLog({
-    this.id, // Nullable in constructor
+    this.id,
     required this.providerId,
     required this.userId,
     required this.userName,
@@ -274,26 +306,29 @@ class AccessLog extends Equatable {
     this.method,
     this.denialReason,
   });
-
   factory AccessLog.fromMap(String id, Map<String, dynamic> data) {
+    /* ... as before ... */
     return AccessLog(
       id: id,
       providerId: data['providerId'] as String? ?? '',
       userId: data['userId'] as String? ?? 'Unknown',
       userName: data['userName'] as String? ?? 'Unknown User',
-      timestamp: data['timestamp'] as Timestamp? ?? data['dateTime'] as Timestamp? ?? Timestamp.now(),
+      timestamp:
+          data['timestamp'] as Timestamp? ??
+          data['dateTime'] as Timestamp? ??
+          Timestamp.now(),
       status: data['status'] as String? ?? 'Unknown',
       method: data['method'] as String?,
       denialReason: data['denialReason'] as String?,
     );
   }
-
   factory AccessLog.fromSnapshot(DocumentSnapshot doc) {
+    /* ... as before ... */
     final data = doc.data() as Map<String, dynamic>? ?? {};
     return AccessLog.fromMap(doc.id, data);
   }
-
   Map<String, dynamic> toMap() {
+    /* ... as before ... */
     return {
       'providerId': providerId,
       'userId': userId,
@@ -306,6 +341,7 @@ class AccessLog extends Equatable {
   }
 
   AccessLog copyWith({
+    /* ... as before ... */
     String? id,
     String? providerId,
     String? userId,
@@ -329,11 +365,19 @@ class AccessLog extends Equatable {
 
   @override
   List<Object?> get props => [
-    id, providerId, userId, userName, timestamp, status, method, denialReason,
+    /* ... as before ... */
+    id,
+    providerId,
+    userId,
+    userName,
+    timestamp,
+    status,
+    method,
+    denialReason,
   ];
 }
 
-// --- DashboardStats Model ---
+// --- DashboardStats Model (Keep as is) ---
 class DashboardStats extends Equatable {
   final int activeSubscriptions;
   final int upcomingReservations;
@@ -341,7 +385,6 @@ class DashboardStats extends Equatable {
   final int newMembersMonth;
   final int checkInsToday;
   final int totalBookingsMonth;
-
   const DashboardStats({
     required this.activeSubscriptions,
     required this.upcomingReservations,
@@ -350,7 +393,6 @@ class DashboardStats extends Equatable {
     required this.checkInsToday,
     required this.totalBookingsMonth,
   });
-
   const DashboardStats.empty()
     : this(
         activeSubscriptions: 0,
@@ -360,19 +402,22 @@ class DashboardStats extends Equatable {
         checkInsToday: 0,
         totalBookingsMonth: 0,
       );
-
   factory DashboardStats.fromMap(Map<String, dynamic> map) {
+    /* ... as before ... */
     return DashboardStats(
       activeSubscriptions: (map['activeSubscriptions'] as num?)?.toInt() ?? 0,
       upcomingReservations: (map['upcomingReservations'] as num?)?.toInt() ?? 0,
-      totalRevenue: (map['totalRevenueMonth'] as num?)?.toDouble() ?? (map['totalRevenue'] as num?)?.toDouble() ?? 0.0,
+      totalRevenue:
+          (map['totalRevenueMonth'] as num?)?.toDouble() ??
+          (map['totalRevenue'] as num?)?.toDouble() ??
+          0.0,
       newMembersMonth: (map['newMembersMonth'] as num?)?.toInt() ?? 0,
       checkInsToday: (map['checkInsToday'] as num?)?.toInt() ?? 0,
       totalBookingsMonth: (map['totalBookingsMonth'] as num?)?.toInt() ?? 0,
     );
   }
-
   DashboardStats copyWith({
+    /* ... as before ... */
     int? activeSubscriptions,
     int? upcomingReservations,
     double? totalRevenue,
@@ -392,6 +437,12 @@ class DashboardStats extends Equatable {
 
   @override
   List<Object?> get props => [
-    activeSubscriptions, upcomingReservations, totalRevenue, newMembersMonth, checkInsToday, totalBookingsMonth,
+    /* ... as before ... */
+    activeSubscriptions,
+    upcomingReservations,
+    totalRevenue,
+    newMembersMonth,
+    checkInsToday,
+    totalBookingsMonth,
   ];
 }

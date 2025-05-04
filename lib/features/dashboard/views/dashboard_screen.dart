@@ -1,6 +1,11 @@
+/// File: lib/features/dashboard/views/dashboard_screen.dart
+/// --- UPDATED: Adjusted childAspectRatio in grid layout to prevent overflow ---
+library;
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart'; // Required for addPostFrameCallback
 import 'package:flutter_bloc/flutter_bloc.dart';
 // Needed for formatting in this file now
 import 'package:shamil_web_app/core/constants/assets_icons.dart';
@@ -15,6 +20,7 @@ import 'package:shamil_web_app/features/access_control/service/nfc_reader_servic
 // Import Auth/Provider Model
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart'; // Ensure this is imported
 import 'package:shamil_web_app/features/dashboard/helper/app_sidebar.dart';
 import 'package:shamil_web_app/features/dashboard/views/pages/access_control_screen.dart';
 import 'package:shamil_web_app/features/dashboard/views/pages/analytics_screen.dart';
@@ -31,11 +37,9 @@ import 'package:shamil_web_app/features/dashboard/widgets/subscription_managemen
 
 //----------------------------------------------------------------------------//
 // Dashboard Screen Widget (Stateful with Sidebar)                            //
-// - Manages selected sidebar index.                                          //
-// - Uses AppSidebar widget from separate file.                               //
-// - Conditionally renders content based on selected index.                   //
 //----------------------------------------------------------------------------//
 
+// *** CHANGED TO StatefulWidget ***
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -47,7 +51,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   late AudioPlayer _audioPlayer;
 
-  // --- Data for Sidebar Destinations ---
+  // Data for Sidebar Destinations (remains the same)
   final List<Map<String, dynamic>> _allDestinations = [
     {'icon': Icons.dashboard_rounded, 'label': 'Dashboard', 'models': null},
     {
@@ -86,9 +90,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _audioPlayer = AudioPlayer();
-    _audioPlayer.setReleaseMode(
-      ReleaseMode.stop,
-    ); // Stop previous sound before playing new one
+    _audioPlayer.setReleaseMode(ReleaseMode.stop);
+
+    // *** ADDED: Dispatch event after first frame build ***
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // Check if still mounted
+        print(
+          "--- DashboardScreen initState: Adding LoadDashboardData event ---",
+        );
+        // Use context.read because we are inside initState's callback
+        // Assumes DashboardBloc is provided by an ancestor (like in build method below)
+        try {
+          context.read<DashboardBloc>().add(LoadDashboardData());
+        } catch (e) {
+          print(
+            "--- DashboardScreen initState: Error reading DashboardBloc from context: $e ---",
+          );
+          // This might happen if the BlocProvider isn't set up correctly yet.
+        }
+      }
+    });
+    // --- END ADDED CODE ---
   }
 
   @override
@@ -97,7 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // --- Callbacks ---
+  // Callbacks and Helper methods remain the same
   void _onFooterItemTapped(int footerIndex) {
     final dest = _footerDestinations[footerIndex];
     final isLogout = dest['isLogout'] ?? false;
@@ -149,6 +172,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await FirebaseAuth.instance.signOut();
         print("Firebase sign out successful.");
         // TODO: Navigate to Login Screen after logout
+        // Example: Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => LoginScreen()), (route) => false);
         if (mounted) {
           ScaffoldMessenger.of(
             context,
@@ -169,9 +193,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _showAccessFeedback(BuildContext context, AccessPointResult result) {
     final status = result.validationStatus;
     if (status == ValidationStatus.idle ||
-        status == ValidationStatus.validating) {
+        status == ValidationStatus.validating)
       return;
-    }
 
     final message =
         result.message ??
@@ -218,7 +241,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
 
-    // Play sound using constants from AssetsIcons
+    // Play sound
     String? soundPath;
     switch (status) {
       case ValidationStatus.granted:
@@ -233,12 +256,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       default:
         break;
     }
-
     if (soundPath != null) {
       try {
-        _audioPlayer.play(
-          AssetSource(soundPath),
-        ); // Play using the constant path
+        // Ensure player is ready (might need adjustments based on audioplayers version)
+        _audioPlayer.stop(); // Stop previous sound if any
+        _audioPlayer.play(AssetSource(soundPath));
         print("Playing sound: $soundPath");
       } catch (e) {
         print("Error playing sound $soundPath: $e");
@@ -246,28 +268,86 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // Helper for building user avatars in the header stack
+  Widget _buildUserAvatar(String initial, Color color) {
+    return CircleAvatar(
+      radius: 16,
+      backgroundColor: color.withOpacity(0.2),
+      child: Text(
+        initial,
+        style: getSmallStyle(fontWeight: FontWeight.bold, color: color),
+      ),
+    );
+  }
+
+  // Builds the UI for the error state when dashboard data fails to load.
+  Widget _buildErrorStateUI(BuildContext context, String errorMessage) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(30.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              color: AppColors.secondaryColor,
+              size: 60,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              "Failed to Load Dashboard",
+              style: getTitleStyle(color: AppColors.darkGrey, fontSize: 18),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              errorMessage,
+              textAlign: TextAlign.center,
+              style: getbodyStyle(color: AppColors.secondaryColor),
+            ),
+            const SizedBox(height: 25),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text("Retry"),
+              onPressed:
+                  () => context.read<DashboardBloc>().add(
+                    RefreshDashboardData(),
+                  ), // Dispatch refresh event
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryColor,
+                foregroundColor: AppColors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                textStyle: getbodyStyle(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Access singleton instances of services needed by the sidebar
-    final syncService = AccessControlSyncService();
-    final nfcService = NfcReaderService();
+    print("--- DashboardScreen BUILD method called ---"); // Keep this log
 
-    // Provide DashboardBloc locally for this screen and its children
-    // AccessPointBloc is assumed to be provided globally in main.dart
-    return BlocProvider(
-      create: (context) => DashboardBloc()..add(LoadDashboardData()),
+    // *** Provide the Bloc here - REMOVE .add() from create ***
+    return BlocProvider<DashboardBloc>(
+      create: (context) {
+        print(
+          "--- DashboardScreen: Creating DashboardBloc instance ---",
+        ); // Keep this log
+        // Just create the instance, event is added in initState
+        return DashboardBloc();
+      },
       child: Scaffold(
         backgroundColor: AppColors.lightGrey,
-        body:
-        // Listen to global AccessPointBloc for feedback SnackBar
-        BlocListener<AccessPointBloc, AccessPointState>(
+        body: BlocListener<AccessPointBloc, AccessPointState>(
           listener: (context, state) {
             if (state is AccessPointResult) {
               _showAccessFeedback(context, state);
-              // Optionally reset AccessPointBloc state after showing feedback
-              // Future.delayed(const Duration(milliseconds: 100), () {
-              //   if (mounted) context.read<AccessPointBloc>().add(ResetAccessPoint());
-              // });
             }
           },
           child: BlocConsumer<DashboardBloc, DashboardState>(
@@ -277,8 +357,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   "Dashboard Listener: Load Failure - ${state.errorMessage}",
                 );
               }
+              // Add other listener logic if needed
             },
             builder: (context, state) {
+              print(
+                "--- DashboardScreen BlocConsumer BUILDER: State is ${state.runtimeType} ---",
+              ); // Add log here
               // --- Loading State ---
               if (state is DashboardLoading || state is DashboardInitial) {
                 return const Center(
@@ -293,7 +377,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               }
               // --- Success State ---
               else if (state is DashboardLoadSuccess) {
-                // Filter destinations based on the loaded provider's pricing model
+                // Filter sidebar destinations (remains the same)
                 final PricingModel currentPricingModel =
                     state.providerInfo.pricingModel;
                 final List<Map<String, dynamic>> visibleDestinations =
@@ -303,19 +387,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       return models == null ||
                           models.contains(currentPricingModel);
                     }).toList();
-
-                // Ensure selected index is valid for the *visible* destinations
                 int activeIndex =
                     (_selectedIndex >= 0 &&
                             _selectedIndex < visibleDestinations.length)
                         ? _selectedIndex
-                        : 0; // Default to 0 if out of bounds
+                        : 0;
+                if (_selectedIndex >= visibleDestinations.length) {
+                  print(
+                    "Warning: Previous selected index ($_selectedIndex) is out of bounds for visible destinations. Resetting to 0.",
+                  );
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted)
+                      setState(() {
+                        _selectedIndex = 0;
+                      });
+                  });
+                  activeIndex = 0;
+                }
 
-                // Main Row: Sidebar | Content
+                // Main Row: Sidebar | Content (remains the same)
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- Functional Sidebar (Listens to notifiers) ---
                     AppSidebar(
                       selectedIndex: activeIndex,
                       destinations: visibleDestinations,
@@ -323,12 +416,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       onDestinationSelected: _onDestinationSelected,
                       onFooterItemSelected: _onFooterItemTapped,
                       providerInfo: state.providerInfo,
-                      // Data sync status
                       nfcStatusNotifier:
-                          nfcService
-                              .connectionStatusNotifier, // NFC connection status
+                          NfcReaderService().connectionStatusNotifier,
                     ),
-                    // --- Main Content Area ---
                     Expanded(
                       child: _buildMainContentArea(
                         context,
@@ -353,37 +443,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Builds the main content area based on the selected index.
+  /// Builds the main content area based on the selected sidebar index.
   Widget _buildMainContentArea(
     BuildContext context,
-    DashboardLoadSuccess state, // Pass the success state containing data
+    DashboardLoadSuccess state, // Expecting the success state here
     int selectedIndex,
     List<Map<String, dynamic>> visibleDestinations,
   ) {
+    // Ensure index is valid before accessing label
+    if (selectedIndex < 0 || selectedIndex >= visibleDestinations.length) {
+      print(
+        "Error: Invalid selected index ($selectedIndex) for main content area.",
+      );
+      return const Center(
+        child: Text("Invalid selection"),
+      ); // Handle invalid index
+    }
     String selectedLabel =
         visibleDestinations[selectedIndex]['label'] as String;
     print("Building content for: $selectedLabel (Index: $selectedIndex)");
 
-    // Switch content based on the LABEL of the selected visible destination
+    // Return the appropriate screen/widget based on the selected label
     switch (selectedLabel) {
       case 'Dashboard':
-        return _buildDashboardGridUI(context, state); // Pass state to grid UI
+        // Pass the success state to the grid builder
+        return _buildDashboardGridUI(context, state);
       case 'Members':
-        // TODO: Create and import MembersScreen
+        // TODO: Replace with actual MembersScreen widget
         return const _PlaceholderContentWidget(label: 'Members Management');
       case 'Bookings':
-        return const BookingsScreen();
+        return const BookingsScreen(); // Use the dedicated Bookings screen
       case 'Classes/Services':
-        // This screen reads DashboardBloc state internally
-        return const ClassesServicesScreen();
+        return const ClassesServicesScreen(); // Use the dedicated Classes/Services screen
       case 'Access Control':
-        // This screen uses its own Blocs but needs DashboardBloc provided above it
-        return const AccessControlScreen();
+        return const AccessControlScreen(); // Use the dedicated Access Control screen
       case 'Reports':
-        return const ReportsScreen();
+        return const ReportsScreen(); // Use placeholder or actual Reports screen
       case 'Analytics':
-        return const AnalyticsScreen();
+        return const AnalyticsScreen(); // Use placeholder or actual Analytics screen
       default:
+        // Fallback for any labels not explicitly handled
         return Center(
           child: Text(
             "Content for: $selectedLabel\n(Not Implemented - Index: $selectedIndex)",
@@ -394,13 +493,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  /// Builds the dashboard grid layout. Requires the DashboardLoadSuccess state.
+  /// Builds the dashboard grid layout UI.
   Widget _buildDashboardGridUI(
     BuildContext context,
-    DashboardLoadSuccess state,
+    DashboardLoadSuccess state, // Takes the success state containing all data
   ) {
+    // Extract necessary data from the state
     final ServiceProviderModel providerModel = state.providerInfo;
     final PricingModel pricingModel = providerModel.pricingModel;
+    final DashboardStats stats = state.stats; // Get stats from state
+
     // Determine which sections to show based on pricing model
     bool showSubscriptions =
         pricingModel == PricingModel.subscription ||
@@ -420,8 +522,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return RefreshIndicator(
       color: AppColors.primaryColor,
       onRefresh: () async {
+        // Dispatch refresh event
         context.read<DashboardBloc>().add(RefreshDashboardData());
-        // Wait until the loading state is finished
+        // Wait for the BLoC to finish loading before completing the indicator
         await context.read<DashboardBloc>().stream.firstWhere(
           (s) => s is! DashboardLoading,
         );
@@ -569,7 +672,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  ProviderInfoHeader(providerModel: providerModel),
+                  // Provider Info Header Widget
+                  ProviderInfoHeader(
+                    providerModel: providerModel,
+                  ), // Use state.providerInfo
                   const Divider(
                     height: 16,
                     thickness: 1,
@@ -579,6 +685,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
+
           // --- Main Grid Content ---
           SliverPadding(
             padding: const EdgeInsets.only(
@@ -589,31 +696,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             sliver: SliverLayoutBuilder(
               builder: (context, constraints) {
-                int crossAxisCount = 4;
-                double childAspectRatio = 1.3;
+                // --- Responsive Grid Calculation ---
+                int crossAxisCount;
+                double childAspectRatio;
+
+                // *** ADJUSTED ASPECT RATIO HERE - DECREASED to make taller ***
                 if (constraints.crossAxisExtent < 650) {
                   crossAxisCount = 1;
-                  childAspectRatio = 1.8;
+                  childAspectRatio = 1.6;
                 } else if (constraints.crossAxisExtent < 950) {
                   crossAxisCount = 2;
-                  childAspectRatio = 1.3;
+                  childAspectRatio = 1.2;
                 } else if (constraints.crossAxisExtent < 1300) {
                   crossAxisCount = 3;
-                  childAspectRatio = 1.3;
+                  childAspectRatio = 1.1;
+                } else {
+                  crossAxisCount = 4;
+                  childAspectRatio = 1.1;
                 }
+                // --- End Responsive Grid Calculation ---
+
+                // Build grid items using data from the state
                 List<Widget> gridItems = [
-                  StatsSection(stats: state.stats, pricingModel: pricingModel),
+                  StatsSection(
+                    stats: stats,
+                    pricingModel: pricingModel,
+                  ), // Use state.stats
                   if (showSubscriptions)
                     SubscriptionManagementSection(
                       subscriptions: state.subscriptions,
-                    ),
+                    ), // Use state.subscriptions
                   if (showReservations)
                     ReservationManagementSection(
                       reservations: state.reservations,
-                    ),
-                  AccessLogSection(accessLogs: state.accessLogs),
+                    ), // Use state.reservations
+                  AccessLogSection(
+                    accessLogs: state.accessLogs,
+                  ), // Use state.accessLogs
                   if (showSchedule)
-                    buildSectionContainer(
+                    SectionContainer(
                       title: "Today's Schedule / Classes",
                       trailingAction: TextButton(
                         onPressed: () {
@@ -634,7 +755,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   if (showCapacity)
-                    buildSectionContainer(
+                    SectionContainer(
                       title: "Live Facility Capacity",
                       child: buildEmptyState(
                         "Live check-in/capacity data placeholder.",
@@ -649,7 +770,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     title: "Revenue Overview",
                     pricingModel: pricingModel,
                   ),
-                  buildSectionContainer(
+                  SectionContainer(
                     title: "Recent Customer Feedback",
                     trailingAction: TextButton(
                       onPressed: () {
@@ -670,11 +791,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ];
+
+                // Return the grid
                 return SliverGrid.count(
                   crossAxisCount: crossAxisCount,
                   crossAxisSpacing: 18.0,
                   mainAxisSpacing: 18.0,
-                  childAspectRatio: childAspectRatio,
+                  childAspectRatio: childAspectRatio, // Use adjusted value
                   children: gridItems,
                 );
               },
@@ -684,69 +807,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-
-  /// Builds the UI for the error state.
-  Widget _buildErrorStateUI(BuildContext context, String errorMessage) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(30.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              color: AppColors.secondaryColor,
-              size: 60,
-            ),
-            const SizedBox(height: 20),
-            Text(
-              "Failed to Load Dashboard",
-              style: getTitleStyle(color: AppColors.darkGrey, fontSize: 18),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 10),
-            Text(
-              errorMessage,
-              textAlign: TextAlign.center,
-              style: getbodyStyle(color: AppColors.secondaryColor),
-            ),
-            const SizedBox(height: 25),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text("Retry"),
-              onPressed:
-                  () =>
-                      context.read<DashboardBloc>().add(RefreshDashboardData()),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryColor,
-                foregroundColor: AppColors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                textStyle: getbodyStyle(fontWeight: FontWeight.w500),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Helper for building user avatars in the header stack
-  Widget _buildUserAvatar(String initial, Color color) {
-    return CircleAvatar(
-      radius: 16,
-      backgroundColor: color.withOpacity(0.2),
-      child: Text(
-        initial,
-        style: getSmallStyle(fontWeight: FontWeight.bold, color: color),
-      ),
-    );
-  }
 } // End _DashboardScreenState
 
-// --- Placeholder Widget for Content Area ---
+// --- Placeholder Widget for Content Area (no changes needed) ---
 class _PlaceholderContentWidget extends StatelessWidget {
   final String label;
   const _PlaceholderContentWidget({required this.label});

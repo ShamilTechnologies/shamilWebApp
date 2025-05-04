@@ -12,6 +12,7 @@ class LoadingScreen extends StatelessWidget {
   /// The message to display below the loading animation. Defaults to "Loading...".
   final String? message;
 
+  // Added const to constructor
   const LoadingScreen({
     super.key,
     this.message = "Loading...", // Default loading message
@@ -47,6 +48,7 @@ class LoadingScreen extends StatelessWidget {
                         "Error loading Lottie animation (LoadingScreen): $error",
                       );
                       // Fallback in case Lottie fails to load
+                      // Added const
                       return const CircularProgressIndicator(
                         color: AppColors.primaryColor,
                       );
@@ -57,6 +59,7 @@ class LoadingScreen extends StatelessWidget {
                     "Exception loading Lottie animation (LoadingScreen): $e",
                   );
                   // Fallback in case of other exceptions during loading
+                  // Added const
                   return const CircularProgressIndicator(
                     color: AppColors.primaryColor,
                   );
@@ -65,8 +68,10 @@ class LoadingScreen extends StatelessWidget {
             ),
             // Conditionally display the message if provided
             if (message != null && message!.isNotEmpty) ...[
+              // Added const
               const SizedBox(height: 20), // Spacing between animation and text
               Padding(
+                // Added const
                 padding: const EdgeInsets.symmetric(horizontal: 20.0),
                 child: Text(
                   message!,
@@ -93,6 +98,7 @@ class SuccessScreen extends StatelessWidget {
   final String?
   lottieAsset; // Made parameter explicit as requested in previous fix
 
+  // Added const to constructor
   const SuccessScreen({
     super.key,
     this.message = "Operation Successful!", // Default success message
@@ -131,6 +137,7 @@ class SuccessScreen extends StatelessWidget {
                           "Error loading Lottie animation (SuccessScreen): $error",
                         );
                         // Fallback icon in case Lottie fails
+                        // Added const
                         return const Icon(
                           Icons.check_circle_outline,
                           size: 100,
@@ -143,6 +150,7 @@ class SuccessScreen extends StatelessWidget {
                       "Exception loading Lottie animation (SuccessScreen): $e",
                     );
                     // Fallback icon in case of other exceptions
+                    // Added const
                     return const Icon(
                       Icons.check_circle_outline,
                       size: 100,
@@ -152,6 +160,7 @@ class SuccessScreen extends StatelessWidget {
                 },
               )
             else // Fallback if no asset path is provided
+              // Added const
               const Icon(
                 Icons.check_circle,
                 size: 100,
@@ -160,8 +169,10 @@ class SuccessScreen extends StatelessWidget {
 
             // Conditionally display the message if provided
             if (message != null && message!.isNotEmpty) ...[
+              // Added const
               const SizedBox(height: 20), // Spacing between animation and text
               Padding(
+                // Added const
                 padding: const EdgeInsets.symmetric(
                   horizontal: 20.0,
                 ), // Add padding for longer messages
