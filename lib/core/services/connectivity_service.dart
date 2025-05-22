@@ -128,4 +128,37 @@ class ConnectivityService {
     statusNotifier.dispose(); // Dispose the ValueNotifier
     print("ConnectivityService: Disposed.");
   }
+
+  /// Manually triggers a connectivity check and updates the status
+  Future<NetworkStatus> checkConnectivity() async {
+    try {
+      final results = await _connectivity.checkConnectivity();
+      // If we have any non-none result, consider it online
+      final bool isOnline = results.any(
+        (result) => result != ConnectivityResult.none,
+      );
+      final status = isOnline ? NetworkStatus.online : NetworkStatus.offline;
+      statusNotifier.value = status;
+      return status;
+    } catch (e) {
+      print("ConnectivityService: Error checking connectivity: $e");
+      // Default to offline on error
+      statusNotifier.value = NetworkStatus.offline;
+      return NetworkStatus.offline;
+    }
+  }
+
+  /// Converts connectivity result to NetworkStatus enum
+  NetworkStatus _getNetworkStatus(ConnectivityResult result) {
+    switch (result) {
+      case ConnectivityResult.none:
+        return NetworkStatus.offline;
+      case ConnectivityResult.mobile:
+      case ConnectivityResult.wifi:
+      case ConnectivityResult.ethernet:
+        return NetworkStatus.online;
+      default:
+        return NetworkStatus.offline;
+    }
+  }
 }

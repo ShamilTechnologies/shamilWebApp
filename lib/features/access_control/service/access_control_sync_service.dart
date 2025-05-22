@@ -1,16 +1,19 @@
 /// File: lib/features/access_control/service/access_control_sync_service.dart
 /// --- UPDATED: Handles updated Hive models, uses governorateId for partitioned queries ---
-/// --- UPDATED: Refactored syncAllData for partitioning ---
+/// --- UPDATED: Refactored syncAllData for granular Hive updates ---
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart'; // Import Hive Flutter
-import 'package:flutter/foundation.dart'; // For ValueNotifier
+import 'package:flutter/foundation.dart'; // For ValueNotifier, listEquals
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart'; // For generating log keys
 import 'package:path_provider/path_provider.dart'; // Needed for Hive init path
+import 'package:collection/collection.dart'; // For deep equality checks
+import 'package:shamil_web_app/core/services/sync_manager.dart';
 
 // *** UPDATED: Import updated Hive Models ***
 import 'package:shamil_web_app/features/access_control/data/local_cache_models.dart';
@@ -23,9 +26,9 @@ import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 // Define Box names as constants
 const String cachedUsersBoxName = 'cachedUsersBox';
 const String cachedSubscriptionsBoxName = 'cachedSubscriptionsBox';
-const String cachedReservationsBoxName =
-    'cachedReservationsBox'; // Name uses updated CachedReservation type
+const String cachedReservationsBoxName = 'cachedReservationsBox';
 const String localAccessLogsBoxName = 'localAccessLogsBox';
+const String syncMetadataBoxName = 'syncMetadataBox'; // New box for versioning
 
 class AccessControlSyncService {
   // Singleton pattern
@@ -37,20 +40,30 @@ class AccessControlSyncService {
   // Hive Boxes (will be opened during init)
   Box<CachedUser>? _cachedUsersBox;
   Box<CachedSubscription>? _cachedSubscriptionsBox;
-  // *** Uses updated (but structurally similar) CachedReservation model type ***
   Box<CachedReservation>? _cachedReservationsBox;
   Box<LocalAccessLog>? _localAccessLogsBox;
+
+  // New box for sync metadata
+  Box<Map>? _syncMetadataBox;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final Uuid _uuid = const Uuid(); // For generating log keys
+
+  // Equality checkers for comparing Hive objects
+  final MapEquality _mapEquality = const MapEquality();
+  final ListEquality _listEquality = const ListEquality();
 
   /// Notifier for the UI to listen to sync status changes.
   final ValueNotifier<bool> isSyncingNotifier = ValueNotifier(false);
 
   // --- Box Getters (Provide access to opened boxes) ---
   Box<CachedUser> get cachedUsersBox {
+    // Added null check and isOpen check for safety
     if (_cachedUsersBox == null || !_cachedUsersBox!.isOpen) {
+      print("Warning: Accessing cachedUsersBox before it's ready.");
+      // Attempt to re-open or throw a more informative error
+      // For now, throw state error
       throw StateError(
         'CachedUsersBox not initialized or closed. Call init() first.',
       );
@@ -60,14 +73,15 @@ class AccessControlSyncService {
 
   Box<CachedSubscription> get cachedSubscriptionsBox {
     if (_cachedSubscriptionsBox == null || !_cachedSubscriptionsBox!.isOpen) {
+      print("Warning: Accessing cachedSubscriptionsBox before it's ready.");
       throw StateError('CachedSubscriptionsBox not initialized or closed.');
     }
     return _cachedSubscriptionsBox!;
   }
 
-  // *** Uses updated CachedReservation model type ***
   Box<CachedReservation> get cachedReservationsBox {
     if (_cachedReservationsBox == null || !_cachedReservationsBox!.isOpen) {
+      print("Warning: Accessing cachedReservationsBox before it's ready.");
       throw StateError('CachedReservationsBox not initialized or closed.');
     }
     return _cachedReservationsBox!;
@@ -75,96 +89,287 @@ class AccessControlSyncService {
 
   Box<LocalAccessLog> get localAccessLogsBox {
     if (_localAccessLogsBox == null || !_localAccessLogsBox!.isOpen) {
+      print("Warning: Accessing localAccessLogsBox before it's ready.");
       throw StateError('LocalAccessLogsBox not initialized or closed.');
     }
     return _localAccessLogsBox!;
+  }
+
+  Box<Map> get syncMetadataBox {
+    if (_syncMetadataBox == null || !_syncMetadataBox!.isOpen) {
+      print("Warning: Accessing syncMetadataBox before it's ready.");
+      throw StateError('SyncMetadataBox not initialized or closed.');
+    }
+    return _syncMetadataBox!;
   }
   // --- End Box Getters ---
 
   /// Initializes Hive, registers adapters, and opens boxes.
   Future<void> init() async {
-    // Check if already initialized
-    if (_cachedUsersBox != null && _cachedUsersBox!.isOpen) {
-      print("AccessControlSyncService: Hive boxes already initialized.");
+    if (_cachedUsersBox?.isOpen == true && // Check all boxes more robustly
+        _cachedSubscriptionsBox?.isOpen == true &&
+        _cachedReservationsBox?.isOpen == true &&
+        _localAccessLogsBox?.isOpen == true &&
+        _syncMetadataBox?.isOpen == true) {
+      print(
+        "AccessControlSyncService: Hive boxes already initialized and open.",
+      );
       return;
     }
+    print("AccessControlSyncService: Initializing Hive...");
 
     try {
-      // Get directory for Hive storage
-      final appDocumentDir = await getApplicationDocumentsDirectory();
-      // Initialize Hive for Flutter (specifies storage directory)
-      await Hive.initFlutter(appDocumentDir.path);
+      // First ensure Hive is fully initialized
+      try {
+        final appDocumentDir = await getApplicationDocumentsDirectory();
+        print(
+          "AccessControlSyncService: Using documents directory: ${appDocumentDir.path}",
+        );
+
+        try {
+          // Try init, catch if already initialized
+          Hive.init(appDocumentDir.path);
+          print(
+            "AccessControlSyncService: Hive initialized successfully at ${appDocumentDir.path}",
+          );
+        } catch (e) {
+          if (e is HiveError &&
+              e.message.contains("already been initialized")) {
+            print("AccessControlSyncService: Hive already initialized");
+          } else {
+            print("AccessControlSyncService: Error during Hive.init: $e");
+            rethrow;
+          }
+        }
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Critical error with path initialization: $e",
+        );
+        rethrow;
+      }
 
       // Register TypeAdapters (generated by build_runner)
-      // Ensure these are registered only once
+      print("AccessControlSyncService: Registering type adapters...");
       if (!Hive.isAdapterRegistered(cachedUserTypeId)) {
         Hive.registerAdapter(CachedUserAdapter());
+        print("AccessControlSyncService: Registered CachedUserAdapter");
       }
       if (!Hive.isAdapterRegistered(cachedSubscriptionTypeId)) {
         Hive.registerAdapter(CachedSubscriptionAdapter());
+        print("AccessControlSyncService: Registered CachedSubscriptionAdapter");
       }
       if (!Hive.isAdapterRegistered(cachedReservationTypeId)) {
-        // *** Uses adapter for the updated CachedReservation model ***
         Hive.registerAdapter(CachedReservationAdapter());
+        print("AccessControlSyncService: Registered CachedReservationAdapter");
       }
       if (!Hive.isAdapterRegistered(localAccessLogTypeId)) {
         Hive.registerAdapter(LocalAccessLogAdapter());
+        print("AccessControlSyncService: Registered LocalAccessLogAdapter");
       }
 
-      print(
-        "AccessControlSyncService: Hive TypeAdapters registered (or already were).",
-      );
+      // Open boxes one by one with explicit error handling for each
+      print("AccessControlSyncService: Opening Hive boxes...");
+      try {
+        _cachedUsersBox = await Hive.openBox<CachedUser>(cachedUsersBoxName);
+        print("AccessControlSyncService: Opened cachedUsersBox");
+      } catch (e) {
+        print("AccessControlSyncService: Error opening cachedUsersBox: $e");
+        throw Exception("Failed to open cachedUsersBox: $e");
+      }
 
-      // Open boxes
-      _cachedUsersBox = await Hive.openBox<CachedUser>(cachedUsersBoxName);
-      _cachedSubscriptionsBox = await Hive.openBox<CachedSubscription>(
-        cachedSubscriptionsBoxName,
-      );
-      // *** Uses updated CachedReservation model type ***
-      _cachedReservationsBox = await Hive.openBox<CachedReservation>(
-        cachedReservationsBoxName,
-      );
-      _localAccessLogsBox = await Hive.openBox<LocalAccessLog>(
-        localAccessLogsBoxName,
-      );
+      try {
+        _cachedSubscriptionsBox = await Hive.openBox<CachedSubscription>(
+          cachedSubscriptionsBoxName,
+        );
+        print("AccessControlSyncService: Opened cachedSubscriptionsBox");
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Error opening cachedSubscriptionsBox: $e",
+        );
+        throw Exception("Failed to open cachedSubscriptionsBox: $e");
+      }
 
-      print("AccessControlSyncService: Hive boxes opened successfully.");
+      try {
+        _cachedReservationsBox = await Hive.openBox<CachedReservation>(
+          cachedReservationsBoxName,
+        );
+        print("AccessControlSyncService: Opened cachedReservationsBox");
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Error opening cachedReservationsBox: $e",
+        );
+        throw Exception("Failed to open cachedReservationsBox: $e");
+      }
+
+      try {
+        _localAccessLogsBox = await Hive.openBox<LocalAccessLog>(
+          localAccessLogsBoxName,
+        );
+        print("AccessControlSyncService: Opened localAccessLogsBox");
+      } catch (e) {
+        print("AccessControlSyncService: Error opening localAccessLogsBox: $e");
+        throw Exception("Failed to open localAccessLogsBox: $e");
+      }
+
+      try {
+        _syncMetadataBox = await Hive.openBox<Map>(syncMetadataBoxName);
+        print("AccessControlSyncService: Opened syncMetadataBox");
+      } catch (e) {
+        print("AccessControlSyncService: Error opening syncMetadataBox: $e");
+        throw Exception("Failed to open syncMetadataBox: $e");
+      }
+
+      print("AccessControlSyncService: All Hive boxes opened successfully.");
     } catch (e, stackTrace) {
       print(
-        "!!! AccessControlSyncService: Failed to initialize Hive database: $e",
+        "!!! AccessControlSyncService: CRITICAL ERROR during Hive initialization: $e",
       );
       print(stackTrace);
-      // Handle critical error - app might not function without cache
+      // Rethrow to let caller handle the error
+      throw Exception("Failed to initialize Hive: $e");
     }
   }
 
   /// Closes all opened Hive boxes.
   Future<void> close() async {
     print("AccessControlSyncService: Closing Hive boxes...");
-    // Check if boxes are open before closing
-    // Use await on close operations
+    await _cachedUsersBox?.compact(); // Compact before closing (optional)
     await _cachedUsersBox?.close();
+    await _cachedSubscriptionsBox?.compact();
     await _cachedSubscriptionsBox?.close();
+    await _cachedReservationsBox?.compact();
     await _cachedReservationsBox?.close();
+    await _localAccessLogsBox?.compact();
     await _localAccessLogsBox?.close();
-    // await Hive.close(); // Closes Hive instance itself if needed (usually not required unless stopping Hive completely)
+    await _syncMetadataBox?.compact();
+    await _syncMetadataBox?.close();
+    _cachedUsersBox = null; // Nullify references
+    _cachedSubscriptionsBox = null;
+    _cachedReservationsBox = null;
+    _localAccessLogsBox = null;
+    _syncMetadataBox = null;
     print("AccessControlSyncService: Hive boxes closed.");
+  }
+
+  /// Rebuilds the local cache by deleting and reinitializing all Hive boxes
+  /// Use this if there are issues with the local cache
+  Future<void> rebuildLocalCache() async {
+    print("AccessControlSyncService: Rebuilding local cache...");
+    isSyncingNotifier.value = true;
+
+    try {
+      // First, close any open boxes
+      await close();
+
+      // Delete boxes if they exist
+      print("AccessControlSyncService: Deleting existing Hive boxes...");
+      try {
+        await Hive.deleteBoxFromDisk(cachedUsersBoxName);
+        print("AccessControlSyncService: Deleted cachedUsersBox");
+      } catch (e) {
+        print("AccessControlSyncService: Error deleting cachedUsersBox: $e");
+      }
+
+      try {
+        await Hive.deleteBoxFromDisk(cachedSubscriptionsBoxName);
+        print("AccessControlSyncService: Deleted cachedSubscriptionsBox");
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Error deleting cachedSubscriptionsBox: $e",
+        );
+      }
+
+      try {
+        await Hive.deleteBoxFromDisk(cachedReservationsBoxName);
+        print("AccessControlSyncService: Deleted cachedReservationsBox");
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Error deleting cachedReservationsBox: $e",
+        );
+      }
+
+      try {
+        await Hive.deleteBoxFromDisk(localAccessLogsBoxName);
+        print("AccessControlSyncService: Deleted localAccessLogsBox");
+      } catch (e) {
+        print(
+          "AccessControlSyncService: Error deleting localAccessLogsBox: $e",
+        );
+      }
+
+      try {
+        await Hive.deleteBoxFromDisk(syncMetadataBoxName);
+        print("AccessControlSyncService: Deleted syncMetadataBox");
+      } catch (e) {
+        print("AccessControlSyncService: Error deleting syncMetadataBox: $e");
+      }
+
+      // Reinitialize Hive and open new boxes
+      print("AccessControlSyncService: Reinitializing Hive boxes...");
+      await init();
+
+      // Perform a full sync to populate the new boxes
+      await syncAllData();
+
+      print(
+        "AccessControlSyncService: Local cache rebuild completed successfully.",
+      );
+    } catch (e) {
+      print("AccessControlSyncService: Error rebuilding local cache: $e");
+      throw Exception("Failed to rebuild local cache: $e");
+    } finally {
+      isSyncingNotifier.value = false;
+    }
+  }
+
+  /// Gets the last version for a specific collection
+  String? _getLastVersion(String collectionName) {
+    try {
+      if (_syncMetadataBox?.isOpen != true) return null;
+      final metadata = _syncMetadataBox!.get('versions');
+      if (metadata is Map && metadata.containsKey(collectionName)) {
+        return metadata[collectionName];
+      }
+      return null;
+    } catch (e) {
+      print("Error getting last version for $collectionName: $e");
+      return null;
+    }
+  }
+
+  /// Saves the version for a specific collection
+  Future<void> _saveVersion(String collectionName, String version) async {
+    try {
+      if (_syncMetadataBox?.isOpen != true) return;
+
+      Map<dynamic, dynamic> versions =
+          (_syncMetadataBox!.get('versions') as Map?) ?? {};
+      versions[collectionName] = version;
+      await _syncMetadataBox!.put('versions', versions);
+    } catch (e) {
+      print("Error saving version for $collectionName: $e");
+    }
   }
 
   // --- Synchronization Methods ---
 
-  /// Fetches latest data from Firestore and updates the local Hive cache.
-  /// *** UPDATED: Requires governorateId to query partitioned reservations ***
+  /// *** UPDATED: Performs granular sync with version checking for better performance ***
   Future<void> syncAllData() async {
-    // Ensure boxes are open
-    if (!(_cachedUsersBox?.isOpen ?? false) ||
-        !(_cachedSubscriptionsBox?.isOpen ?? false) ||
-        !(_cachedReservationsBox?.isOpen ?? false)) {
+    // Ensure boxes are open (using the getter checks)
+    try {
+      // Access getters to trigger state error if boxes aren't open
+      cachedUsersBox;
+      cachedSubscriptionsBox;
+      cachedReservationsBox;
+    } catch (e) {
       print(
-        "AccessControlSyncService [syncAllData]: Cannot sync: Hive boxes not open.",
+        "AccessControlSyncService [syncAllData]: Cannot sync: Hive boxes not open. Error: $e",
       );
+      // Optionally try to re-initialize here? Or just return.
+      // await init(); // Be careful with re-init logic
       return;
     }
+
     if (isSyncingNotifier.value) {
       print(
         "AccessControlSyncService [syncAllData]: Sync already in progress.",
@@ -183,43 +388,40 @@ class AccessControlSyncService {
 
     isSyncingNotifier.value = true;
     print(
-      "AccessControlSyncService [syncAllData]: Starting data synchronization (Hive) for provider $providerId...",
+      "AccessControlSyncService [syncAllData]: Starting VERSION-AWARE data synchronization for provider $providerId...",
     );
 
-    String? governorateId; // Variable to hold the governorate ID
+    String? governorateId;
+    Stopwatch stopwatch = Stopwatch()..start(); // Time the sync
 
     try {
-      // *** NEW: Get provider's governorateId - CRITICAL for partitioned query ***
+      // *** Step 1: Get Provider Info (including governorateId) ***
       final providerDoc =
           await _firestore.collection("serviceProviders").doc(providerId).get();
-      if (!providerDoc.exists) {
+      if (!providerDoc.exists)
         throw Exception("Provider document not found for ID: $providerId");
-      }
-      // *** Use UPDATED ServiceProviderModel to parse ***
       final providerData = ServiceProviderModel.fromFirestore(providerDoc);
-      governorateId = providerData.governorateId; // Extract governorateId
+      governorateId = providerData.governorateId;
 
       if (governorateId == null || governorateId.isEmpty) {
-        // *** Handle missing governorateId - Log warning and SKIP reservation sync ***
         print(
           "!!! AccessControlSyncService [syncAllData]: Cannot sync reservations: Provider's governorateId is missing or empty.",
         );
-        // Proceed with subscription sync, but skip reservations.
+        // Decide if we should proceed with non-reservation sync or fail completely
+        // For now, let's only skip reservations but sync subscriptions/users
       } else {
         print(
           "AccessControlSyncService [syncAllData]: Syncing with governorateId: $governorateId",
         );
       }
 
-      // 1. Fetch Data from Firestore
+      // *** Step 2: Fetch LATEST relevant data from Firestore WITH VERSION CHECKING ***
       final now = DateTime.now();
-      // Define time ranges for queries (adjust as needed for caching strategy)
-      // Example: Cache active subs & reservations for today +/- a few days?
       final cacheWindowStart = DateTime(
         now.year,
         now.month,
         now.day,
-      ).subtract(const Duration(days: 1)); // Example: From yesterday
+      ).subtract(const Duration(days: 1));
       final cacheWindowEnd = DateTime(
         now.year,
         now.month,
@@ -227,85 +429,302 @@ class AccessControlSyncService {
         23,
         59,
         59,
-      ).add(const Duration(days: 7)); // Example: Until a week from now
+      ).add(const Duration(days: 7));
 
-      // Fetch active subscriptions (assuming top-level collection)
-      // Cache subscriptions expiring within the window or currently active
-      final subsFuture =
-          _firestore
-              .collection("subscriptions")
-              .where("providerId", isEqualTo: providerId)
-              .where("status", isEqualTo: "Active")
-              // Optional: Add expiry date filtering if needed
-              // .where("expiryDate", isGreaterThanOrEqualTo: Timestamp.fromDate(cacheWindowStart))
-              .get();
+      // Get last sync versions
+      final String? lastSubscriptionsVersion = _getLastVersion('subscriptions');
+      final String? lastReservationsVersion = _getLastVersion('reservations');
 
-      // Fetch reservations ONLY if governorateId is available
-      Future<QuerySnapshot<Map<String, dynamic>>>? resFuture;
-      if (governorateId != null && governorateId.isNotEmpty) {
-        // *** UPDATED: Query the partitioned path ***
-        resFuture =
-            _firestore
-                .collection("reservations")
-                .doc(governorateId) // Use governorateId
-                .collection(providerId) // Use providerId
-                .where(
-                  "status",
-                  whereIn: ["Confirmed", "Pending"],
-                ) // Cache relevant statuses
-                .where(
-                  "dateTime",
-                  isGreaterThanOrEqualTo: Timestamp.fromDate(cacheWindowStart),
-                )
-                .where(
-                  "dateTime",
-                  isLessThanOrEqualTo: Timestamp.fromDate(cacheWindowEnd),
-                )
-                // Note: orderBy("dateTime") might be needed if using startAfter for pagination later
-                .get();
-      } else {
-        resFuture = null; // Skip reservation fetch
+      // Create a metadata document for version tracking if it doesn't exist
+      try {
+        final metadataRef = _firestore
+            .collection("sync_metadata")
+            .doc(providerId);
+        final metadataDoc = await metadataRef.get();
+
+        if (!metadataDoc.exists) {
+          await metadataRef.set({
+            'subscriptions_version': Timestamp.now(),
+            'reservations_version': Timestamp.now(),
+            'last_sync': Timestamp.now(),
+          });
+          print(
+            "Created initial sync metadata document for provider $providerId",
+          );
+        }
+      } catch (e) {
+        print("Error checking/creating sync metadata: $e");
+        // Continue with sync regardless
       }
 
-      // Wait for fetches
-      final List<dynamic> firestoreResults = await Future.wait([
-        subsFuture,
-        if (resFuture != null)
-          resFuture
-        else
-          Future.value(null), // Include reservation future only if valid
-      ], eagerError: true); // Stop if any essential fetch fails
+      // QUERY FROM BOTH SOURCE MODELS
 
-      final QuerySnapshot subsSnapshot = firestoreResults[0];
-      // Reservation snapshot might be null if fetch was skipped
-      final QuerySnapshot<Map<String, dynamic>>? resSnapshot =
-          firestoreResults[1] as QuerySnapshot<Map<String, dynamic>>?;
+      // First find all users with active subscriptions to this provider from endUsers collection
+      print("Querying for subscriptions in endUsers collection group...");
+      final endUsersSubsQuery =
+          await _firestore
+              .collectionGroup('subscriptions')
+              .where('providerId', isEqualTo: providerId)
+              .where('status', isEqualTo: 'Active')
+              .get();
 
-      // 2. Prepare data for Hive Boxes
-      final Map<String, CachedUser> usersToCache = {};
-      final Map<String, CachedSubscription> subsToCache = {};
-      // *** Uses updated CachedReservation model type ***
-      final Map<String, CachedReservation> resToCache = {};
+      print(
+        "Found ${endUsersSubsQuery.docs.length} subscriptions in endUsers collection",
+      );
 
-      // Process Subscriptions
+      // Next find all users with confirmed/pending reservations
+      print("Querying for reservations in endUsers collection group...");
+      final endUsersResQuery =
+          await _firestore
+              .collectionGroup('reservations')
+              .where('providerId', isEqualTo: providerId)
+              .where(
+                'dateTime',
+                isGreaterThanOrEqualTo: Timestamp.fromDate(cacheWindowStart),
+              )
+              .where(
+                'dateTime',
+                isLessThanOrEqualTo: Timestamp.fromDate(cacheWindowEnd),
+              )
+              .where('status', whereIn: ['Confirmed', 'Pending'])
+              .get();
+
+      print(
+        "Found ${endUsersResQuery.docs.length} reservations in endUsers collection",
+      );
+
+      // Also query the legacy paths for backward compatibility
+      Query<Map<String, dynamic>> subsQuery = _firestore
+          .collection("subscriptions")
+          .where("providerId", isEqualTo: providerId)
+          .where("status", isEqualTo: "Active");
+
+      // Add version check if we have a last version
+      if (lastSubscriptionsVersion != null) {
+        final metadataDoc =
+            await _firestore.collection("sync_metadata").doc(providerId).get();
+        if (metadataDoc.exists &&
+            metadataDoc.data()!.containsKey('subscriptions_version')) {
+          final DateTime? lastVersion =
+              metadataDoc.data()!['subscriptions_version'].toDate();
+          if (lastVersion != null) {
+            subsQuery = subsQuery.where(
+              'updatedAt',
+              isGreaterThan: Timestamp.fromDate(lastVersion),
+            );
+          }
+        }
+      }
+
+      final subsFuture = subsQuery.get();
+
+      // Fetch Reservations (confirmed/pending within window) WITH VERSION CHECK
+      Future<QuerySnapshot<Map<String, dynamic>>>? resFuture;
+
+      if (governorateId != null && governorateId.isNotEmpty) {
+        Query<Map<String, dynamic>> resQuery = _firestore
+            .collection("reservations")
+            .doc(governorateId)
+            .collection(providerId)
+            .where("status", whereIn: ["Confirmed", "Pending"])
+            .where(
+              "dateTime",
+              isGreaterThanOrEqualTo: Timestamp.fromDate(cacheWindowStart),
+            )
+            .where(
+              "dateTime",
+              isLessThanOrEqualTo: Timestamp.fromDate(cacheWindowEnd),
+            );
+
+        // Add version check if we have a last version
+        if (lastReservationsVersion != null) {
+          final metadataDoc =
+              await _firestore
+                  .collection("sync_metadata")
+                  .doc(providerId)
+                  .get();
+          if (metadataDoc.exists &&
+              metadataDoc.data()!.containsKey('reservations_version')) {
+            final DateTime? lastVersion =
+                metadataDoc.data()!['reservations_version'].toDate();
+            if (lastVersion != null) {
+              resQuery = resQuery.where(
+                'updatedAt',
+                isGreaterThan: Timestamp.fromDate(lastVersion),
+              );
+            }
+          }
+        }
+
+        resFuture = resQuery.get();
+      } else {
+        print(
+          "AccessControlSyncService [syncAllData]: Skipping reservations sync - No governorateId",
+        );
+        resFuture = null;
+      }
+
+      // Wait for async Firestore queries
+      print(
+        "AccessControlSyncService [syncAllData]: Waiting for Firestore queries to complete...",
+      );
+      final subsSnapshot = await subsFuture;
+      final resSnapshot = resFuture != null ? await resFuture : null;
+
+      // Process endUsers collection data
+      final Set<String> uniqueUserIds = {};
+      final Map<dynamic, CachedSubscription> endUsersSubsCache = {};
+      final Map<dynamic, CachedReservation> endUsersResCache = {};
+
+      // Process subscriptions from endUsers collection group
+      for (final doc in endUsersSubsQuery.docs) {
+        try {
+          final data = doc.data();
+          final userId = data['userId'] as String?;
+          final userName = data['userName'] as String?;
+
+          if (userId != null && userId.isNotEmpty) {
+            uniqueUserIds.add(userId);
+
+            // If we have expiry date, create cached subscription
+            if (data.containsKey('expiryDate')) {
+              final expiryDate = data['expiryDate'] as Timestamp?;
+              if (expiryDate != null) {
+                endUsersSubsCache[doc.id] = CachedSubscription(
+                  userId: userId,
+                  subscriptionId: doc.id,
+                  planName: data['planName'] as String? ?? 'Subscription',
+                  expiryDate: expiryDate.toDate(),
+                );
+              }
+            }
+
+            // Ensure user is in cache
+            await ensureUserInCache(userId, userName);
+          }
+        } catch (e) {
+          print("Error processing endUsers subscription ${doc.id}: $e");
+        }
+      }
+
+      // Process reservations from endUsers collection group
+      for (final doc in endUsersResQuery.docs) {
+        try {
+          final data = doc.data();
+          final userId = data['userId'] as String?;
+          final userName = data['userName'] as String?;
+
+          if (userId != null && userId.isNotEmpty) {
+            uniqueUserIds.add(userId);
+
+            // If we have start/end times, create cached reservation
+            final dateTime = data['dateTime'] as Timestamp?;
+            final endTime = data['endTime'] as Timestamp?;
+
+            if (dateTime != null && endTime != null) {
+              endUsersResCache[doc.id] = CachedReservation(
+                userId: userId,
+                reservationId: doc.id,
+                serviceName: data['serviceName'] as String? ?? 'Reservation',
+                startTime: dateTime.toDate(),
+                endTime: endTime.toDate(),
+                typeString: data['type'] as String? ?? 'standard',
+                groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+              );
+            }
+
+            // Ensure user is in cache
+            await ensureUserInCache(userId, userName);
+          }
+        } catch (e) {
+          print("Error processing endUsers reservation ${doc.id}: $e");
+        }
+      }
+
+      // If no changes are detected and we have existing data, we can finish early
+      if (subsSnapshot.docs.isEmpty &&
+          (resSnapshot == null || resSnapshot.docs.isEmpty) &&
+          endUsersSubsQuery.docs.isEmpty &&
+          endUsersResQuery.docs.isEmpty &&
+          _cachedUsersBox!.isNotEmpty &&
+          _cachedSubscriptionsBox!.isNotEmpty) {
+        print(
+          "AccessControlSyncService [syncAllData]: No changes detected, skipping update.",
+        );
+
+        // Update metadata version anyway
+        try {
+          await _firestore.collection("sync_metadata").doc(providerId).update({
+            'last_sync': Timestamp.now(),
+          });
+        } catch (e) {
+          print("Error updating sync timestamp: $e");
+        }
+
+        stopwatch.stop();
+        print(
+          "AccessControlSyncService [syncAllData]: Version check sync finished in ${stopwatch.elapsedMilliseconds}ms (no changes).",
+        );
+        isSyncingNotifier.value = false;
+        return;
+      }
+
+      // *** Step 3: Get existing Hive keys ***
+      final existingUserKeys = cachedUsersBox.keys.toSet();
+      final existingSubKeys = cachedSubscriptionsBox.keys.toSet();
+      final existingResKeys = cachedReservationsBox.keys.toSet();
+      print(
+        "AccessControlSyncService [syncAllData]: Existing Hive keys - Users: ${existingUserKeys.length}, Subs: ${existingSubKeys.length}, Res: ${existingResKeys.length}",
+      );
+
+      // *** Step 4: Prepare data for comparison and Hive operations ***
+      final Map<dynamic, CachedUser> usersToPut = {};
+      final Map<dynamic, CachedSubscription> subsToPut = {};
+      final Map<dynamic, CachedReservation> resToPut = {};
+      final Set<dynamic> currentFirestoreUserIds = {};
+      final Set<dynamic> currentFirestoreSubIds = {};
+      final Set<dynamic> currentFirestoreResIds = {};
+
+      // Add endUsers items to subsToPut and resToPut
+      subsToPut.addAll(endUsersSubsCache);
+      resToPut.addAll(endUsersResCache);
+
+      // Add the uniqueUserIds from endUsers to currentFirestoreUserIds
+      currentFirestoreUserIds.addAll(uniqueUserIds);
+
+      // Add endUsers subscription and reservation IDs
+      currentFirestoreSubIds.addAll(endUsersSubsCache.keys);
+      currentFirestoreResIds.addAll(endUsersResCache.keys);
+
+      // Process Subscriptions from Firestore
       for (var doc in subsSnapshot.docs) {
         try {
-          // *** Use UPDATED Subscription model from dashboard_models.dart ***
           final sub = Subscription.fromSnapshot(doc);
-          if (!usersToCache.containsKey(sub.userId)) {
-            usersToCache[sub.userId] = CachedUser(
+          currentFirestoreSubIds.add(sub.id); // Track Firestore IDs
+
+          // Add/Update User Cache
+          if (!existingUserKeys.contains(sub.userId) ||
+              !(await _isUserSame(sub.userId, sub.userName))) {
+            usersToPut[sub.userId] = CachedUser(
               userId: sub.userId,
               userName: sub.userName,
             );
           }
+          currentFirestoreUserIds.add(sub.userId); // Track Firestore user IDs
+
+          // Add/Update Subscription Cache
           if (sub.expiryDate != null) {
-            // Ensure expiryDate is not null
-            subsToCache[sub.id] = CachedSubscription(
+            final newCachedSub = CachedSubscription(
               userId: sub.userId,
               subscriptionId: sub.id,
               planName: sub.planName,
               expiryDate: sub.expiryDate!.toDate(),
             );
+            // Check if different from existing or new
+            if (!existingSubKeys.contains(sub.id) ||
+                !(await _isSubscriptionSame(sub.id, newCachedSub))) {
+              subsToPut[sub.id] = newCachedSub;
+            }
           }
         } catch (e) {
           print(
@@ -314,72 +733,105 @@ class AccessControlSyncService {
         }
       }
 
-      // Process Reservations (only if snapshot exists)
+      // Process Reservations from Firestore (only if fetched)
       if (resSnapshot != null) {
         for (var doc in resSnapshot.docs) {
           try {
-            // *** Use UPDATED Reservation model from dashboard_models.dart ***
             final res = Reservation.fromSnapshot(doc);
-            if (!usersToCache.containsKey(res.userId)) {
-              usersToCache[res.userId] = CachedUser(
+            currentFirestoreResIds.add(res.id); // Track Firestore IDs
+
+            // Add/Update User Cache
+            if (!existingUserKeys.contains(res.userId) ||
+                !(await _isUserSame(res.userId, res.userName))) {
+              usersToPut[res.userId] = CachedUser(
                 userId: res.userId,
                 userName: res.userName,
               );
             }
+            currentFirestoreUserIds.add(res.userId); // Track Firestore user IDs
 
-            // *** Map UPDATED Reservation fields to EXISTING CachedReservation fields ***
-            DateTime endTime =
-                res.endTime ??
-                res.startTime.add(
-                  const Duration(hours: 1),
-                ); // Calculate end time
-            resToCache[res.id] = CachedReservation(
+            // Add/Update Reservation Cache
+            final newCachedRes = CachedReservation(
               userId: res.userId,
               reservationId: res.id,
-              serviceName:
-                  res.serviceName ??
-                  'Reservation', // Use serviceName from model
-              startTime: res.startTime, // Use startTime getter
-              endTime: endTime, // Use calculated endTime
-              typeString: res.type.name, // Use type enum name
-              groupSize: res.groupSize, // Use groupSize from model
-              // No need to map governorateId, isRecurring, typeSpecificData to cache for basic validation
+              serviceName: res.serviceName ?? 'Unknown Service',
+              startTime: res.dateTime.toDate(),
+              endTime: res.endTime,
+              typeString: res.type.toString().split('.').last,
+              groupSize: res.groupSize,
             );
+            // Check if different from existing or new
+            if (!existingResKeys.contains(res.id) ||
+                !(await _isReservationSame(res.id, newCachedRes))) {
+              resToPut[res.id] = newCachedRes;
+            }
           } catch (e) {
             print(
               "AccessControlSyncService [syncAllData]: Error processing reservation ${doc.id}: $e",
             );
           }
         }
-      } else {
-        print(
-          "AccessControlSyncService [syncAllData]: Skipping reservation processing as governorateId was missing or fetch failed.",
-        );
       }
 
-      // 3. Write to Hive Boxes (Atomic update using transaction or clear/putAll)
-      // Clearing first ensures removal of stale data
-      await cachedUsersBox.clear();
-      await cachedSubscriptionsBox.clear();
-      await cachedReservationsBox.clear();
-      print("AccessControlSyncService [syncAllData]: Cleared old Hive cache.");
-
-      await cachedUsersBox.putAll(usersToCache);
-      await cachedSubscriptionsBox.putAll(subsToCache);
-      await cachedReservationsBox.putAll(
-        resToCache,
-      ); // Uses updated CachedReservation type
+      // Process batched operations for all three boxes
       print(
-        "AccessControlSyncService [syncAllData]: Hive cache update complete. Users: ${usersToCache.length}, Subs: ${subsToCache.length}, Res: ${resToCache.length}",
+        "AccessControlSyncService [syncAllData]: Writing to Hive - Users: ${usersToPut.length}, Subs: ${subsToPut.length}, Res: ${resToPut.length}",
       );
 
+      // Write all cached users, overwriting existing entries
+      for (var entry in usersToPut.entries) {
+        await cachedUsersBox.put(entry.key, entry.value);
+      }
+
+      // Write all cached subscriptions, overwriting existing entries
+      for (var entry in subsToPut.entries) {
+        await cachedSubscriptionsBox.put(entry.key, entry.value);
+      }
+
+      // Write all cached reservations, overwriting existing entries
+      for (var entry in resToPut.entries) {
+        await cachedReservationsBox.put(entry.key, entry.value);
+      }
+
+      // Cleanup: Delete stale subscriptions
+      final staleSubs =
+          existingSubKeys
+              .where((key) => !currentFirestoreSubIds.contains(key))
+              .toList();
+      for (var key in staleSubs) {
+        await cachedSubscriptionsBox.delete(key);
+      }
+
+      // Cleanup: Delete stale reservations
+      final staleRes =
+          existingResKeys
+              .where((key) => !currentFirestoreResIds.contains(key))
+              .toList();
+      for (var key in staleRes) {
+        await cachedReservationsBox.delete(key);
+      }
+
+      // Update the last sync versions
+      try {
+        await _firestore.collection("sync_metadata").doc(providerId).update({
+          'subscriptions_version': Timestamp.now(),
+          'reservations_version': Timestamp.now(),
+          'last_sync': Timestamp.now(),
+        });
+      } catch (e) {
+        print("Error updating sync versions: $e");
+      }
+
+      stopwatch.stop();
       print(
-        "AccessControlSyncService [syncAllData]: Data synchronization finished successfully.",
+        "AccessControlSyncService [syncAllData]: Version-aware sync finished successfully in ${stopwatch.elapsedMilliseconds}ms.",
       );
     } catch (e, stackTrace) {
+      stopwatch.stop();
       print(
-        "!!! AccessControlSyncService [syncAllData]: Error during data synchronization: $e\n$stackTrace",
+        "!!! AccessControlSyncService [syncAllData]: Error during data sync: $e\n$stackTrace",
       );
+      throw Exception("Sync failed: $e");
     } finally {
       isSyncingNotifier.value = false;
       print(
@@ -388,9 +840,46 @@ class AccessControlSyncService {
     }
   }
 
-  /// Reads unsynced logs from Hive and uploads them to Firestore.
-  /// *** NOTE: Assumes accessLogs are NOT partitioned by governorate ***
+  // --- Helper methods for comparing Firestore data with Hive cache ---
+  Future<bool> _isUserSame(String userId, String firestoreUserName) async {
+    final cached = cachedUsersBox.get(userId);
+    return cached != null && cached.userName == firestoreUserName;
+  }
+
+  Future<bool> _isSubscriptionSame(
+    String subId,
+    CachedSubscription firestoreSub,
+  ) async {
+    final cached = cachedSubscriptionsBox.get(subId);
+    // Use Equatable comparison (or manual field check)
+    return cached != null && cached == firestoreSub;
+    // Manual check example:
+    // return cached != null &&
+    //        cached.userId == firestoreSub.userId &&
+    //        cached.planName == firestoreSub.planName &&
+    //        cached.expiryDate == firestoreSub.expiryDate;
+  }
+
+  Future<bool> _isReservationSame(
+    String resId,
+    CachedReservation firestoreRes,
+  ) async {
+    final cached = cachedReservationsBox.get(resId);
+    // Use Equatable comparison
+    return cached != null && cached == firestoreRes;
+    // Manual check example:
+    // return cached != null &&
+    //        cached.userId == firestoreRes.userId &&
+    //        cached.serviceName == firestoreRes.serviceName &&
+    //        cached.startTime == firestoreRes.startTime &&
+    //        cached.endTime == firestoreRes.endTime &&
+    //        cached.typeString == firestoreRes.typeString &&
+    //        cached.groupSize == firestoreRes.groupSize;
+  }
+
+  /// Reads unsynced logs from Hive and uploads them to Firestore. (No change needed here)
   Future<void> syncAccessLogs() async {
+    // ... existing syncAccessLogs implementation ...
     if (!(_localAccessLogsBox?.isOpen ?? false)) {
       print(
         "AccessControlSyncService [syncLogs]: Cannot sync logs: Hive box not open.",
@@ -508,8 +997,9 @@ class AccessControlSyncService {
     }
   }
 
-  // --- Method to save a new log entry locally ---
+  // --- Method to save a new log entry locally --- (No change needed here)
   Future<void> saveLocalAccessLog(LocalAccessLog log) async {
+    // ... existing saveLocalAccessLog implementation ...
     if (!(_localAccessLogsBox?.isOpen ?? false)) {
       print(
         "AccessControlSyncService [saveLog]: Cannot save log: Hive box not open.",
@@ -529,18 +1019,34 @@ class AccessControlSyncService {
     }
   }
 
-  // --- Methods to query the local cache (used by AccessPointBloc) ---
-
+  // --- Methods to query the local cache (used by AccessPointBloc) --- (No change needed here)
   Future<CachedUser?> getCachedUser(String userId) async {
     if (!(_cachedUsersBox?.isOpen ?? false)) return null;
     try {
-      // Attempt to get directly by key if userId is the key
-      // return cachedUsersBox.get(userId);
-      // OR Iterate through values if key is different from userId field
-      return cachedUsersBox.values.firstWhere((user) => user.userId == userId);
+      // The key for CachedUser box IS the userId in this implementation
+      final cachedUser = cachedUsersBox.get(userId);
+
+      // If user not found in cache, log the issue
+      if (cachedUser == null) {
+        print("User $userId not found in local cache. Will attempt to sync.");
+        // Attempt to trigger a sync to fetch missing users
+        SyncManager().syncNow();
+
+        // Return a temporary user object to prevent UI errors
+        return CachedUser(
+          userId: userId,
+          userName: "User loading...", // Better than "Unknown User"
+        );
+      }
+
+      return cachedUser;
     } catch (e) {
-      // Catches StateError if not found by firstWhere
-      return null;
+      // Catches potential Hive errors during get
+      print("Error getting cached user $userId: $e");
+      return CachedUser(
+        userId: userId,
+        userName: "Error loading user", // Fallback value
+      );
     }
   }
 
@@ -548,42 +1054,526 @@ class AccessControlSyncService {
     String userId,
     DateTime now,
   ) async {
-    if (!(_cachedSubscriptionsBox?.isOpen ?? false)) return null;
-    final startOfDay = DateTime(now.year, now.month, now.day);
-    try {
-      // Iterate and filter in Dart - This can be slow for large boxes
-      return cachedSubscriptionsBox.values.firstWhere(
-        (sub) => sub.userId == userId && !sub.expiryDate.isBefore(startOfDay),
+    if (!(_cachedSubscriptionsBox?.isOpen ?? false)) {
+      print(
+        "FindActiveSubscription: Subscription box not open for user $userId",
       );
-    } catch (e) {
-      // Catches StateError if not found
       return null;
     }
-    // Consider adding Hive indexing if performance becomes an issue
+
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    print(
+      "FindActiveSubscription: Checking for user $userId with date $startOfDay",
+    );
+
+    // Count and log all subscriptions for debugging
+    final allSubs = cachedSubscriptionsBox.values.toList();
+    print(
+      "FindActiveSubscription: Total cached subscriptions: ${allSubs.length}",
+    );
+
+    // Log all subscriptions for this user
+    final userSubs = allSubs.where((sub) => sub.userId == userId).toList();
+    print(
+      "FindActiveSubscription: Found ${userSubs.length} subscriptions for user $userId",
+    );
+
+    for (final sub in userSubs) {
+      print(
+        "FindActiveSubscription: User $userId has subscription ${sub.subscriptionId} with expiry ${sub.expiryDate}",
+      );
+      final isValid = !sub.expiryDate.isBefore(startOfDay);
+      print("FindActiveSubscription: Is valid? $isValid");
+    }
+
+    try {
+      // First look for the most recent active subscription that hasn't expired
+      if (userSubs.isNotEmpty) {
+        // Filter to only include unexpired subscriptions
+        final activeSubscriptions =
+            userSubs
+                .where((sub) => !sub.expiryDate.isBefore(startOfDay))
+                .toList();
+
+        if (activeSubscriptions.isNotEmpty) {
+          // Sort by expiry date (descending) to get the one with the furthest expiry date
+          activeSubscriptions.sort(
+            (a, b) => b.expiryDate.compareTo(a.expiryDate),
+          );
+
+          print(
+            "FindActiveSubscription: Found active subscription ${activeSubscriptions.first.subscriptionId} valid until ${activeSubscriptions.first.expiryDate}",
+          );
+          return activeSubscriptions.first;
+        }
+
+        // Check for subscriptions that expired very recently (within the last 24 hours)
+        // This provides some grace period for renewal
+        final recentlyExpiredSubs =
+            userSubs
+                .where(
+                  (sub) =>
+                      sub.expiryDate.isBefore(startOfDay) &&
+                      sub.expiryDate.isAfter(
+                        startOfDay.subtract(const Duration(days: 1)),
+                      ),
+                )
+                .toList();
+
+        if (recentlyExpiredSubs.isNotEmpty) {
+          // Sort by expiry date (descending) to get the most recently expired
+          recentlyExpiredSubs.sort(
+            (a, b) => b.expiryDate.compareTo(a.expiryDate),
+          );
+
+          print(
+            "FindActiveSubscription: Found recently expired subscription ${recentlyExpiredSubs.first.subscriptionId}, expired on ${recentlyExpiredSubs.first.expiryDate}",
+          );
+          return recentlyExpiredSubs.first;
+        }
+      }
+
+      print(
+        "FindActiveSubscription: No active subscription found for user $userId",
+      );
+      return null;
+    } catch (e) {
+      print("Error finding active subscription for $userId: $e");
+      return null;
+    }
   }
 
-  // *** Uses updated CachedReservation model type, but validation logic is the same ***
   Future<CachedReservation?> findActiveReservation(
     String userId,
     DateTime now,
   ) async {
-    if (!(_cachedReservationsBox?.isOpen ?? false)) return null;
-    try {
-      // Iterate and filter in Dart - This can be slow for large boxes
-      // This logic checks if 'now' falls between the reservation start and end time
-      return cachedReservationsBox.values.firstWhere(
-        (res) =>
-            res.userId == userId &&
-            now.isAfter(res.startTime) &&
-            now.isBefore(res.endTime),
-        // Add more filtering based on reservation typeString if needed for validation
-        // e.g., && res.typeString == ReservationType.timeBased.name
-      );
-    } catch (e) {
-      // Catches StateError if not found
+    if (!(_cachedReservationsBox?.isOpen ?? false)) {
+      print("FindActiveReservation: Reservation box not open for user $userId");
       return null;
     }
-    // Consider adding Hive indexing if performance becomes an issue
+
+    print("FindActiveReservation: Checking for user $userId at time $now");
+
+    // Count and log all reservations for debugging
+    final allReservations = cachedReservationsBox.values.toList();
+    print(
+      "FindActiveReservation: Total cached reservations: ${allReservations.length}",
+    );
+
+    // Log all reservations for this user
+    final userReservations =
+        allReservations.where((res) => res.userId == userId).toList();
+    print(
+      "FindActiveReservation: Found ${userReservations.length} reservations for user $userId",
+    );
+
+    // For debugging - log all reservation details
+    for (final res in userReservations) {
+      print(
+        "FindActiveReservation: User $userId has reservation ${res.reservationId}: ${res.serviceName}",
+      );
+      print(
+        "FindActiveReservation: Start: ${res.startTime}, End: ${res.endTime}",
+      );
+
+      // Determine if the reservation is active
+      final isActive = _isReservationActive(res, now);
+      print("FindActiveReservation: Is active? $isActive");
+    }
+
+    try {
+      // First try to find a reservation that is currently active
+      // Include a 15-minute buffer before and after to be more lenient
+      for (final reservation in userReservations) {
+        if (_isReservationActive(reservation, now)) {
+          print(
+            "FindActiveReservation: Found active reservation ${reservation.reservationId} for user $userId",
+          );
+          return reservation;
+        }
+      }
+
+      // If no active reservation found, check for any upcoming reservation in the next hour
+      // which could be considered valid for early check-in
+      final upcomingReservation =
+          userReservations.where((res) {
+            final startWithBuffer = res.startTime.subtract(
+              const Duration(minutes: 60),
+            );
+            return now.isAfter(startWithBuffer) && now.isBefore(res.startTime);
+          }).toList();
+
+      if (upcomingReservation.isNotEmpty) {
+        // Sort by closest start time
+        upcomingReservation.sort((a, b) => a.startTime.compareTo(b.startTime));
+        print(
+          "FindActiveReservation: Found upcoming reservation for early access: ${upcomingReservation.first.reservationId}",
+        );
+        return upcomingReservation.first;
+      }
+
+      print(
+        "FindActiveReservation: No active reservation found for user $userId",
+      );
+      return null;
+    } catch (e) {
+      print("Error finding active reservation for $userId: $e");
+      return null;
+    }
+  }
+
+  // Helper method to check if a reservation is active at a given time
+  bool _isReservationActive(CachedReservation reservation, DateTime now) {
+    try {
+      // Add buffer time to be more lenient (15 minutes before and after)
+      final bufferedStart = reservation.startTime.subtract(
+        const Duration(minutes: 15),
+      );
+      final bufferedEnd = reservation.endTime.add(const Duration(minutes: 15));
+
+      // Check if current time is within the reservation window
+      return now.isAfter(bufferedStart) && now.isBefore(bufferedEnd);
+    } catch (e) {
+      print("Error checking if reservation is active: $e");
+      return false;
+    }
+  }
+
+  /// Ensures a specific user is cached, fetching from Firestore if necessary
+  Future<void> ensureUserInCache(String userId, String? cachedUserName) async {
+    // If boxes aren't open, we can't do anything
+    if (!(_cachedUsersBox?.isOpen ?? false) ||
+        !(_cachedSubscriptionsBox?.isOpen ?? false) ||
+        !(_cachedReservationsBox?.isOpen ?? false)) {
+      print(
+        "AccessControlSyncService: Cannot ensure user - Hive boxes not open",
+      );
+      return;
+    }
+
+    try {
+      // Check if user already exists in cache with given name (if provided)
+      if (cachedUsersBox.containsKey(userId)) {
+        final existingUser = cachedUsersBox.get(userId)!;
+        // If name matches or no name provided, no need to update
+        if (cachedUserName == null || existingUser.userName == cachedUserName) {
+          print(
+            "AccessControlSyncService: User $userId already in cache with matching name",
+          );
+          return;
+        }
+        // Otherwise, we'll update with the provided name below
+      }
+
+      // If we have a user name, we can directly save without Firestore fetch
+      if (cachedUserName != null && cachedUserName.isNotEmpty) {
+        await cachedUsersBox.put(
+          userId,
+          CachedUser(userId: userId, userName: cachedUserName),
+        );
+        print(
+          "AccessControlSyncService: User $userId cached with provided name: $cachedUserName",
+        );
+        return;
+      }
+
+      // Otherwise, we need to fetch user details from Firestore
+      print(
+        "AccessControlSyncService: Fetching user $userId details from Firestore",
+      );
+
+      // First check in endUsers collection (where mobile app stores user data)
+      final endUserDoc =
+          await _firestore.collection('endUsers').doc(userId).get();
+
+      if (endUserDoc.exists && endUserDoc.data() != null) {
+        final userData = endUserDoc.data()!;
+        final userName =
+            userData['displayName'] ?? userData['name'] ?? 'Unknown User';
+
+        await cachedUsersBox.put(
+          userId,
+          CachedUser(userId: userId, userName: userName as String),
+        );
+
+        // Also fetch any subscriptions and reservations for this user
+        await _fetchUserSubscriptionsAndReservations(userId);
+
+        print(
+          "AccessControlSyncService: User $userId cached from endUsers collection",
+        );
+        return;
+      }
+
+      // If not found in endUsers, try the legacy users collection
+      final userDoc = await _firestore.collection('users').doc(userId).get();
+
+      if (userDoc.exists && userDoc.data() != null) {
+        final userData = userDoc.data()!;
+        final userName =
+            userData['displayName'] ?? userData['name'] ?? 'Unknown User';
+
+        await cachedUsersBox.put(
+          userId,
+          CachedUser(userId: userId, userName: userName as String),
+        );
+        print(
+          "AccessControlSyncService: User $userId cached from users collection",
+        );
+      } else {
+        // If no data found, cache with default name
+        await cachedUsersBox.put(
+          userId,
+          CachedUser(userId: userId, userName: 'Unknown User'),
+        );
+        print(
+          "AccessControlSyncService: User $userId not found in Firestore, cached with default name",
+        );
+      }
+    } catch (e) {
+      print("Error ensuring user in cache: $e");
+      // Create fallback entry
+      await cachedUsersBox.put(
+        userId,
+        CachedUser(userId: userId, userName: 'Error loading user'),
+      );
+    }
+  }
+
+  /// Helper method to fetch user's subscriptions and reservations
+  Future<void> _fetchUserSubscriptionsAndReservations(String userId) async {
+    final User? provider = _auth.currentUser;
+    if (provider == null) return;
+
+    final providerId = provider.uid;
+    final now = DateTime.now();
+    final pastDate = now.subtract(const Duration(days: 7));
+    final futureDate = now.add(const Duration(days: 60));
+
+    try {
+      // Fetch user subscriptions where providerId matches current provider
+      final subQuery =
+          await _firestore
+              .collection('endUsers')
+              .doc(userId)
+              .collection('subscriptions')
+              .where('providerId', isEqualTo: providerId)
+              .where('status', isEqualTo: 'Active')
+              .get();
+
+      print(
+        "_fetchUserSubscriptionsAndReservations: Found ${subQuery.docs.length} subscriptions for user $userId",
+      );
+
+      // Cache subscriptions
+      for (final doc in subQuery.docs) {
+        final data = doc.data();
+        // Only cache if it has needed fields
+        if (data.containsKey('planName') && data.containsKey('expiryDate')) {
+          final expiryDate = data['expiryDate'] as Timestamp?;
+          if (expiryDate != null) {
+            await cachedSubscriptionsBox.put(
+              doc.id,
+              CachedSubscription(
+                userId: userId,
+                subscriptionId: doc.id,
+                planName: data['planName'] as String? ?? 'Subscription',
+                expiryDate: expiryDate.toDate(),
+              ),
+            );
+            print(
+              "_fetchUserSubscriptionsAndReservations: Cached subscription ${doc.id} with expiry ${expiryDate.toDate()}",
+            );
+          }
+        }
+      }
+
+      // Fetch user reservations where providerId matches current provider
+      final resQuery =
+          await _firestore
+              .collection('endUsers')
+              .doc(userId)
+              .collection('reservations')
+              .where('providerId', isEqualTo: providerId)
+              .where('dateTime', isGreaterThan: Timestamp.fromDate(pastDate))
+              .where('dateTime', isLessThan: Timestamp.fromDate(futureDate))
+              .where('status', whereIn: ['Confirmed', 'Pending'])
+              .get();
+
+      print(
+        "_fetchUserSubscriptionsAndReservations: Found ${resQuery.docs.length} reservations for user $userId",
+      );
+
+      // Cache reservations
+      for (final doc in resQuery.docs) {
+        try {
+          final data = doc.data();
+          print(
+            "_fetchUserSubscriptionsAndReservations: Processing reservation ${doc.id}: ${data.toString()}",
+          );
+
+          final Timestamp? dateTime = data['dateTime'] as Timestamp?;
+          DateTime? startTime;
+          DateTime? endTime;
+
+          if (dateTime != null) {
+            startTime = dateTime.toDate();
+
+            // Handle different ways endTime might be stored
+            if (data.containsKey('endTime') && data['endTime'] is Timestamp) {
+              endTime = (data['endTime'] as Timestamp).toDate();
+            } else if (data.containsKey('endTime') && data['endTime'] is Map) {
+              final Map<String, dynamic> endTimeMap =
+                  data['endTime'] as Map<String, dynamic>;
+              if (endTimeMap.containsKey('seconds') &&
+                  endTimeMap.containsKey('nanoseconds')) {
+                final seconds = endTimeMap['seconds'] as int;
+                final nanoseconds = endTimeMap['nanoseconds'] as int;
+                endTime = Timestamp(seconds, nanoseconds).toDate();
+              }
+            } else if (data.containsKey('duration') &&
+                data['duration'] is num) {
+              // If we have duration in minutes, calculate endTime
+              final durationMinutes = (data['duration'] as num).toInt();
+              endTime = startTime.add(Duration(minutes: durationMinutes));
+            } else {
+              // Default to 1 hour duration if no explicit end time
+              endTime = startTime.add(const Duration(hours: 1));
+              print(
+                "_fetchUserSubscriptionsAndReservations: No explicit end time found, using 1 hour default",
+              );
+            }
+
+            // Add buffer time to ensure reservations are active during the actual time slot
+            startTime = startTime.subtract(const Duration(minutes: 15));
+            endTime = endTime?.add(const Duration(minutes: 15));
+
+            print(
+              "_fetchUserSubscriptionsAndReservations: Reservation time - Start: $startTime, End: $endTime",
+            );
+
+            if (startTime != null && endTime != null) {
+              await cachedReservationsBox.put(
+                doc.id,
+                CachedReservation(
+                  userId: userId,
+                  reservationId: doc.id,
+                  serviceName: data['serviceName'] as String? ?? 'Reservation',
+                  startTime: startTime,
+                  endTime: endTime,
+                  typeString: data['type'] as String? ?? 'standard',
+                  groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+                ),
+              );
+              print(
+                "_fetchUserSubscriptionsAndReservations: Successfully cached reservation ${doc.id}",
+              );
+            } else {
+              print(
+                "_fetchUserSubscriptionsAndReservations: Skipping reservation ${doc.id} - Invalid start/end time",
+              );
+            }
+          } else {
+            print(
+              "_fetchUserSubscriptionsAndReservations: Skipping reservation ${doc.id} - Missing dateTime",
+            );
+          }
+        } catch (e) {
+          print("Error caching reservation ${doc.id}: $e");
+        }
+      }
+
+      print(
+        "Cached ${subQuery.docs.length} subscriptions and ${resQuery.docs.length} reservations for user $userId",
+      );
+    } catch (e) {
+      print("Error fetching user subscriptions/reservations for $userId: $e");
+    }
+  }
+
+  /// Retrieves a reservation from cache by its ID
+  Future<Map<String, dynamic>?> getReservationFromCache(
+    String reservationId,
+  ) async {
+    try {
+      if (reservationId.isEmpty) return null;
+
+      // Ensure the box is open
+      if (_cachedReservationsBox == null || !_cachedReservationsBox!.isOpen) {
+        await init();
+      }
+
+      // Try to get the reservation by ID
+      final reservation = _cachedReservationsBox?.get(reservationId);
+
+      if (reservation != null) {
+        // Convert CachedReservation to Map<String, dynamic>
+        return {
+          'reservationId': reservation.reservationId,
+          'serviceName': reservation.serviceName,
+          'serviceDescription':
+              reservation.typeString, // Using typeString as description
+          'startTime': reservation.startTime,
+          'endTime': reservation.endTime,
+          'status': 'active', // Default status
+          'paymentStatus': 'paid', // Default payment status
+          'paymentMethod': 'card', // Default payment method
+          'totalAmount': 0.0, // Default amount
+          'location': '', // Default location
+          'notes': '', // Default notes
+        };
+      }
+
+      return null;
+    } catch (e) {
+      print('Error retrieving reservation from cache: $e');
+      return null;
+    }
+  }
+
+  /// Retrieves a subscription from cache by its ID
+  Future<Map<String, dynamic>?> getSubscriptionFromCache(
+    String subscriptionId,
+  ) async {
+    try {
+      if (subscriptionId.isEmpty) return null;
+
+      // Ensure the box is open
+      if (_cachedSubscriptionsBox == null || !_cachedSubscriptionsBox!.isOpen) {
+        await init();
+      }
+
+      // Try to get the subscription by ID
+      final subscription = _cachedSubscriptionsBox?.get(subscriptionId);
+
+      if (subscription != null) {
+        // Convert CachedSubscription to Map<String, dynamic>
+        return {
+          'subscriptionId': subscription.subscriptionId,
+          'planName': subscription.planName,
+          'planDescription': 'Subscription plan', // Default description
+          'startDate': DateTime.now().subtract(
+            const Duration(days: 30),
+          ), // Default start date
+          'endDate': subscription.expiryDate,
+          'status':
+              DateTime.now().isBefore(subscription.expiryDate)
+                  ? 'active'
+                  : 'expired',
+          'paymentStatus': 'paid', // Default payment status
+          'paymentMethod': 'card', // Default payment method
+          'amount': 0.0, // Default amount
+          'interval': 'monthly', // Default interval
+          'autoRenew': false, // Default auto-renewal setting
+          'features': <String>[], // Default features list
+        };
+      }
+
+      return null;
+    } catch (e) {
+      print('Error retrieving subscription from cache: $e');
+      return null;
+    }
   }
 
   // --- End Synchronization Methods ---

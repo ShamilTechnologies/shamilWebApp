@@ -5,20 +5,24 @@ library;
 import 'dart:async';
 import 'dart:math'; // For exponential backoff calculation
 import 'package:flutter/foundation.dart'; // For ValueNotifier
+import 'package:flutter/material.dart';
 
 // Import dependent services
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
+import 'package:shamil_web_app/features/dashboard/services/reservation_sync_service.dart';
 import 'package:shamil_web_app/core/services/connectivity_service.dart';
 
-// Enum for detailed sync status
+/// SyncStatus represents the current synchronization state
 enum SyncStatus {
-  idle, // Not syncing, no error
-  syncingData, // Downloading data from cloud
-  syncingLogs, // Uploading logs to cloud
-  success, // Last sync completed successfully
-  failed, // Last sync attempt failed
+  idle, // Not currently syncing
+  syncingLogs, // Uploading local logs to server
+  syncingData, // Downloading remote data to local cache
+  success, // Last sync operation completed successfully
+  failed, // Last sync operation failed
 }
 
+/// SyncManager handles data synchronization between local cache and remote server.
+/// It coordinates with ConnectivityService to sync when online.
 class SyncManager {
   // Singleton pattern
   static final SyncManager _instance = SyncManager._internal();
@@ -26,204 +30,271 @@ class SyncManager {
   SyncManager._internal();
 
   // Dependencies
-  final AccessControlSyncService _syncService = AccessControlSyncService();
   final ConnectivityService _connectivityService = ConnectivityService();
+  final AccessControlSyncService _accessControlSyncService =
+      AccessControlSyncService();
+  final ReservationSyncService _reservationSyncService =
+      ReservationSyncService();
 
-  // Timers
-  Timer? _periodicSyncTimer;
-  Timer? _retryTimer;
-
-  // State
+  // Status notifiers
   final ValueNotifier<SyncStatus> syncStatusNotifier = ValueNotifier(
     SyncStatus.idle,
   );
-  DateTime? _lastSuccessfulSyncTime;
+  final ValueNotifier<DateTime?> lastSyncTimeNotifier = ValueNotifier(null);
+  final ValueNotifier<String?> lastErrorNotifier = ValueNotifier(null);
+  final ValueNotifier<bool> hasDataToSyncNotifier = ValueNotifier(false);
+
+  // Periodic sync timer
+  Timer? _syncTimer;
+
+  // Sync throttling
+  DateTime? _lastSyncAttempt;
+  static const Duration _minSyncInterval = Duration(minutes: 1);
+
+  // Add these variables near the top of the class
   int _retryCount = 0;
-  static const int _maxRetries = 5; // Max retry attempts
-  static const Duration _initialRetryDelay = Duration(
-    seconds: 30,
-  ); // Initial delay before first retry
-  static const Duration _periodicSyncInterval = Duration(
-    hours: 4,
-  ); // How often to sync periodically
+  Timer? _retryTimer;
+  static const int _maxRetries = 5;
 
-  DateTime? getLastSuccessfulSyncTime() => _lastSuccessfulSyncTime;
-
-  /// Initializes the SyncManager, starts listening to connectivity.
+  /// Initializes the SyncManager and sets up connectivity listener
   Future<void> initialize() async {
-    print("SyncManager: Initializing...");
-    // Listen to network changes
-    _connectivityService.statusNotifier.addListener(_handleNetworkChange);
+    print("SyncManager: initializing...");
 
-    // Perform initial sync after a short delay (allow init of other services)
-    await Future.delayed(const Duration(seconds: 10));
-    print("SyncManager: Triggering initial sync...");
-    await triggerSync(isInitialSync: true);
+    // Listen for connectivity changes
+    _connectivityService.statusNotifier.addListener(_onConnectivityChanged);
 
-    // Start periodic sync
-    _startPeriodicSync();
-    print("SyncManager: Initialization complete.");
-  }
+    // Initialize required services
+    try {
+      await _accessControlSyncService.init();
+      await _reservationSyncService.init();
 
-  /// Stops timers and listeners.
-  void dispose() {
-    print("SyncManager: Disposing...");
-    _periodicSyncTimer?.cancel();
-    _retryTimer?.cancel();
-    _connectivityService.statusNotifier.removeListener(_handleNetworkChange);
-    syncStatusNotifier.dispose();
-  }
+      // Start real-time reservation listener
+      await _reservationSyncService.startReservationListener();
 
-  // --- Public Methods ---
-
-  /// Manually triggers a synchronization attempt.
-  Future<void> triggerSync({bool isInitialSync = false}) async {
-    // Prevent concurrent syncs
-    if (syncStatusNotifier.value == SyncStatus.syncingData ||
-        syncStatusNotifier.value == SyncStatus.syncingLogs) {
-      print("SyncManager: Sync already in progress, skipping trigger.");
-      return;
+      print("SyncManager: Services initialized successfully");
+    } catch (e) {
+      print("SyncManager: Error initializing services: $e");
+      lastErrorNotifier.value = "Error initializing services: $e";
+      // Continue with initialization despite errors
     }
 
-    if (_connectivityService.statusNotifier.value == NetworkStatus.offline) {
-      print("SyncManager: Cannot sync, network is offline.");
-      // Optionally update status to idle or keep as failed if previous attempt failed
-      if (syncStatusNotifier.value != SyncStatus.failed) {
-        syncStatusNotifier.value = SyncStatus.idle;
-      }
-      return;
-    }
+    // Check if we have any pending data to sync
+    await _checkForPendingData();
 
-    print(
-      "SyncManager: Starting manual/triggered sync (Initial: $isInitialSync)...",
-    );
-    await _performSynchronization();
-  }
+    // Schedule periodic sync
+    _setupPeriodicSync();
 
-  // --- Private Methods ---
-
-  /// Handles network status changes reported by ConnectivityService.
-  void _handleNetworkChange() {
-    print(
-      "SyncManager: Network status changed to ${_connectivityService.statusNotifier.value}",
-    );
+    // Initial sync if online
     if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
-      // When coming online, trigger a sync (especially if the last attempt failed)
-      print("SyncManager: Network back online. Triggering sync.");
-      _retryCount = 0; // Reset retries on successful connection
-      _retryTimer?.cancel(); // Cancel any pending retry
-      triggerSync();
-    } else {
-      // Network offline
-      syncStatusNotifier.value = SyncStatus.idle; // Or keep failed status?
-      _retryTimer?.cancel(); // Stop retrying if network goes offline
+      await _scheduleInitialSync();
+    }
+
+    print("SyncManager: initialized successfully");
+  }
+
+  /// Schedules an initial sync with a delay to avoid startup congestion
+  Future<void> _scheduleInitialSync() async {
+    await Future.delayed(const Duration(seconds: 3));
+    if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+      await syncNow();
     }
   }
 
-  /// Starts the timer for periodic background synchronization.
-  void _startPeriodicSync() {
-    _periodicSyncTimer?.cancel(); // Ensure only one timer runs
-    print(
-      "SyncManager: Starting periodic sync timer (Interval: $_periodicSyncInterval)",
-    );
-    _periodicSyncTimer = Timer.periodic(_periodicSyncInterval, (_) async {
-      print("SyncManager: Periodic sync timer fired.");
-      await triggerSync();
+  /// Sets up a periodic sync timer
+  void _setupPeriodicSync() {
+    _syncTimer?.cancel();
+    _syncTimer = Timer.periodic(const Duration(minutes: 15), (_) {
+      if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+        syncNow();
+      }
     });
   }
 
+  /// Check if we have pending logs to sync
+  Future<void> _checkForPendingData() async {
+    try {
+      // Compute if there are unsynced logs
+      final unsyncedCount =
+          _accessControlSyncService.localAccessLogsBox.values
+              .where((log) => log.needsSync)
+              .length;
+
+      hasDataToSyncNotifier.value = unsyncedCount > 0;
+      print("SyncManager: Found $unsyncedCount unsynced logs");
+    } catch (e) {
+      print("SyncManager: Error checking for pending data: $e");
+    }
+  }
+
+  /// Triggered when connectivity status changes
+  void _onConnectivityChanged() {
+    final status = _connectivityService.statusNotifier.value;
+    print("SyncManager: Connectivity changed to $status");
+
+    if (status == NetworkStatus.online) {
+      // On reconnection, check if we need to sync
+      _checkForPendingData().then((_) {
+        if (hasDataToSyncNotifier.value) {
+          syncNow();
+        }
+      });
+    }
+  }
+
+  /// Syncs now if conditions permit
+  Future<bool> syncNow() async {
+    // Check if we can sync
+    if (syncStatusNotifier.value == SyncStatus.syncingData ||
+        syncStatusNotifier.value == SyncStatus.syncingLogs) {
+      print("SyncManager: Sync already in progress, skipping request");
+      return false;
+    }
+
+    // Check throttling
+    if (_lastSyncAttempt != null) {
+      final timeSinceLastSync = DateTime.now().difference(_lastSyncAttempt!);
+      if (timeSinceLastSync < _minSyncInterval) {
+        print("SyncManager: Throttling sync request (too soon)");
+        return false;
+  }
+    }
+
+    // Check connectivity
+    if (_connectivityService.statusNotifier.value != NetworkStatus.online) {
+      print("SyncManager: Can't sync (offline)");
+      lastErrorNotifier.value = "Device is offline";
+      return false;
+    }
+
+    _lastSyncAttempt = DateTime.now();
+    return _performSynchronization();
+  }
+
   /// Performs the actual data download and log upload sequence.
-  Future<void> _performSynchronization() async {
+  Future<bool> _performSynchronization() async {
     bool logSyncSuccess = false;
     bool dataSyncSuccess = false;
+    bool reservationSyncSuccess = false;
+    String? errorMessage;
 
     // 1. Sync Logs Up first
     if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
       try {
+        print("SyncManager: Starting log synchronization...");
         syncStatusNotifier.value = SyncStatus.syncingLogs;
-        await _syncService
-            .syncAccessLogs(); // Assuming this now returns bool or throws
-        logSyncSuccess = true; // Assume success if no exception
-        print("SyncManager: Log sync successful.");
-      } catch (e) {
+        await _accessControlSyncService.syncAccessLogs();
+        logSyncSuccess = true;
+        print("SyncManager: Log sync successfully completed");
+      } catch (e, stackTrace) {
         print("!!! SyncManager: Error during log sync: $e");
+        print(stackTrace);
         logSyncSuccess = false;
+        errorMessage =
+            "Failed to upload logs: ${e.toString().split('\n').first}";
       }
     } else {
       print("SyncManager: Skipping log sync (offline).");
-      logSyncSuccess =
-          true; // Consider it "success" in terms of not blocking data sync
+      errorMessage = "Device is offline";
     }
 
-    // 2. Sync Data Down (if log sync didn't critically fail or if offline)
+    // 2. Sync Data Down next
     if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
       try {
+        print("SyncManager: Starting data synchronization...");
         syncStatusNotifier.value = SyncStatus.syncingData;
-        await _syncService
-            .syncAllData(); // Assuming this now returns bool or throws
+
+        // First sync access control data (Hive)
+        await _accessControlSyncService.syncAllData();
         dataSyncSuccess = true;
-        print("SyncManager: Data sync successful.");
-      } catch (e) {
+        print("SyncManager: Access control data sync completed");
+
+        // Then sync reservations (Firestore)
+        print("SyncManager: Starting reservation synchronization...");
+        final reservations = await _reservationSyncService.syncReservations();
+        reservationSyncSuccess = true;
+        print(
+          "SyncManager: Retrieved ${reservations.length} reservations during sync",
+        );
+
+        // Update last sync time
+        lastSyncTimeNotifier.value = DateTime.now();
+      } catch (e, stackTrace) {
         print("!!! SyncManager: Error during data sync: $e");
+        print(stackTrace);
         dataSyncSuccess = false;
+        errorMessage =
+            "Failed to download data: ${e.toString().split('\n').first}";
       }
     } else {
       print("SyncManager: Skipping data sync (offline).");
-      dataSyncSuccess = true; // Consider it "success" as offline is expected
+      errorMessage = "Device is offline";
     }
 
-    // 3. Update Final Status & Handle Retries
-    if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
-      if (logSyncSuccess && dataSyncSuccess) {
+    // Update sync status
+    if (dataSyncSuccess && logSyncSuccess && reservationSyncSuccess) {
         syncStatusNotifier.value = SyncStatus.success;
-        _lastSuccessfulSyncTime = DateTime.now();
-        _retryCount = 0; // Reset retries on full success
-        _retryTimer?.cancel();
-        print("SyncManager: Full sync successful at $_lastSuccessfulSyncTime.");
-      } else {
-        syncStatusNotifier.value = SyncStatus.failed;
-        _scheduleRetry(); // Schedule retry on failure
-      }
+      lastErrorNotifier.value = null;
+      lastSyncTimeNotifier.value = DateTime.now();
+      print("SyncManager: All sync operations completed successfully");
+      _resetRetryCounter(); // Reset retry counter on success
+      return true;
     } else {
-      // If offline, reset status to idle (or keep failed?)
-      syncStatusNotifier.value = SyncStatus.idle;
-      _retryTimer?.cancel(); // Don't retry while offline
-      print("SyncManager: Sync cycle finished while offline.");
+      syncStatusNotifier.value = SyncStatus.failed;
+      lastErrorNotifier.value = errorMessage ?? "Unknown sync error";
+      print("SyncManager: Sync failed with error: $errorMessage");
+
+      // Schedule retry with exponential backoff
+      _scheduleRetry();
+      return false;
     }
   }
 
-  /// Schedules a retry attempt with exponential backoff.
+  /// Schedules a retry with exponential backoff
   void _scheduleRetry() {
-    _retryTimer?.cancel(); // Cancel previous retry timer if any
+    // Cancel any existing retry timer
+    _retryTimer?.cancel();
 
-    if (_retryCount >= _maxRetries) {
-      print(
-        "SyncManager: Max retry attempts reached. Stopping automatic retries.",
-      );
-      // Optionally notify user persistently about sync failure
-      return;
-    }
-
+    // Increment retry count
     _retryCount++;
-    // Calculate delay: initial * 2^(retryCount-1) + some random jitter
-    final delay = _initialRetryDelay * pow(2, _retryCount - 1);
-    final jitter = Duration(seconds: Random().nextInt(15)); // Add 0-15s jitter
-    final finalDelay = delay + jitter;
 
-    print("SyncManager: Scheduling retry attempt #$_retryCount in $finalDelay");
+    // Calculate delay with exponential backoff
+    if (_retryCount <= _maxRetries) {
+      // Calculate exponential backoff delay with jitter
+      // Base delay: 2^retry * 1000 milliseconds + random jitter
+      final baseDelay = pow(2, _retryCount) * 1000;
+      final jitter = Random().nextInt(1000); // 0-1000ms of jitter
+      final delayMs = baseDelay + jitter;
 
-    _retryTimer = Timer(finalDelay, () async {
-      print("SyncManager: Executing retry attempt #$_retryCount");
-      // Only attempt retry if still online
-      if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
-        await _performSynchronization(); // Re-run the whole sync process
-      } else {
-        print(
-          "SyncManager: Skipping retry (network offline). Resetting retry count.",
-        );
-        _retryCount = 0; // Reset count if network is lost during retry wait
-        syncStatusNotifier.value = SyncStatus.idle; // Or keep failed?
-      }
-    });
+      print("SyncManager: Scheduling retry #$_retryCount in ${delayMs}ms");
+
+      _retryTimer = Timer(Duration(milliseconds: delayMs.toInt()), () {
+        if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+          print("SyncManager: Executing retry #$_retryCount");
+          syncNow();
+        }
+      });
+    } else {
+      print(
+        "SyncManager: Maximum retry count ($_maxRetries) reached, not scheduling more retries",
+      );
+      _retryCount = 0; // Reset for next time
+    }
+  }
+
+  /// Resets the retry counter, useful when sync succeeds
+  void _resetRetryCounter() {
+    _retryCount = 0;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  /// Clean up resources
+  Future<void> dispose() async {
+    print("SyncManager: disposing...");
+    _syncTimer?.cancel();
+    _connectivityService.statusNotifier.removeListener(_onConnectivityChanged);
+    await _reservationSyncService.dispose();
+    await _accessControlSyncService.close();
+    print("SyncManager: disposed successfully");
   }
 }

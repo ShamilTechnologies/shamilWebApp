@@ -1,11 +1,14 @@
 /// File: lib/features/dashboard/views/pages/access_control_screen.dart
 /// --- Screen for viewing logs AND performing access validation ---
-/// --- UPDATED: Declared _selectedComPort state variable ---
+/// --- UPDATED: Added buildWhen to BlocBuilders ---
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+// Added import for collection equality
+import 'package:collection/collection.dart';
+
 // Only needed for Timestamp in AccessLog model
 // Import QR Scanner
 
@@ -20,13 +23,14 @@ import 'package:shamil_web_app/features/dashboard/helper/dashboard_widgets.dart'
 // *** Ensure this path is correct ***
 // Import the Blocs
 // *** Ensure these paths are correct ***
-import 'package:shamil_web_app/features/dashboard/bloc/access_control_bloc/access_control_bloc.dart';
+import 'package:shamil_web_app/features/access_control/bloc/access_control_bloc/access_control_bloc.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
 // Import Dashboard Bloc to read provider info
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
 // Import NFC Service for Enum (used in AccessPointState)
 
 class AccessControlScreen extends StatefulWidget {
+  // Added const constructor
   const AccessControlScreen({super.key});
 
   @override
@@ -36,6 +40,8 @@ class AccessControlScreen extends StatefulWidget {
 class _AccessControlScreenState extends State<AccessControlScreen> {
   // State variable for selected COM port (managed locally in this screen)
   String? _selectedComPort;
+  final ScrollController _logScrollController =
+      ScrollController(); // For potential infinite scroll
 
   // --- Dialog Helpers (Log Details) ---
   void _showLogDetailsDialog(BuildContext context, AccessLog log) {
@@ -44,6 +50,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
+            // Added const
             title: const Text("Access Log Details"),
             content: SingleChildScrollView(
               child: ListBody(
@@ -65,6 +72,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
             ),
             actions: <Widget>[
               TextButton(
+                // Added const
                 child: const Text('Close'),
                 onPressed: () => Navigator.of(dialogContext).pop(),
               ),
@@ -75,6 +83,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
 
   Widget _buildDetailRow(String label, String value) {
     return Padding(
+      // Added const
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,13 +96,17 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
   }
   // --- End Dialog Helpers ---
 
-  // No scanner controller needed anymore
-  // @override void dispose() { super.dispose(); }
+  // Dispose scroll controller
+  @override
+  void dispose() {
+    _logScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     // AccessPointBloc needs DashboardBloc, ensure it's provided above this screen
-    final dashboardBloc = BlocProvider.of<DashboardBloc>(context);
+    // final dashboardBloc = BlocProvider.of<DashboardBloc>(context); // Not strictly needed here anymore
 
     // Provide the Blocs needed for this screen's functionality
     return MultiBlocProvider(
@@ -102,35 +115,38 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
         BlocProvider(
           create: (context) => AccessControlBloc()..add(const LoadAccessLogs()),
         ),
-        // AccessPointBloc is provided globally (in main.dart), but we listen to it here
-        // We don't need to provide it again, but can access it via context.read or BlocBuilder/Listener
-        // If AccessPointBloc wasn't global, you'd provide it here:
-        // BlocProvider(create: (context) => AccessPointBloc(dashboardBloc: dashboardBloc)..add(ListAvailablePorts())),
       ],
       child: Container(
         color: AppColors.lightGrey,
-        child: ListView(
-          padding: const EdgeInsets.all(24.0),
-          children: [
-            // --- Screen Header ---
-            _buildScreenHeader(),
-            const SizedBox(height: 20),
+        // Use Scaffold to easily add AppBar if needed later
+        child: Scaffold(
+          backgroundColor: AppColors.lightGrey,
+          // Removed AppBar for integration into DashboardScreen
+          body: ListView(
+            // Use ListView to allow scrolling of all sections together
+            controller: _logScrollController, // Attach scroll controller
+            padding: const EdgeInsets.all(24.0),
+            children: [
+              // --- Screen Header ---
+              _buildScreenHeader(),
+              const SizedBox(height: 20),
 
-            // --- NFC Reader Configuration & Status Section ---
-            _buildNfcConfigSection(), // Renamed section
-            const SizedBox(height: 20),
+              // --- NFC Reader Configuration & Status Section ---
+              _buildNfcConfigSection(), // Renamed section
+              const SizedBox(height: 20),
 
-            // --- Last Validation Result Display ---
-            _buildLastValidationResultSection(), // Separated result display
-            const SizedBox(height: 20),
+              // --- Last Validation Result Display ---
+              _buildLastValidationResultSection(), // Separated result display
+              const SizedBox(height: 20),
 
-            // --- Filter/Search Bar for Logs ---
-            _FilterBar(),
-            const SizedBox(height: 20),
+              // --- Filter/Search Bar for Logs ---
+              const _FilterBar(), // Keep placeholder filter bar
+              const SizedBox(height: 20),
 
-            // --- Log List Section ---
-            _buildLogListSection(),
-          ],
+              // --- Log List Section ---
+              _buildLogListSection(), // This now contains the paginated list
+            ],
+          ),
         ),
       ),
     );
@@ -139,9 +155,8 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
   // --- Extracted Widget Builders ---
 
   Widget _buildScreenHeader() {
-    // Use BlocBuilder to get the sync service instance if needed, or access directly
-    // final syncService = AccessControlSyncService(); // Access singleton directly if needed
     return Padding(
+      // Added const
       padding: const EdgeInsets.only(bottom: 16.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -150,42 +165,132 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
             "Access Control",
             style: getTitleStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
-          // Removed Sync Buttons - Syncing should ideally be automatic/background
-          // Or add a dedicated settings/status area elsewhere if manual sync is needed
+          // Add Mobile App Data Refresh Button
+          BlocBuilder<AccessControlBloc, AccessControlState>(
+            builder: (context, state) {
+              // Show loading indicator if syncing
+              bool isSyncing =
+                  state is AccessControlLoading && !state.isLoadingMore;
+
+              return TextButton.icon(
+                onPressed:
+                    isSyncing
+                        ? null
+                        : () async {
+                          // Show loading state
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Refreshing data from mobile app structure...',
+                              ),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+
+                          // Call the mobile app data refresh method
+                          final result =
+                              await context
+                                  .read<AccessControlBloc>()
+                                  .repository
+                                  .refreshMobileAppData();
+
+                          // Show result
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  result
+                                      ? 'Mobile app data refreshed successfully!'
+                                      : 'Failed to refresh mobile app data.',
+                                ),
+                                backgroundColor:
+                                    result
+                                        ? Colors.green.shade700
+                                        : Colors.red.shade700,
+                              ),
+                            );
+
+                            // Reload logs if successful
+                            if (result) {
+                              context.read<AccessControlBloc>().add(
+                                const LoadAccessLogs(),
+                              );
+                            }
+                          }
+                        },
+                icon:
+                    isSyncing
+                        ? SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.accentColor,
+                          ),
+                        )
+                        : Icon(Icons.sync, color: AppColors.secondaryColor),
+                label: Text(
+                  'Sync Mobile App Data',
+                  style: getbodyStyle(color: AppColors.secondaryColor),
+                ),
+                style: TextButton.styleFrom(
+                  backgroundColor: AppColors.lightGrey.withOpacity(0.5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
   Widget _buildNfcConfigSection() {
-    // This section now only contains NFC connection controls
     return buildSectionContainer(
       title: "NFC Reader Connection",
+      // Added const
       padding: const EdgeInsets.all(20),
       child: BlocBuilder<AccessPointBloc, AccessPointState>(
-        // Listen to AccessPointBloc for status/ports
+        // *** ADDED buildWhen for NFC section ***
+        buildWhen: (previous, current) {
+          return previous.nfcStatus != current.nfcStatus ||
+              !const ListEquality().equals(
+                previous.availablePorts,
+                current.availablePorts,
+              );
+        },
         builder: (context, state) {
+          print(
+            "BUILDER: _buildNfcConfigSection - State: ${state.runtimeType}",
+          ); // Debug log
           bool isConnected =
               state.nfcStatus == SerialPortConnectionStatus.connected;
           bool isConnecting =
               state.nfcStatus == SerialPortConnectionStatus.connecting;
           bool isError = state.nfcStatus == SerialPortConnectionStatus.error;
 
-          // Ensure selected port is valid if available ports change
-          if (_selectedComPort != null &&
-              !state.availablePorts.contains(_selectedComPort)) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() => _selectedComPort = null);
-            });
-          }
+          // Update local state for dropdown if needed (safe check)
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted &&
+                _selectedComPort != null &&
+                !state.availablePorts.contains(_selectedComPort)) {
+              setState(() => _selectedComPort = null);
+            }
+          });
 
           return Row(
             children: [
+              // Added const
               const Icon(Icons.nfc_rounded, color: AppColors.secondaryColor),
+              // Added const
               const SizedBox(width: 8),
               Expanded(
                 child: DropdownButtonFormField<String>(
                   value: _selectedComPort,
+                  // Added const
                   hint: const Text("Select NFC Reader Port"),
                   items:
                       state.availablePorts
@@ -204,6 +309,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                               _selectedComPort = value;
                             });
                           },
+                  // Added const
                   decoration: const InputDecoration(
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(
@@ -214,6 +320,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                   ),
                 ),
               ),
+              // Added const
               const SizedBox(width: 10),
               ElevatedButton(
                 onPressed:
@@ -235,6 +342,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                       isConnected
                           ? AppColors.secondaryColor
                           : AppColors.primaryColor,
+                  // Added const
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 10,
@@ -242,6 +350,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                 ),
                 child:
                     isConnecting
+                        // Added const
                         ? const SizedBox(
                           width: 16,
                           height: 16,
@@ -252,6 +361,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                         )
                         : Text(isConnected ? "Disconnect" : "Connect"),
               ),
+              // Added const
               const SizedBox(width: 10),
               // Status Indicator
               Tooltip(
@@ -290,26 +400,39 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
   }
 
   Widget _buildLastValidationResultSection() {
-    // This section listens to the AccessPointBloc to show the *last* validation result
     return BlocBuilder<AccessPointBloc, AccessPointState>(
+      // *** ADDED buildWhen for Validation Result Section ***
+      // Rebuild only if the state type changes OR if it's a Result state and the content differs
+      buildWhen: (previous, current) {
+        if (previous.runtimeType != current.runtimeType) return true;
+        if (current is AccessPointResult && previous is AccessPointResult) {
+          return current != previous; // Use Equatable comparison
+        }
+        // Only rebuild other state transitions (e.g., Initial -> Validating)
+        return current is! AccessPointResult || previous is! AccessPointResult;
+      },
       builder: (context, state) {
+        print(
+          "BUILDER: _buildLastValidationResultSection - State: ${state.runtimeType}",
+        ); // Debug log
         Widget content;
         if (state is AccessPointResult) {
           content = _buildValidationResultWidget(state);
         } else if (state is AccessPointValidating) {
-          // Show a subtle validating indicator or just the previous state
+          // Added const
           content = const Padding(
             padding: EdgeInsets.symmetric(vertical: 10.0),
+            // Added const
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [Text("Validating...")],
             ),
-          ); // Or simply show nothing/previous result
+          );
         } else {
-          // Show prompt if NFC is connected, otherwise maybe hide section or show different message
           bool isNfcConnected =
               state.nfcStatus == SerialPortConnectionStatus.connected;
           content = Padding(
+            // Added const
             padding: const EdgeInsets.symmetric(vertical: 10.0),
             child: Text(
               isNfcConnected
@@ -323,8 +446,8 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
 
         return buildSectionContainer(
           title: "Last Scan Result",
+          // Added const
           padding: const EdgeInsets.all(20),
-          // Optionally add a clear button linked to ResetAccessPoint event
           trailingAction:
               (state is AccessPointResult || state is AccessPointValidating)
                   ? TextButton(
@@ -332,11 +455,12 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                         () => context.read<AccessPointBloc>().add(
                           ResetAccessPoint(),
                         ),
+                    // Added const
                     child: const Text("Clear"),
                   )
                   : null,
           child: AnimatedSize(
-            // Animate size changes
+            // Added const
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
             child: content,
@@ -346,8 +470,9 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
     );
   }
 
-  // Renamed from _buildValidationResult to avoid conflict if kept locally
+  // Widget to display the validation result - No change needed
   Widget _buildValidationResultWidget(AccessPointResult state) {
+    // ... same as before ...
     IconData icon;
     Color color;
     switch (state.validationStatus) {
@@ -369,6 +494,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
         break;
     }
     return Container(
+      // Added const
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
@@ -379,6 +505,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 32),
+          // Added const
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -394,6 +521,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                 ),
                 if (state.userName != null)
                   Padding(
+                    // Added const
                     padding: const EdgeInsets.only(top: 4.0),
                     child: Text(
                       state.userName!,
@@ -402,6 +530,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                   ),
                 if (state.message != null)
                   Padding(
+                    // Added const
                     padding: const EdgeInsets.only(top: 4.0),
                     child: Text(
                       state.message!,
@@ -409,6 +538,7 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
                     ),
                   ),
                 Padding(
+                  // Added const
                   padding: const EdgeInsets.only(top: 6.0),
                   child: Text(
                     "ID: ${state.scannedId} (${state.method})",
@@ -423,13 +553,13 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
     );
   }
 
+  // --- Updated Log List Section with Pagination UI ---
   Widget _buildLogListSection() {
-    // This part uses the AccessControlBloc (for viewing logs) - unchanged
     return buildSectionContainer(
       title: "Recent Activity Log",
       padding: const EdgeInsets.all(0), // Let list handle padding
       trailingAction: IconButton(
-        // Example: Refresh button for logs
+        // Added const
         icon: const Icon(
           Icons.refresh_rounded,
           color: AppColors.secondaryColor,
@@ -439,13 +569,35 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
             () => context.read<AccessControlBloc>().add(const LoadAccessLogs()),
       ),
       child: BlocBuilder<AccessControlBloc, AccessControlState>(
+        // *** ADDED buildWhen for Log List Section ***
+        buildWhen: (previous, current) {
+          // Rebuild only if it's an error state or if the loaded logs/flags change
+          if (current is AccessControlError) return true;
+          if (previous is AccessControlLoaded &&
+              current is AccessControlLoaded) {
+            // Use ListEquality for logs comparison
+            return previous.hasReachedMax != current.hasReachedMax ||
+                !const ListEquality().equals(
+                  previous.accessLogs,
+                  current.accessLogs,
+                );
+          }
+          // Rebuild if transitioning between loading/loaded/initial/error states
+          return previous.runtimeType != current.runtimeType;
+        },
         builder: (context, state) {
-          if (state is AccessControlLoading) {
+          print(
+            "BUILDER: _buildLogListSection - State: ${state.runtimeType}",
+          ); // Debug log
+          // Handle initial loading
+          if (state is AccessControlLoading && !state.isLoadingMore) {
+            // Added const
             return const Center(
               heightFactor: 5,
               child: CircularProgressIndicator(),
             );
           }
+          // Handle error state
           if (state is AccessControlError) {
             return Center(
               heightFactor: 5,
@@ -455,51 +607,124 @@ class _AccessControlScreenState extends State<AccessControlScreen> {
               ),
             );
           }
-          if (state is AccessControlLoaded) {
-            if (state.accessLogs.isEmpty) {
+          // Handle loaded or loading more states
+          if (state is AccessControlLoaded ||
+              (state is AccessControlLoading && state.isLoadingMore)) {
+            // Determine the list of logs and flags based on the current state
+            final List<AccessLog> logs;
+            final bool hasReachedMax;
+            final bool isLoadingMore;
+
+            if (state is AccessControlLoaded) {
+              logs = state.accessLogs;
+              hasReachedMax = state.hasReachedMax;
+              isLoadingMore = false;
+            } else {
+              // Must be AccessControlLoading && state.isLoadingMore
+              // Access the underlying loaded state to display existing logs while loading more
+              final underlyingState = context.read<AccessControlBloc>().state;
+              logs =
+                  underlyingState is AccessControlLoaded
+                      ? underlyingState.accessLogs
+                      : [];
+              hasReachedMax = false;
+              isLoadingMore = true;
+            }
+
+            // Handle empty state
+            if (logs.isEmpty && !isLoadingMore) {
               return buildEmptyState("No access logs found.");
             }
-            return ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: state.accessLogs.length,
-              separatorBuilder:
-                  (_, __) => const Divider(
-                    height: 1,
-                    thickness: 0.5,
-                    indent: 20,
-                    endIndent: 20,
-                  ),
-              itemBuilder: (context, index) {
-                final log = state.accessLogs[index];
-                return _LogListItem(
-                  log: log,
-                  onTap: () => _showLogDetailsDialog(context, log),
-                );
-              },
+
+            // Build the list view + load more button/indicator
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListView.separated(
+                  shrinkWrap: true, // Important within Column/ListView parent
+                  physics:
+                      const NeverScrollableScrollPhysics(), // Parent ListView handles scroll
+                  // Add 1 extra item slot for the button/indicator if not maxed out
+                  itemCount: logs.length + (hasReachedMax ? 0 : 1),
+                  // Added const
+                  separatorBuilder:
+                      (_, __) => const Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 20,
+                        endIndent: 20,
+                      ),
+                  itemBuilder: (context, index) {
+                    // Check if it's the last item potential slot for button/indicator
+                    if (index >= logs.length) {
+                      // If loading more, show indicator
+                      if (isLoadingMore) {
+                        // Added const Center
+                        return const Center(
+                          heightFactor: 3,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        );
+                      }
+                      // If not loading more and not reached max, show button
+                      else if (!hasReachedMax) {
+                        return Container(
+                          // Added const
+                          padding: const EdgeInsets.symmetric(vertical: 15.0),
+                          alignment: Alignment.center,
+                          child: OutlinedButton(
+                            onPressed:
+                                () => context.read<AccessControlBloc>().add(
+                                  const LoadMoreAccessLogs(),
+                                ),
+                            // Added const Text
+                            child: const Text("Load More Logs"),
+                          ),
+                        );
+                      }
+                      // If reached max, return empty container
+                      else {
+                        // Added const
+                        return const SizedBox.shrink();
+                      }
+                    }
+                    // Build the actual log item
+                    final log = logs[index];
+                    return _LogListItem(
+                      log: log,
+                      onTap: () => _showLogDetailsDialog(context, log),
+                    );
+                  },
+                ),
+              ],
             );
           }
-          return const Center(
-            heightFactor: 5,
-            child: Text("Loading logs..."),
-          ); // Initial state
+          // Fallback for Initial state or unexpected states
+          // Added const Center
+          return const Center(heightFactor: 5, child: Text("Loading logs..."));
         },
       ),
     );
   }
+
+  // --- End Updated Log List Section ---
 } // End _AccessControlScreenState
 
 // --- Placeholder Widget for Filter Controls ---
 class _FilterBar extends StatelessWidget {
+  // Added const constructor
+  const _FilterBar(); // Private constructor
+
   @override
   Widget build(BuildContext context) {
     return buildSectionContainer(
       title: "Filter & Search Logs",
+      // Added const
       padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
       child: Row(
         children: [
           Expanded(
             child: TextField(
+              // Added const InputDecoration
               decoration: InputDecoration(
                 hintText: "Search by User Name or ID...",
                 prefixIcon: const Icon(Icons.search, size: 20),
@@ -507,6 +732,7 @@ class _FilterBar extends StatelessWidget {
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
+                // Added const
                 contentPadding: const EdgeInsets.symmetric(
                   vertical: 10,
                   horizontal: 10,
@@ -518,19 +744,25 @@ class _FilterBar extends StatelessWidget {
               },
             ),
           ),
+          // Added const
           const SizedBox(width: 16),
           OutlinedButton.icon(
+            // Added const
             icon: const Icon(Icons.calendar_today_outlined, size: 16),
+            // Added const
             label: const Text("Date Range"),
             onPressed: () {
               /* TODO: Show Date Picker */
             },
             style: OutlinedButton.styleFrom(
+              // Added const
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             ),
           ),
+          // Added const
           const SizedBox(width: 10),
           Text("Status: All", style: getbodyStyle()),
+          // Added const
           const SizedBox(width: 10),
           Text("Method: All", style: getbodyStyle()),
         ],
@@ -543,6 +775,7 @@ class _FilterBar extends StatelessWidget {
 class _LogListItem extends StatelessWidget {
   final AccessLog log;
   final VoidCallback onTap;
+  // Added const constructor
   const _LogListItem({required this.log, required this.onTap});
   @override
   Widget build(BuildContext context) {
@@ -552,6 +785,7 @@ class _LogListItem extends StatelessWidget {
       onTap: onTap,
       hoverColor: AppColors.primaryColor.withOpacity(0.05),
       child: Padding(
+        // Added const
         padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
         child: Row(
           children: [
@@ -562,6 +796,7 @@ class _LogListItem extends StatelessWidget {
               color: granted ? Colors.green.shade600 : AppColors.redColor,
               size: 28,
             ),
+            // Added const
             const SizedBox(width: 16),
             Expanded(
               flex: 3,
@@ -572,6 +807,7 @@ class _LogListItem extends StatelessWidget {
                     log.userName,
                     style: getbodyStyle(fontWeight: FontWeight.w500),
                   ),
+                  // Added const
                   const SizedBox(height: 2),
                   Text(
                     "ID: ${log.userId}",
@@ -581,8 +817,13 @@ class _LogListItem extends StatelessWidget {
                 ],
               ),
             ),
+            // Added const
             const SizedBox(width: 16),
-            Expanded(flex: 2, child: buildStatusChip(log.status)),
+            Expanded(
+              flex: 2,
+              child: buildStatusChip(log.status),
+            ), // Assumes buildStatusChip handles const internally
+            // Added const
             const SizedBox(width: 16),
             Expanded(
               flex: 3,
@@ -596,6 +837,7 @@ class _LogListItem extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
+                  // Added const
                   const SizedBox(height: 2),
                   Text(
                     "Method: ${log.method ?? 'N/A'}${log.denialReason != null ? ' (${log.denialReason})' : ''}",

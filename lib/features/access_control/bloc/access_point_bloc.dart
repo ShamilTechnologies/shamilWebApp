@@ -12,6 +12,8 @@ import 'package:flutter/foundation.dart'; // For kDebugMode, ValueNotifier
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 // *** Import NFC Service ***
 import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
+// *** Import Repository Service ***
+import 'package:shamil_web_app/features/access_control/service/access_control_repository.dart';
 
 // *** Uses updated Hive Models (via Sync Service) ***
 import 'package:shamil_web_app/features/access_control/data/local_cache_models.dart';
@@ -28,6 +30,9 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
   final AccessControlSyncService _syncService = AccessControlSyncService();
   final NfcReaderService _nfcReaderService = NfcReaderService();
   final DashboardBloc dashboardBloc; // To get provider info
+
+  // Repository for access control operations
+  final AccessControlRepository _repository = AccessControlRepository();
 
   // Debounce for NFC reads might still be useful
   Timer? _nfcDebounceTimer;
@@ -60,6 +65,7 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     on<ConnectNfcReader>(_onConnectNfcReader);
     on<DisconnectNfcReader>(_onDisconnectNfcReader);
     on<_NfcReaderStatusChanged>(_onNfcReaderStatusChanged);
+    on<ForceSyncWithMobileApp>(_onForceSyncWithMobileApp);
 
     // Listen to service streams/notifiers
     _listenToNfcService();
@@ -76,8 +82,9 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     ); // Use stored callback
 
     _nfcTagSubscription = _nfcReaderService.tagStream.listen((tagId) {
-       // Ensure bloc is not closed before adding event
-      if (!isClosed) add(NfcTagRead(id: tagId)); // Dispatch event when service emits tag
+      // Ensure bloc is not closed before adding event
+      if (!isClosed)
+        add(NfcTagRead(id: tagId)); // Dispatch event when service emits tag
     });
 
     _nfcReaderService.connectionStatusNotifier.addListener(
@@ -86,10 +93,13 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
 
     print("AccessPointBloc: Subscribed to NFC Reader Service updates.");
     // Update initial state with current NFC status
-    if (!isClosed) { // Check before adding initial status event
-       add(
-         _NfcReaderStatusChanged(_nfcReaderService.connectionStatusNotifier.value),
-       );
+    if (!isClosed) {
+      // Check before adding initial status event
+      add(
+        _NfcReaderStatusChanged(
+          _nfcReaderService.connectionStatusNotifier.value,
+        ),
+      );
     }
   }
 
@@ -189,7 +199,7 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     _NfcReaderStatusChanged event,
     Emitter<AccessPointState> emit,
   ) {
-     // Prevent processing if closed
+    // Prevent processing if closed
     if (isClosed) return;
     print("AccessPointBloc: NFC Status Changed to ${event.status}");
     // Update available ports when status changes (e.g., port disappears on error)
@@ -209,7 +219,7 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     ValidateAccess event,
     Emitter<AccessPointState> emit,
   ) async {
-     // Prevent processing if closed
+    // Prevent processing if closed
     if (isClosed) return;
     // Prevent validation if already validating
     if (state is AccessPointValidating) return;
@@ -248,14 +258,14 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
       );
       // Emit error or deny access if provider info is critical and missing
       emit(
-         AccessPointResult(
-             validationStatus: ValidationStatus.error,
-             scannedId: event.userId,
-             method: event.method,
-             message: "Provider info unavailable for validation.",
-             nfcStatus: state.nfcStatus,
-             availablePorts: state.availablePorts,
-         )
+        AccessPointResult(
+          validationStatus: ValidationStatus.error,
+          scannedId: event.userId,
+          method: event.method,
+          message: "Provider info unavailable for validation.",
+          nfcStatus: state.nfcStatus,
+          availablePorts: state.availablePorts,
+        ),
       );
       return;
     }
@@ -265,7 +275,10 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     // using the governorateId during its `syncAllData` process. The validation
     // check here uses the cached data relevant to this provider.
     try {
-      // 1. Find User in Cache
+      // 1. First, ensure user data is in cache or add temporary entry if we have ID
+      await _syncService.ensureUserInCache(event.userId, null);
+
+      // 2. Find User in Cache
       cachedUser = await _syncService.getCachedUser(event.userId);
 
       if (cachedUser == null) {
@@ -275,7 +288,7 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
         bool hasValidSubscription = false;
         bool hasValidReservation = false;
 
-        // 2. Check Subscriptions (Logic remains the same, uses cached data)
+        // 3. Check Subscriptions (Logic remains the same, uses cached data)
         if (currentPricingModel == PricingModel.subscription ||
             currentPricingModel == PricingModel.hybrid) {
           final activeSub = await _syncService.findActiveSubscription(
@@ -292,7 +305,7 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
           }
         }
 
-        // 3. Check Reservations (Logic uses updated CachedReservation, but check is same)
+        // 4. Check Reservations (Logic uses updated CachedReservation, but check is same)
         if (currentPricingModel == PricingModel.reservation ||
             currentPricingModel == PricingModel.hybrid) {
           final activeRes = await _syncService.findActiveReservation(
@@ -309,19 +322,25 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
           }
         }
 
-        // 4. Determine Access Status based on provider's model
+        // 5. Determine Access Status based on provider's model
         switch (currentPricingModel) {
           case PricingModel.subscription:
-            if (hasValidSubscription) accessStatus = "Granted";
-            else denialReason = "No active subscription.";
+            if (hasValidSubscription)
+              accessStatus = "Granted";
+            else
+              denialReason = "No active subscription.";
             break;
           case PricingModel.reservation:
-            if (hasValidReservation) accessStatus = "Granted";
-            else denialReason = "No valid reservation found for this time.";
+            if (hasValidReservation)
+              accessStatus = "Granted";
+            else
+              denialReason = "No valid reservation found for this time.";
             break;
           case PricingModel.hybrid:
-            if (hasValidSubscription || hasValidReservation) accessStatus = "Granted";
-            else denialReason = "No active subscription or valid reservation.";
+            if (hasValidSubscription || hasValidReservation)
+              accessStatus = "Granted";
+            else
+              denialReason = "No active subscription or valid reservation.";
             break;
           case PricingModel.other:
             // Grant if user exists and provider model is 'other'
@@ -331,10 +350,11 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
         }
       }
 
-      // 5. Log the attempt locally using Sync Service method
+      // 6. Log the attempt locally using Sync Service method
+      final String userName = cachedUser?.userName ?? "Unknown User";
       final logEntry = LocalAccessLog(
         userId: event.userId,
-        userName: cachedUser?.userName ?? event.userId,
+        userName: userName,
         timestamp: DateTime.now(),
         status: accessStatus,
         method: event.method,
@@ -342,9 +362,11 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
         needsSync: true, // Mark for upload later
       );
       await _syncService.saveLocalAccessLog(logEntry); // Use service method
-      print("Local access log saved via service. Status: $accessStatus");
+      print(
+        "Local access log saved via service. Status: $accessStatus, User: $userName",
+      );
 
-      // 6. Emit the result, preserving current NFC status and ports
+      // 7. Emit the result, preserving current NFC status and ports
       emit(
         AccessPointResult(
           validationStatus:
@@ -362,9 +384,11 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
         ),
       );
 
-    // --- Handle potential errors during Hive access or validation ---
+      // --- Handle potential errors during Hive access or validation ---
     } catch (e, stackTrace) {
-      print("!!! Error during access validation (Offline - Hive): $e\n$stackTrace");
+      print(
+        "!!! Error during access validation (Offline - Hive): $e\n$stackTrace",
+      );
       // Attempt to log the error itself
       try {
         final logEntry = LocalAccessLog(
@@ -399,5 +423,45 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     //    // TODO: Call Cloud Function validateAccess(userId: event.userId, providerId: providerId, governorateId: currentGovernorateId)
     //    // Update state based on Cloud Function response
     // }
+  }
+
+  Future<void> _onForceSyncWithMobileApp(
+    ForceSyncWithMobileApp event,
+    Emitter<AccessPointState> emit,
+  ) async {
+    // Prevent processing if closed
+    if (isClosed) return;
+    print("AccessPointBloc: Force syncing with mobile app");
+
+    emit(AccessPointSyncing());
+
+    try {
+      // Use the repository's dedicated method for mobile app sync
+      final success = await _repository.refreshMobileAppData();
+
+      // Also trigger sync in dashboard bloc if available
+      try {
+        dashboardBloc.add(SyncMobileAppData());
+      } catch (e) {
+        print("Error triggering sync in dashboard bloc: $e");
+        // Don't fail the whole operation if this fails
+      }
+
+      if (success) {
+        emit(AccessPointSyncSuccess());
+      } else {
+        emit(AccessPointSyncFailure("Failed to sync with mobile app"));
+      }
+    } catch (e) {
+      print("Error syncing with mobile app: $e");
+      emit(AccessPointSyncFailure(e.toString()));
+    } finally {
+      // Reset after a delay
+      Timer(const Duration(seconds: 3), () {
+        if (!isClosed) {
+          add(ResetAccessPoint());
+        }
+      });
+    }
   }
 }

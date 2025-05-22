@@ -24,6 +24,7 @@ Widget buildSectionContainer({
   double? elevation,
   BorderRadiusGeometry? borderRadius,
   BorderSide? border,
+  IconData? icon,
 }) {
   final effectivePadding = padding ?? const EdgeInsets.all(20.0);
   final effectiveBorderRadius = borderRadius ?? BorderRadius.circular(12.0);
@@ -105,43 +106,108 @@ Widget buildSectionContainer({
 
 // --- Keep the SectionContainer Class wrapper as it was ---
 class SectionContainer extends StatelessWidget {
-  // ... (properties remain the same) ...
-  final String? title;
+  final String title;
   final Widget child;
   final Widget? trailingAction;
+  final IconData? icon;
   final EdgeInsetsGeometry? margin;
   final EdgeInsetsGeometry? padding;
   final Color? backgroundColor;
   final double? elevation;
   final BorderRadiusGeometry? borderRadius;
   final BorderSide? border;
+  final List<Widget>? actions;
 
   const SectionContainer({
-    super.key,
+    Key? key,
+    required this.title,
     required this.child,
-    this.title,
     this.trailingAction,
+    this.icon,
     this.margin,
     this.padding,
     this.backgroundColor,
     this.elevation,
     this.borderRadius,
     this.border,
-  });
+    this.actions,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // Calls the helper function (no changes needed here)
-    return buildSectionContainer(
-      title: title,
-      trailingAction: trailingAction,
+    return Container(
       margin: margin,
-      padding: padding,
-      backgroundColor: backgroundColor,
-      elevation: elevation,
-      borderRadius: borderRadius,
-      border: border,
-      child: child,
+      decoration: BoxDecoration(
+        color: backgroundColor ?? Colors.white,
+        borderRadius: borderRadius ?? BorderRadius.circular(12),
+        border:
+            border != null
+                ? Border.all(color: border!.color, width: border!.width)
+                : null,
+        boxShadow:
+            elevation != null && elevation! > 0
+                ? [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(
+                      0.1 + (elevation! * 0.05).clamp(0, 0.3),
+                    ),
+                    spreadRadius: elevation! * 0.5,
+                    blurRadius: elevation! * 2,
+                    offset: Offset(0, elevation! * 0.5),
+                  ),
+                ]
+                : [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                if (icon != null) ...[
+                  Icon(icon!, size: 18, color: AppColors.primaryColor),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Text(
+                    title,
+                    style: getTitleStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (actions != null) Wrap(spacing: 4, children: actions!),
+                if (trailingAction != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: trailingAction!,
+                  ),
+              ],
+            ),
+          ),
+          Divider(
+            height: 1,
+            thickness: 1,
+            color: AppColors.lightGrey.withOpacity(0.5),
+          ),
+          Expanded(
+            child: Padding(
+              padding: padding ?? const EdgeInsets.all(16.0),
+              child: child,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -213,7 +279,7 @@ Widget buildStatusChip(String status) {
 //----------------------------------------------------------------------------//
 Widget buildEmptyState(String message, {IconData icon = Icons.inbox_outlined}) {
   return Container(
-    padding: const EdgeInsets.symmetric(vertical: 40.0, horizontal: 20.0),
+    padding: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 16.0),
     alignment: Alignment.center,
     decoration: BoxDecoration(
       color: AppColors.lightGrey.withOpacity(0.3),
@@ -222,15 +288,17 @@ Widget buildEmptyState(String message, {IconData icon = Icons.inbox_outlined}) {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 44, color: AppColors.mediumGrey),
-        const SizedBox(height: 16),
+        Icon(icon, size: 32, color: AppColors.mediumGrey),
+        const SizedBox(height: 8),
         Text(
           message,
           style: getbodyStyle(
             color: AppColors.mediumGrey.withOpacity(0.9),
-            fontSize: 14,
+            fontSize: 12,
           ),
           textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
         ),
       ],
     ),

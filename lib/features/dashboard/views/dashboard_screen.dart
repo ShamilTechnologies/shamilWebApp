@@ -1,5 +1,9 @@
+// lib/features/dashboard/views/dashboard_screen.dart
+// UPDATED FILE: Restructured with responsive components and clean architecture
+
 /// File: lib/features/dashboard/views/dashboard_screen.dart
-/// --- UPDATED: Adjusted childAspectRatio in grid layout to prevent overflow ---
+/// --- UPDATED: Added check for empty visibleDestinations ---
+/// --- UPDATED: Added User Management section ---
 library;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -11,18 +15,22 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shamil_web_app/core/constants/assets_icons.dart';
 
 // --- Import Project Specific Files ---
-// Adjust paths as necessary for your project structure
+import 'package:shamil_web_app/core/functions/snackbar_helper.dart';
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
+import 'package:shamil_web_app/features/access_control/views/access_control_screen.dart';
 // Import Auth/Provider Model
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
+import 'package:shamil_web_app/features/auth/views/page/steps/registration_flow.dart';
+import 'package:shamil_web_app/core/services/local_storage.dart';
+import 'package:shamil_web_app/core/functions/navigation.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
-import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart'; // Ensure this is imported
+import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart'
+    as dashboard_models; // Add alias for dashboard models
 import 'package:shamil_web_app/features/dashboard/helper/app_sidebar.dart';
-import 'package:shamil_web_app/features/dashboard/views/pages/access_control_screen.dart';
 import 'package:shamil_web_app/features/dashboard/views/pages/analytics_screen.dart';
 import 'package:shamil_web_app/features/dashboard/views/pages/bookings_screen.dart';
 import 'package:shamil_web_app/features/dashboard/views/pages/classes_services_screen.dart';
@@ -34,12 +42,23 @@ import 'package:shamil_web_app/features/dashboard/widgets/provider_info_header.d
 import 'package:shamil_web_app/features/dashboard/widgets/reservation_management.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/stats_section.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/subscription_management.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/animated_loading_screen.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/user_management/user_management_screen.dart';
+import 'package:shamil_web_app/core/services/sync_manager.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/sync_status_indicator.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/network_connection_banner.dart';
+import 'package:shamil_web_app/core/services/connectivity_service.dart';
+
+// New responsive components
+import 'package:shamil_web_app/features/dashboard/widgets/dashboard_layout.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/dashboard_content.dart';
+import 'package:shamil_web_app/features/dashboard/helper/responsive_layout.dart';
 
 //----------------------------------------------------------------------------//
 // Dashboard Screen Widget (Stateful with Sidebar)                            //
 //----------------------------------------------------------------------------//
 
-// *** CHANGED TO StatefulWidget ***
+/// Main dashboard screen that handles navigation and content switching
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -51,14 +70,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   late AudioPlayer _audioPlayer;
 
-  // Data for Sidebar Destinations (remains the same)
+  // Sidebar destinations data... (remains the same)
   final List<Map<String, dynamic>> _allDestinations = [
     {'icon': Icons.dashboard_rounded, 'label': 'Dashboard', 'models': null},
-    {
-      'icon': Icons.group_outlined,
-      'label': 'Members',
-      'models': [PricingModel.subscription, PricingModel.hybrid],
-    },
+    {'icon': Icons.group_outlined, 'label': 'Users', 'models': null},
     {
       'icon': Icons.calendar_today_outlined,
       'label': 'Bookings',
@@ -92,35 +107,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _audioPlayer = AudioPlayer();
     _audioPlayer.setReleaseMode(ReleaseMode.stop);
 
-    // *** ADDED: Dispatch event after first frame build ***
+    // Listen for sync errors
+    SyncManager().lastErrorNotifier.addListener(_handleSyncError);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        // Check if still mounted
         print(
           "--- DashboardScreen initState: Adding LoadDashboardData event ---",
         );
-        // Use context.read because we are inside initState's callback
-        // Assumes DashboardBloc is provided by an ancestor (like in build method below)
         try {
           context.read<DashboardBloc>().add(LoadDashboardData());
         } catch (e) {
           print(
             "--- DashboardScreen initState: Error reading DashboardBloc from context: $e ---",
           );
-          // This might happen if the BlocProvider isn't set up correctly yet.
         }
       }
     });
-    // --- END ADDED CODE ---
   }
 
   @override
   void dispose() {
     _audioPlayer.dispose();
+    SyncManager().lastErrorNotifier.removeListener(_handleSyncError);
     super.dispose();
   }
 
-  // Callbacks and Helper methods remain the same
+  // Handle sync errors with appropriate UI feedback
+  void _handleSyncError() {
+    final error = SyncManager().lastErrorNotifier.value;
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.sync_problem, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(child: Text('Sync error: $error')),
+            ],
+          ),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => SyncManager().syncNow(),
+          ),
+        ),
+      );
+    }
+  }
+
+  // --- Helper Methods (Callbacks, Dialogs, etc.) ---
   void _onFooterItemTapped(int footerIndex) {
     final dest = _footerDestinations[footerIndex];
     final isLogout = dest['isLogout'] ?? false;
@@ -133,15 +171,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
           content: Text("Navigation for ${dest['label']} not implemented."),
         ),
       );
-      // TODO: Implement navigation or action for Settings
     }
   }
 
   void _onDestinationSelected(int index) {
-    setState(() {
-      _selectedIndex = index;
-      print("Selected main destination index: $_selectedIndex");
-    });
+    final currentState = context.read<DashboardBloc>().state;
+    if (currentState is DashboardLoadSuccess) {
+      final currentPricingModel = currentState.providerInfo.pricingModel;
+      final currentVisibleDestinations =
+          _allDestinations.where((dest) {
+            final List<PricingModel>? models =
+                dest['models'] as List<PricingModel>?;
+            return models == null || models.contains(currentPricingModel);
+          }).toList();
+      // Ensure index is valid *before* calling setState
+      if (index >= 0 && index < currentVisibleDestinations.length) {
+        setState(() {
+          _selectedIndex = index;
+          print("Selected main destination index: $_selectedIndex");
+        });
+      } else {
+        print(
+          "Warning: Invalid destination index selected ($index) for ${currentVisibleDestinations.length} items. Ignoring.",
+        );
+      }
+    } else {
+      print(
+        "Warning: Destination selected while not in LoadSuccess state. Ignoring.",
+      );
+    }
   }
 
   Future<void> _showLogoutConfirmationDialog() async {
@@ -166,36 +224,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
     );
-    if (confirm == true) {
+    if (confirm == true && mounted) {
       print("Logout confirmed. Signing out...");
       try {
         await FirebaseAuth.instance.signOut();
         print("Firebase sign out successful.");
-        // TODO: Navigate to Login Screen after logout
-        // Example: Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => LoginScreen()), (route) => false);
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text("Logout successful.")));
-        }
+        await AppLocalStorage.cacheData(
+          key: AppLocalStorage.userToken,
+          value: null,
+        );
+        print("Local storage cache cleared.");
+        if (!mounted) return;
+        pushAndRemoveUntil(context, const RegistrationFlow());
       } catch (e) {
-        print("Error during Firebase sign out: $e");
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text("Logout failed: $e")));
-        }
+        if (!mounted) return;
+        print("Error during logout: $e");
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Logout failed: $e")));
       }
     }
   }
 
-  // --- Global Feedback Helper ---
   void _showAccessFeedback(BuildContext context, AccessPointResult result) {
     final status = result.validationStatus;
     if (status == ValidationStatus.idle ||
         status == ValidationStatus.validating)
       return;
-
     final message =
         result.message ??
         (status == ValidationStatus.granted
@@ -214,7 +269,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             : (status == ValidationStatus.error
                 ? Icons.warning_rounded
                 : Icons.cancel_rounded);
-
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -240,8 +294,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         margin: const EdgeInsets.all(15),
       ),
     );
-
-    // Play sound
     String? soundPath;
     switch (status) {
       case ValidationStatus.granted:
@@ -258,8 +310,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
     if (soundPath != null) {
       try {
-        // Ensure player is ready (might need adjustments based on audioplayers version)
-        _audioPlayer.stop(); // Stop previous sound if any
+        _audioPlayer.stop();
         _audioPlayer.play(AssetSource(soundPath));
         print("Playing sound: $soundPath");
       } catch (e) {
@@ -268,19 +319,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // Helper for building user avatars in the header stack
   Widget _buildUserAvatar(String initial, Color color) {
-    return CircleAvatar(
-      radius: 16,
-      backgroundColor: color.withOpacity(0.2),
-      child: Text(
-        initial,
-        style: getSmallStyle(fontWeight: FontWeight.bold, color: color),
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withOpacity(0.2),
+        border: Border.all(color: Colors.white, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 2,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: getSmallStyle(fontWeight: FontWeight.bold, color: color),
+        ),
       ),
     );
   }
 
-  // Builds the UI for the error state when dashboard data fails to load.
   Widget _buildErrorStateUI(BuildContext context, String errorMessage) {
     return Center(
       child: Padding(
@@ -310,9 +373,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               icon: const Icon(Icons.refresh_rounded),
               label: const Text("Retry"),
               onPressed:
-                  () => context.read<DashboardBloc>().add(
-                    RefreshDashboardData(),
-                  ), // Dispatch refresh event
+                  () =>
+                      context.read<DashboardBloc>().add(RefreshDashboardData()),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primaryColor,
                 foregroundColor: AppColors.white,
@@ -329,487 +391,179 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _playNotificationSound() async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.play(AssetSource(AssetsIcons.notificationSound));
+      print("Playing notification sound.");
+    } catch (e) {
+      print("Error playing notification sound: $e");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    print("--- DashboardScreen BUILD method called ---"); // Keep this log
+    print("--- DashboardScreen BUILD method called ---");
 
-    // *** Provide the Bloc here - REMOVE .add() from create ***
-    return BlocProvider<DashboardBloc>(
-      create: (context) {
-        print(
-          "--- DashboardScreen: Creating DashboardBloc instance ---",
-        ); // Keep this log
-        // Just create the instance, event is added in initState
-        return DashboardBloc();
-      },
-      child: Scaffold(
-        backgroundColor: AppColors.lightGrey,
-        body: BlocListener<AccessPointBloc, AccessPointState>(
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<AccessPointBloc, AccessPointState>(
           listener: (context, state) {
             if (state is AccessPointResult) {
               _showAccessFeedback(context, state);
             }
           },
-          child: BlocConsumer<DashboardBloc, DashboardState>(
-            listener: (context, state) {
-              if (state is DashboardLoadFailure) {
-                print(
-                  "Dashboard Listener: Load Failure - ${state.errorMessage}",
-                );
-              }
-              // Add other listener logic if needed
-            },
-            builder: (context, state) {
-              print(
-                "--- DashboardScreen BlocConsumer BUILDER: State is ${state.runtimeType} ---",
-              ); // Add log here
-              // --- Loading State ---
-              if (state is DashboardLoading || state is DashboardInitial) {
-                return const Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.primaryColor,
-                  ),
-                );
-              }
-              // --- Error State ---
-              else if (state is DashboardLoadFailure) {
-                return _buildErrorStateUI(context, state.errorMessage);
-              }
-              // --- Success State ---
-              else if (state is DashboardLoadSuccess) {
-                // Filter sidebar destinations (remains the same)
-                final PricingModel currentPricingModel =
-                    state.providerInfo.pricingModel;
-                final List<Map<String, dynamic>> visibleDestinations =
-                    _allDestinations.where((dest) {
-                      final List<PricingModel>? models =
-                          dest['models'] as List<PricingModel>?;
-                      return models == null ||
-                          models.contains(currentPricingModel);
-                    }).toList();
-                int activeIndex =
-                    (_selectedIndex >= 0 &&
-                            _selectedIndex < visibleDestinations.length)
-                        ? _selectedIndex
-                        : 0;
-                if (_selectedIndex >= visibleDestinations.length) {
-                  print(
-                    "Warning: Previous selected index ($_selectedIndex) is out of bounds for visible destinations. Resetting to 0.",
-                  );
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted)
-                      setState(() {
-                        _selectedIndex = 0;
-                      });
-                  });
-                  activeIndex = 0;
-                }
-
-                // Main Row: Sidebar | Content (remains the same)
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AppSidebar(
-                      selectedIndex: activeIndex,
-                      destinations: visibleDestinations,
-                      footerDestinations: _footerDestinations,
-                      onDestinationSelected: _onDestinationSelected,
-                      onFooterItemSelected: _onFooterItemTapped,
-                      providerInfo: state.providerInfo,
-                      nfcStatusNotifier:
-                          NfcReaderService().connectionStatusNotifier,
-                    ),
-                    Expanded(
-                      child: _buildMainContentArea(
-                        context,
-                        state,
-                        activeIndex,
-                        visibleDestinations,
-                      ),
-                    ),
-                  ],
-                );
-              }
-              // --- Fallback ---
-              else {
-                return const Center(
-                  child: Text("An unexpected state occurred."),
-                );
-              }
-            },
-          ),
         ),
+        BlocListener<DashboardBloc, DashboardState>(
+          listener: (context, state) {
+            if (state is DashboardLoadFailure) {
+              print("Dashboard Listener: Load Failure - ${state.errorMessage}");
+            } else if (state is DashboardNotificationReceived) {
+              print(
+                "Dashboard Listener: Notification Received - ${state.message}",
+              );
+              showGlobalSnackBar(
+                context,
+                state.message,
+                duration: const Duration(seconds: 5),
+              );
+              _playNotificationSound();
+            }
+          },
+        ),
+      ],
+      child: BlocBuilder<DashboardBloc, DashboardState>(
+        builder: (context, state) {
+          print(
+            "--- DashboardScreen BlocBuilder BUILDER: State is ${state.runtimeType} ---",
+          );
+
+          if (state is DashboardLoading || state is DashboardInitial) {
+            return const AnimatedDashboardLoadingScreen();
+          } else if (state is DashboardLoadFailure) {
+            return _buildErrorStateUI(context, state.errorMessage);
+          } else if (state is DashboardLoadSuccess ||
+              state is DashboardNotificationReceived) {
+            final DashboardLoadSuccess dataState;
+            if (state is DashboardLoadSuccess) {
+              dataState = state;
+            } else if (context.read<DashboardBloc>().state
+                is DashboardLoadSuccess) {
+              dataState =
+                  context.read<DashboardBloc>().state as DashboardLoadSuccess;
+            } else {
+              print(
+                "Warning: Notification received but no underlying success state found. Showing error UI.",
+              );
+              return _buildErrorStateUI(
+                context,
+                "Error displaying dashboard after notification.",
+              );
+            }
+
+            // Calculate visible destinations based on pricing model
+            final PricingModel currentPricingModel =
+                dataState.providerInfo.pricingModel;
+            final List<Map<String, dynamic>> visibleDestinations =
+                _allDestinations.where((dest) {
+                  final List<PricingModel>? models =
+                      dest['models'] as List<PricingModel>?;
+                  return models == null || models.contains(currentPricingModel);
+                }).toList();
+
+            // Safety check for empty destinations
+            if (visibleDestinations.isEmpty) {
+              print(
+                "Error: No visible destinations for pricing model '$currentPricingModel'.",
+              );
+              return _buildErrorStateUI(
+                context,
+                "No navigation options available for your account type.",
+              );
+            }
+
+            // Ensure active index is valid
+            int activeIndex = _selectedIndex.clamp(
+              0,
+              visibleDestinations.length - 1,
+            );
+            if (_selectedIndex != activeIndex) {
+              print(
+                "Warning: Selected index ($_selectedIndex) was out of bounds for visible destinations (${visibleDestinations.length}). Clamping to $activeIndex.",
+              );
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  setState(() {
+                    _selectedIndex = activeIndex;
+                  });
+                }
+              });
+            }
+
+            return DashboardLayout(
+              selectedIndex: activeIndex,
+              destinations: visibleDestinations,
+              footerDestinations: _footerDestinations,
+              onDestinationSelected: _onDestinationSelected,
+              onFooterItemSelected: _onFooterItemTapped,
+              providerInfo: dataState.providerInfo,
+              nfcStatusNotifier: NfcReaderService().connectionStatusNotifier,
+              onNetworkRetry: () {
+                final connectivityService = ConnectivityService();
+                connectivityService.checkConnectivity();
+                if (connectivityService.statusNotifier.value ==
+                    NetworkStatus.online) {
+                  SyncManager().syncNow();
+                }
+              },
+              content: _buildMainContent(
+                visibleDestinations[activeIndex]['label'] as String,
+                dataState,
+              ),
+            );
+          } else {
+            return const Center(child: Text("An unexpected state occurred."));
+          }
+        },
       ),
     );
   }
 
-  /// Builds the main content area based on the selected sidebar index.
-  Widget _buildMainContentArea(
-    BuildContext context,
-    DashboardLoadSuccess state, // Expecting the success state here
-    int selectedIndex,
-    List<Map<String, dynamic>> visibleDestinations,
-  ) {
-    // Ensure index is valid before accessing label
-    if (selectedIndex < 0 || selectedIndex >= visibleDestinations.length) {
-      print(
-        "Error: Invalid selected index ($selectedIndex) for main content area.",
-      );
-      return const Center(
-        child: Text("Invalid selection"),
-      ); // Handle invalid index
-    }
-    String selectedLabel =
-        visibleDestinations[selectedIndex]['label'] as String;
-    print("Building content for: $selectedLabel (Index: $selectedIndex)");
-
-    // Return the appropriate screen/widget based on the selected label
+  /// Builds the main content based on the selected label
+  Widget _buildMainContent(String selectedLabel, DashboardLoadSuccess state) {
     switch (selectedLabel) {
       case 'Dashboard':
-        // Pass the success state to the grid builder
-        return _buildDashboardGridUI(context, state);
-      case 'Members':
-        // TODO: Replace with actual MembersScreen widget
-        return const _PlaceholderContentWidget(label: 'Members Management');
-      case 'Bookings':
-        return const BookingsScreen(); // Use the dedicated Bookings screen
-      case 'Classes/Services':
-        return const ClassesServicesScreen(); // Use the dedicated Classes/Services screen
-      case 'Access Control':
-        return const AccessControlScreen(); // Use the dedicated Access Control screen
-      case 'Reports':
-        return const ReportsScreen(); // Use placeholder or actual Reports screen
-      case 'Analytics':
-        return const AnalyticsScreen(); // Use placeholder or actual Analytics screen
-      default:
-        // Fallback for any labels not explicitly handled
-        return Center(
-          child: Text(
-            "Content for: $selectedLabel\n(Not Implemented - Index: $selectedIndex)",
-            textAlign: TextAlign.center,
-            style: getTitleStyle(),
-          ),
+        return DashboardContent(
+          providerInfo: state.providerInfo,
+          stats: state.stats,
+          subscriptions: state.subscriptions,
+          reservations: state.reservations,
+          accessLogs: state.accessLogs,
+          onRefresh:
+              () => context.read<DashboardBloc>().add(RefreshDashboardData()),
         );
+      case 'Users':
+        return const Padding(
+          padding: EdgeInsets.all(16),
+          child: UserManagementScreen(),
+        );
+      case 'Bookings':
+        return const BookingsScreen();
+      case 'Classes/Services':
+        return const ClassesServicesScreen();
+      case 'Access Control':
+        return const AccessControlScreen();
+      case 'Reports':
+        return const ReportsScreen();
+      case 'Analytics':
+        return const AnalyticsScreen();
+      default:
+        return Center(child: Text("$selectedLabel view not implemented"));
     }
   }
+}
 
-  /// Builds the dashboard grid layout UI.
-  Widget _buildDashboardGridUI(
-    BuildContext context,
-    DashboardLoadSuccess state, // Takes the success state containing all data
-  ) {
-    // Extract necessary data from the state
-    final ServiceProviderModel providerModel = state.providerInfo;
-    final PricingModel pricingModel = providerModel.pricingModel;
-    final DashboardStats stats = state.stats; // Get stats from state
-
-    // Determine which sections to show based on pricing model
-    bool showSubscriptions =
-        pricingModel == PricingModel.subscription ||
-        pricingModel == PricingModel.hybrid;
-    bool showReservations =
-        pricingModel == PricingModel.reservation ||
-        pricingModel == PricingModel.hybrid;
-    bool showSchedule =
-        pricingModel == PricingModel.reservation ||
-        pricingModel == PricingModel.hybrid ||
-        pricingModel == PricingModel.other;
-    bool showCapacity =
-        pricingModel == PricingModel.subscription ||
-        pricingModel == PricingModel.reservation ||
-        pricingModel == PricingModel.hybrid;
-
-    return RefreshIndicator(
-      color: AppColors.primaryColor,
-      onRefresh: () async {
-        // Dispatch refresh event
-        context.read<DashboardBloc>().add(RefreshDashboardData());
-        // Wait for the BLoC to finish loading before completing the indicator
-        await context.read<DashboardBloc>().stream.firstWhere(
-          (s) => s is! DashboardLoading,
-        );
-      },
-      child: CustomScrollView(
-        slivers: [
-          // --- Header Section ---
-          SliverPadding(
-            padding: const EdgeInsets.only(
-              left: 24.0,
-              right: 24.0,
-              top: 24.0,
-              bottom: 8.0,
-            ),
-            sliver: SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Top Row: Title and Actions
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Dashboard Overview",
-                        style: getTitleStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: 200,
-                            height: 36,
-                            child: TextField(
-                              style: getbodyStyle(fontSize: 13),
-                              decoration: InputDecoration(
-                                hintText: "Search...",
-                                prefixIcon: const Icon(
-                                  Icons.search,
-                                  size: 18,
-                                  color: AppColors.mediumGrey,
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 0,
-                                  horizontal: 10,
-                                ),
-                                filled: true,
-                                fillColor: AppColors.white,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: const BorderSide(
-                                    color: AppColors.lightGrey,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: const BorderSide(
-                                    color: AppColors.lightGrey,
-                                  ),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: const BorderSide(
-                                    color: AppColors.primaryColor,
-                                  ),
-                                ),
-                                hintStyle: getbodyStyle(
-                                  color: AppColors.mediumGrey,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          SizedBox(
-                            width: 56,
-                            height: 32,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Positioned(
-                                  left: 32,
-                                  child: _buildUserAvatar("M", Colors.pink),
-                                ),
-                                Positioned(
-                                  left: 16,
-                                  child: _buildUserAvatar("E", Colors.blue),
-                                ),
-                                Positioned(
-                                  left: 0,
-                                  child: _buildUserAvatar("A", Colors.orange),
-                                ),
-                                Positioned(
-                                  left: 52,
-                                  top: 4,
-                                  child: SizedBox(
-                                    width: 24,
-                                    height: 24,
-                                    child: IconButton(
-                                      onPressed: () {
-                                        /* TODO */
-                                      },
-                                      icon: const Icon(
-                                        Icons.add_circle_outline,
-                                        size: 20,
-                                        color: AppColors.mediumGrey,
-                                      ),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          OutlinedButton.icon(
-                            icon: const Icon(
-                              Icons.calendar_today_outlined,
-                              size: 14,
-                            ),
-                            label: const Text("This Month"),
-                            onPressed: () {
-                              /* TODO: Implement Date Picker */
-                            },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.secondaryColor,
-                              side: const BorderSide(
-                                color: AppColors.lightGrey,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              textStyle: getSmallStyle(),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  // Provider Info Header Widget
-                  ProviderInfoHeader(
-                    providerModel: providerModel,
-                  ), // Use state.providerInfo
-                  const Divider(
-                    height: 16,
-                    thickness: 1,
-                    color: AppColors.lightGrey,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // --- Main Grid Content ---
-          SliverPadding(
-            padding: const EdgeInsets.only(
-              left: 24.0,
-              right: 24.0,
-              bottom: 24.0,
-              top: 8.0,
-            ),
-            sliver: SliverLayoutBuilder(
-              builder: (context, constraints) {
-                // --- Responsive Grid Calculation ---
-                int crossAxisCount;
-                double childAspectRatio;
-
-                // *** ADJUSTED ASPECT RATIO HERE - DECREASED to make taller ***
-                if (constraints.crossAxisExtent < 650) {
-                  crossAxisCount = 1;
-                  childAspectRatio = 1.6;
-                } else if (constraints.crossAxisExtent < 950) {
-                  crossAxisCount = 2;
-                  childAspectRatio = 1.2;
-                } else if (constraints.crossAxisExtent < 1300) {
-                  crossAxisCount = 3;
-                  childAspectRatio = 1.1;
-                } else {
-                  crossAxisCount = 4;
-                  childAspectRatio = 1.1;
-                }
-                // --- End Responsive Grid Calculation ---
-
-                // Build grid items using data from the state
-                List<Widget> gridItems = [
-                  StatsSection(
-                    stats: stats,
-                    pricingModel: pricingModel,
-                  ), // Use state.stats
-                  if (showSubscriptions)
-                    SubscriptionManagementSection(
-                      subscriptions: state.subscriptions,
-                    ), // Use state.subscriptions
-                  if (showReservations)
-                    ReservationManagementSection(
-                      reservations: state.reservations,
-                    ), // Use state.reservations
-                  AccessLogSection(
-                    accessLogs: state.accessLogs,
-                  ), // Use state.accessLogs
-                  if (showSchedule)
-                    SectionContainer(
-                      title: "Today's Schedule / Classes",
-                      trailingAction: TextButton(
-                        onPressed: () {
-                          /* TODO */
-                        },
-                        style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                        child: Text(
-                          "View Full Schedule",
-                          style: getbodyStyle(
-                            color: AppColors.primaryColor,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      child: buildEmptyState(
-                        "Class schedule placeholder.",
-                        icon: Icons.schedule_rounded,
-                      ),
-                    ),
-                  if (showCapacity)
-                    SectionContainer(
-                      title: "Live Facility Capacity",
-                      child: buildEmptyState(
-                        "Live check-in/capacity data placeholder.",
-                        icon: Icons.sensor_occupied_outlined,
-                      ),
-                    ),
-                  ChartPlaceholder(
-                    title: "Activity Trends",
-                    pricingModel: pricingModel,
-                  ),
-                  ChartPlaceholder(
-                    title: "Revenue Overview",
-                    pricingModel: pricingModel,
-                  ),
-                  SectionContainer(
-                    title: "Recent Customer Feedback",
-                    trailingAction: TextButton(
-                      onPressed: () {
-                        /* TODO */
-                      },
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero),
-                      child: Text(
-                        "View All",
-                        style: getbodyStyle(
-                          color: AppColors.primaryColor,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ),
-                    child: buildEmptyState(
-                      "Customer feedback placeholder.",
-                      icon: Icons.reviews_outlined,
-                    ),
-                  ),
-                ];
-
-                // Return the grid
-                return SliverGrid.count(
-                  crossAxisCount: crossAxisCount,
-                  crossAxisSpacing: 18.0,
-                  mainAxisSpacing: 18.0,
-                  childAspectRatio: childAspectRatio, // Use adjusted value
-                  children: gridItems,
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-} // End _DashboardScreenState
-
-// --- Placeholder Widget for Content Area (no changes needed) ---
+// --- Placeholder Widget ---
 class _PlaceholderContentWidget extends StatelessWidget {
   final String label;
   const _PlaceholderContentWidget({required this.label});

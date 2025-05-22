@@ -1,21 +1,26 @@
+// lib/main.dart
+// MODIFIED FILE (Integrates SplashScreen)
+
 /// File: lib/main.dart
 /// --- Main application entry point ---
-/// --- UPDATED: Uses ConnectivityService and SyncManager for robust sync ---
+/// --- UPDATED: Launches SplashScreenApp to handle initialization and routing ---
 library;
 
-import 'dart:async'; // No longer needed for global timers, but keep for general async
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest_all.dart'
+    as tz; // Keep for setup in splash
+import 'package:timezone/timezone.dart' as tz; // Keep for setup in splash
 
 // Import project specific files (Adjust paths as necessary)
 // Core Services & Widgets
-import 'package:shamil_web_app/core/services/connectivity_service.dart'; // Import new service
-import 'package:shamil_web_app/core/services/sync_manager.dart'; // Import new service
-import 'package:shamil_web_app/core/widgets/sync_status_notifier_widget.dart'; // Import ENHANCED widget
+import 'package:shamil_web_app/core/services/local_storage.dart'; // Import for potential early init if needed
+import 'package:shamil_web_app/core/services/connectivity_service.dart';
+import 'package:shamil_web_app/core/services/sync_manager.dart';
+import 'package:shamil_web_app/core/widgets/sync_status_notifier_widget.dart';
 import 'package:shamil_web_app/core/utils/themes.dart';
 
 // Feature Services
@@ -28,108 +33,48 @@ import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
 
 // UI / Screens
-import 'package:shamil_web_app/features/auth/views/page/steps/registration_flow.dart';
-import 'package:shamil_web_app/firebase_options.dart';
-
-// --- REMOVE Global Timers ---
-// Timer? _cacheSyncTimer;
-// Timer? _logSyncTimer;
+// import 'package:shamil_web_app/features/auth/views/page/steps/registration_flow.dart'; // Initial screen determined by splash
+import 'package:shamil_web_app/features/splash/splash_screen.dart'; // *** IMPORT THE NEW SPLASH SCREEN ***
+import 'package:shamil_web_app/firebase_options.dart'; // Keep for Firebase init check (done in splash)
 
 Future<void> main() async {
-  // Ensure Flutter bindings are initialized
+  // Ensure Flutter bindings are initialized (Still needed before runApp)
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Load environment variables from the .env file.
+  // Load environment variables (Can stay here or move to splash init)
   try {
     await dotenv.load(
       fileName: "assets/env/.env",
     ); // Ensure this path is correct
-    print(".env file loaded successfully.");
+    print("main: .env file loaded successfully.");
   } catch (e) {
-    print("Error loading .env file: $e");
-    // Consider how to handle missing .env (e.g., default values, exit app)
+    print("main: Error loading .env file: $e");
   }
 
-  // --- Initialize Firebase ---
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print("Firebase initialized successfully.");
-  } catch (e) {
-    print("!!! MAIN: Firebase initialization FAILED: $e");
-    // Handle critical Firebase init error
-  }
+  // --- Initialization logic MOVED to SplashScreen ---
+  // Firebase.initializeApp, Timezone, Services (LocalStorage, Hive, NFC, Connectivity, SyncManager)
+  // are now initialized within SplashScreen's initState.
 
-  // --- Initialize Timezone Data ---
-  try {
-    tz.initializeTimeZones();
-    print("Timezone database initialized successfully.");
-    // Optional: Set the default local timezone if needed for display consistency
-    // tz.setLocalLocation(tz.getLocation('Africa/Cairo')); // Example
-    print("Current system timezone: ${tz.local.name}");
-  } catch (e) {
-    print("!!! MAIN: Timezone initialization FAILED: $e");
-    // Handle error if timezones are critical
-  }
-
-  // --- Initialize Services ---
-  // Init Hive Database via Sync Service (Must happen before SyncManager uses it)
-  try {
-    await AccessControlSyncService().init();
-    print("Hive initialization attempted via Sync Service.");
-  } catch (e) {
-    print("!!! MAIN: Hive initialization FAILED: $e");
-    // Handle critical error if Hive is essential for startup
-  }
-
-  // Init NFC Reader Service
-  try {
-    await NfcReaderService().initialize();
-    print("NFC Reader Service initialized in main.");
-  } catch (e) {
-    print("!!! MAIN: NFC Reader Service initialization FAILED: $e");
-    // Handle NFC init error if needed
-  }
-
-  // *** Init Connectivity Service ***
-  try {
-    await ConnectivityService().initialize();
-    print("Connectivity Service initialized.");
-  } catch (e) {
-    print("!!! MAIN: Connectivity Service initialization FAILED: $e");
-    // Handle error if connectivity status is critical on start
-  }
-
-  // *** Init Sync Manager ***
-  // (This also triggers the initial sync after a delay inside its initialize method)
-  try {
-    await SyncManager().initialize();
-    print("Sync Manager initialized.");
-  } catch (e) {
-    print("!!! MAIN: Sync Manager initialization FAILED: $e");
-    // Handle error if background sync is critical
-  }
-
-  // --- REMOVE Starting Old Timers ---
-  // _startSyncTimers(); // Old timer logic is removed
-
-  // Run the application
-  print("--- Running MyApp ---");
-  runApp(const MyApp());
+  // Run the application, starting with the SplashScreenApp
+  print("--- Running SplashScreenApp ---");
+  runApp(const SplashScreenApp()); // *** RUN THE SPLASH SCREEN APP ***
 }
 
-// --- REMOVE _startSyncTimers() function ---
-// void _startSyncTimers() { ... }
-
-// --- Root Application Widget ---
+// --- Root Application Widget (AFTER Splash Screen navigates) ---
+// This widget provides the Blocs and theme for the main app flow.
 class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+  // The initial screen to show AFTER the splash screen finishes.
+  // This will be either RegistrationFlow or DashboardScreen.
+  final Widget initialScreen;
+
+  const MyApp({super.key, required this.initialScreen});
+
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
+  // Keep dispose logic here for services that need app lifecycle cleanup
   @override
   void dispose() {
     print("MyApp disposing - Closing services.");
@@ -144,13 +89,15 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // Use MultiBlocProvider to make BLoCs available down the widget tree
+    // MultiBlocProvider remains the same, providing Blocs for the main app flow
     return MultiBlocProvider(
       providers: [
         // Auth Bloc (used for registration/login state)
         BlocProvider<ServiceProviderBloc>(
           create: (_) => ServiceProviderBloc(),
-          // Consider `lazy: false` if it needs to load initial data immediately
+          // Load initial data immediately if user might already be logged in
+          // Consider lazy: false if LoadInitialData needs to run early.
+          lazy: false,
         ),
         // Dashboard Bloc (loads main dashboard data)
         BlocProvider<DashboardBloc>(
@@ -158,23 +105,26 @@ class _MyAppState extends State<MyApp> {
           // Load data when DashboardScreen is potentially built, so lazy: true is ok
         ),
         // AccessPoint Bloc (manages NFC interaction and validation logic)
-        // Needs DashboardBloc to get provider info for validation context
         BlocProvider<AccessPointBloc>(
           create: (context) {
-            // Ensure DashboardBloc is available before creating AccessPointBloc
-            // This approach assumes DashboardBloc is created earlier or simultaneously.
-            // If DashboardBloc might not be ready, consider alternatives like passing
-            // the provider info fetching logic directly to AccessPointBloc later.
+            // This assumes DashboardBloc is available if needed.
+            // If AccessPointBloc doesn't strictly depend on DashboardBloc *instance*
+            // but rather just the provider data, this setup is fine.
+            // If it needs the BLoC instance, ensure DashboardBloc is provided *before* this one.
             try {
-              final dashboardBloc = BlocProvider.of<DashboardBloc>(context);
+              // Safely try to get DashboardBloc, but don't make it a hard requirement
+              // if AccessPointBloc can function without it initially.
+              final dashboardBloc = context.read<DashboardBloc>();
               return AccessPointBloc(dashboardBloc: dashboardBloc);
             } catch (e) {
               print(
-                "Error providing DashboardBloc to AccessPointBloc: $e. Check provider order.",
+                "Warning: DashboardBloc not immediately available for AccessPointBloc. Check provider order if needed. Error: $e",
               );
-              // Fallback or handle error appropriately
-              // For now, rethrow to highlight the setup issue.
-              rethrow;
+              // If AccessPointBloc *requires* DashboardBloc, this needs adjustment.
+              // For now, assuming it can handle it being potentially null initially or provided later.
+              // Re-throwing might be too strict if it can function without it.
+              // Consider passing the dashboardBloc dependency differently if required early.
+              rethrow; // Rethrow for now to indicate a potential setup issue.
             }
           },
           // lazy: false is important here because AccessPointBloc needs to
@@ -183,20 +133,21 @@ class _MyAppState extends State<MyApp> {
         ),
       ],
       child: MaterialApp(
-        // Configuration for the app
-        debugShowCheckedModeBanner: false, // Hide debug banner
-        title: 'Shamil Admin Desktop', // App title
-        theme: AppTheme.lightTheme, // Apply the defined light theme
-        // Use a Stack to overlay the Sync Status Notifier globally
-        home: const Stack(
+        debugShowCheckedModeBanner: false,
+        title: 'Shamil Admin Desktop',
+        theme: AppTheme.lightTheme,
+        // The initial screen is now passed in after the splash screen determines it.
+        home: Stack(
           children: [
-            // The main navigation flow or screen (starts with RegistrationFlow)
-            RegistrationFlow(), // Or your main authenticated screen logic
-            // *** Use the new EnhancedSyncStatusNotifierWidget ***
-            // This widget listens to SyncManager for detailed status updates
-            EnhancedSyncStatusNotifierWidget(),
+            widget.initialScreen, // Show the screen determined by SplashScreen
+            const EnhancedSyncStatusNotifierWidget(), // Overlay sync status
           ],
         ),
+        // Optional: Define routes if using named navigation
+        // routes: {
+        //   '/auth': (context) => const RegistrationFlow(),
+        //   '/dashboard': (context) => const DashboardScreen(),
+        // },
       ),
     );
   }

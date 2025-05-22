@@ -1,6 +1,5 @@
 /// File: lib/features/dashboard/widgets/stats_section.dart
-/// --- Displays key statistics tailored by PricingModel ---
-/// --- UPDATED: Refined stat card design ---
+/// Displays a stats overview section with key metrics for the dashboard
 library;
 
 import 'package:flutter/material.dart';
@@ -12,6 +11,7 @@ import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart'; // For DashboardStats model
 
+/// A widget displaying key statistics for the dashboard
 class StatsSection extends StatelessWidget {
   final DashboardStats stats;
   final PricingModel pricingModel;
@@ -22,295 +22,439 @@ class StatsSection extends StatelessWidget {
     required this.pricingModel,
   });
 
-  /// Builds a single stat item card - refined style.
+  @override
+  Widget build(BuildContext context) {
+    final bool showSubscriptions =
+        pricingModel == PricingModel.subscription ||
+        pricingModel == PricingModel.hybrid;
+    final bool showReservations =
+        pricingModel == PricingModel.reservation ||
+        pricingModel == PricingModel.hybrid;
+
+    // Get responsive width
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 768;
+    final isMediumScreen = screenWidth < 1100 && screenWidth >= 768;
+
+    // Create list of stat cards based on pricing model
+    final statCards = <Widget>[
+      if (showSubscriptions)
+        _buildStatCard(
+          title: 'Active Subscriptions',
+          value: stats.activeSubscriptions,
+          icon: Icons.card_membership_rounded,
+          iconColor: Colors.green,
+          trend: '+5%',
+          trendUp: true,
+        ),
+      if (showReservations)
+        _buildStatCard(
+          title: 'Upcoming Reservations',
+          value: stats.upcomingReservations,
+          icon: Icons.calendar_today_rounded,
+          iconColor: Colors.blue,
+          trend: '+12%',
+          trendUp: true,
+        ),
+      _buildStatCard(
+        title: 'Check-ins Today',
+        value: stats.checkInsToday,
+        icon: Icons.login_rounded,
+        iconColor: Colors.purple,
+        trend: '+8%',
+        trendUp: true,
+      ),
+      _buildStatCard(
+        title: 'New Members',
+        value: stats.newMembersMonth,
+        subtext: 'This Month',
+        icon: Icons.person_add_rounded,
+        iconColor: Colors.amber,
+        trend: '+15%',
+        trendUp: true,
+      ),
+      _buildRevenueCard(value: stats.totalRevenue, trend: '+7%'),
+    ];
+
+    // Build responsive layout
+    if (isSmallScreen) {
+      // Single column layout for small screens
+      return Column(
+        children: [
+          for (final card in statCards)
+            Padding(padding: const EdgeInsets.only(bottom: 16), child: card),
+        ],
+      );
+    } else if (isMediumScreen) {
+      // 2x2 Grid layout for medium screens
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: statCards[0]),
+              const SizedBox(width: 16),
+              Expanded(child: statCards[1]),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(child: statCards[2]),
+              const SizedBox(width: 16),
+              Expanded(child: statCards[3]),
+            ],
+          ),
+          const SizedBox(height: 16),
+          statCards[4],
+        ],
+      );
+    } else {
+      // Single row for large screens
+      return Container(
+        height: 120,
+        child: Row(
+          children: [
+            for (int i = 0; i < statCards.length; i++) ...[
+              if (i > 0) const SizedBox(width: 16),
+              Expanded(child: statCards[i]),
+            ],
+          ],
+        ),
+      );
+    }
+  }
+
+  /// Builds a standard stat card
   Widget _buildStatCard({
     required String title,
-    required String value,
-    IconData? icon,
-    String? changePercentage, // e.g., "+10.5%"
-    String? secondaryValue, // e.g., "vs last month"
-    Color? changeColor, // Color for the percentage change text
-    bool isPrimary = false, // Flag for potentially larger main stat
-    Widget? actionButton,
+    required int value,
+    String? subtext,
+    required IconData icon,
+    required Color iconColor,
+    String? trend,
+    bool trendUp = true,
   }) {
-    final valueStyle = getTitleStyle(
-      fontSize: isPrimary ? 28 : 24, // Adjusted size
-      fontWeight: FontWeight.bold,
-      color: AppColors.darkGrey,
-    );
-    final titleStyle = getbodyStyle(
-      color: AppColors.secondaryColor,
-      fontSize: 13,
-      fontWeight: FontWeight.w500,
-    );
-    final changeStyle = getSmallStyle(
-      color: changeColor ?? AppColors.darkGrey,
-      fontWeight: FontWeight.w600,
-      fontSize: 11,
-    );
-    final secondaryValueStyle = getSmallStyle(
-      color: AppColors.mediumGrey,
-      fontSize: 11,
-    );
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(12.0),
-        // Subtle border
-        border: Border.all(color: AppColors.lightGrey.withOpacity(0.5)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: AppColors.darkGrey.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 1),
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Top part: Title and Icon
+          // Icon and title
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                // Allow title to wrap if needed
-                child: Text(
-                  title,
-                  style: titleStyle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
+                child: Icon(icon, color: iconColor, size: 16),
               ),
-              if (icon != null)
-                Padding(
-                  padding: const EdgeInsets.only(left: 8.0),
-                  child: Icon(
-                    icon,
-                    size: 18,
-                    color: AppColors.secondaryColor.withOpacity(0.8),
-                  ),
-                ),
-            ],
-          ),
-
-          // Middle part: Main Value - Use Flexible and FittedBox
-          Flexible(
-            // Allow this part to take available vertical space
-            child: Container(
-              alignment: Alignment.centerLeft, // Align value to the left
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              child: FittedBox(
-                // Prevent value text from overflowing horizontally
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(value, style: valueStyle),
-              ),
-            ),
-          ),
-
-          // Bottom part: Change percentage and secondary info
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              if (changePercentage != null)
+              if (trend != null)
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6,
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: (changeColor ?? AppColors.mediumGrey).withOpacity(
+                    color: (trendUp ? Colors.green : Colors.red).withOpacity(
                       0.1,
                     ),
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(changePercentage, style: changeStyle),
-                ),
-              if (changePercentage != null && secondaryValue != null)
-                const SizedBox(width: 6),
-              if (secondaryValue != null)
-                Expanded(
-                  // Allow secondary value to take space
-                  child: Text(
-                    secondaryValue,
-                    style: secondaryValueStyle,
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        trendUp ? Icons.trending_up : Icons.trending_down,
+                        color: trendUp ? Colors.green : Colors.red,
+                        size: 12,
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        trend,
+                        style: TextStyle(
+                          color: trendUp ? Colors.green : Colors.red,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              if (actionButton != null) ...[
-                const Spacer(),
-                actionButton,
-              ], // Push action to end
             ],
+          ),
+
+          const SizedBox(height: 6),
+
+          // Value and title
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$value',
+                  style: getTitleStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  title,
+                  style: getbodyStyle(
+                    fontSize: 12,
+                    color: AppColors.secondaryColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (subtext != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    subtext,
+                    style: getSmallStyle(
+                      fontSize: 10,
+                      color: AppColors.mediumGrey,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // --- Data Formatting (Common) ---
-    final currencyFormat = NumberFormat.currency(
-      locale: 'en_EG',
-      symbol: 'EGP ',
-      decimalDigits: 0,
-    );
-    // Use compact for large numbers, standard for smaller ones
-    final numberFormat = NumberFormat.compact(locale: 'en_US');
-    final standardNumberFormat = NumberFormat.decimalPattern('en_US');
+  /// Builds a revenue card with a mini chart
+  Widget _buildRevenueCard({required double value, String? trend}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.primaryColor,
+            Color.lerp(AppColors.primaryColor, Colors.black, 0.3) ??
+                AppColors.primaryColor.withOpacity(0.7),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryColor.withOpacity(0.3),
+            spreadRadius: 1,
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Revenue info
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Title and trend
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.attach_money_rounded,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          "Total Revenue",
+                          style: getTitleStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (trend != null) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.trending_up,
+                                color: Colors.white,
+                                size: 12,
+                              ),
+                              const SizedBox(width: 2),
+                              Text(
+                                trend,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
 
-    String formatNumber(int number) {
-      return number >= 1000
-          ? numberFormat.format(number)
-          : standardNumberFormat.format(number);
-    }
+                const SizedBox(height: 12),
 
-    // --- Placeholder Calculations ---
-    final revenue = currencyFormat.format(stats.totalRevenue);
-    const double revenueChangePercent = 7.9; // Placeholder
-    final String formattedRevenueChangePercent =
-        "${revenueChangePercent >= 0 ? '+' : ''}${revenueChangePercent.toStringAsFixed(1)}%";
-    final Color changeColor =
-        revenueChangePercent >= 0 ? Colors.teal.shade700 : AppColors.redColor;
+                // Value
+                Text(
+                  "\$${value.toStringAsFixed(2)}",
+                  style: getTitleStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
 
-    // --- Build Specific Stats based on Pricing Model ---
-    List<Widget> statCards = [];
+                const SizedBox(height: 2),
 
-    statCards.add(
-      _buildStatCard(
-        title: "Revenue (This Month)",
-        value: revenue,
-        changePercentage: formattedRevenueChangePercent,
-        secondaryValue: "vs last month",
-        changeColor: changeColor,
-        isPrimary: true,
-        icon: Icons.attach_money_rounded,
+                Text(
+                  "This month",
+                  style: getSmallStyle(
+                    fontSize: 10,
+                    color: Colors.white.withOpacity(0.7),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+
+          // Mini chart
+          Expanded(
+            flex: 2,
+            child: Container(
+              height: 70,
+              alignment: Alignment.center,
+              child: CustomPaint(
+                size: const Size(double.infinity, 70),
+                painter: _MiniChartPainter(
+                  dataPoints: [0.4, 0.6, 0.5, 0.7, 0.8, 0.6, 0.9],
+                  lineColor: Colors.white,
+                  fillColor: Colors.white.withOpacity(0.1),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
-
-    if (pricingModel == PricingModel.subscription ||
-        pricingModel == PricingModel.hybrid) {
-      statCards.add(
-        _buildStatCard(
-          title: "Active Subscriptions",
-          value: formatNumber(stats.activeSubscriptions),
-          icon: Icons.people_alt_outlined,
-        ),
-      );
-      statCards.add(
-        _buildStatCard(
-          title: "New Members (Month)",
-          value: formatNumber(stats.newMembersMonth),
-          icon: Icons.person_add_alt_1_outlined,
-        ),
-      );
-      statCards.add(
-        _buildStatCard(
-          title: "Check-ins (Today)",
-          value: formatNumber(stats.checkInsToday),
-          icon: Icons.check_circle_outline,
-        ),
-      );
-    }
-    if (pricingModel == PricingModel.reservation ||
-        pricingModel == PricingModel.hybrid) {
-      statCards.add(
-        _buildStatCard(
-          title: "Bookings (Month)",
-          value: formatNumber(stats.totalBookingsMonth),
-          icon: Icons.event_note_outlined,
-        ),
-      );
-      statCards.add(
-        _buildStatCard(
-          title: "Upcoming Reservations",
-          value: formatNumber(stats.upcomingReservations),
-          icon: Icons.event_available_outlined,
-        ),
-      );
-      if (pricingModel == PricingModel.reservation) {
-        statCards.add(
-          _buildStatCard(
-            title: "Check-ins (Today)",
-            value: formatNumber(stats.checkInsToday),
-            icon: Icons.check_circle_outline,
-          ),
-        );
-      }
-    }
-    if (pricingModel == PricingModel.other) {
-      statCards.add(
-        _buildStatCard(
-          title: "New Customers (Month)",
-          value: formatNumber(stats.newMembersMonth),
-          icon: Icons.groups_2_outlined,
-        ),
-      );
-      statCards.add(
-        _buildStatCard(
-          title: "Check-ins (Today)",
-          value: formatNumber(stats.checkInsToday),
-          icon: Icons.check_circle_outline,
-        ),
-      );
-      statCards.add(
-        _buildStatCard(
-          title: "Avg. Rating",
-          value: "--",
-          icon: Icons.star_border_rounded,
-        ),
-      );
-    }
-
-    while (statCards.length < 4) {
-      statCards.add(
-        _buildStatCard(
-          title: "Metric Placeholder",
-          value: "--",
-          icon: Icons.data_usage,
-        ),
-      );
-    }
-
-    // --- Layout ---
-    // Use LayoutBuilder to dynamically adjust grid parameters
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Determine grid parameters based on available width
-        int crossAxisCount = 4;
-        double childAspectRatio = 1.5; // Adjusted ratio
-
-        if (constraints.maxWidth < 650) {
-          crossAxisCount = 1;
-          childAspectRatio = 2.4; // Taller cards on single column
-        } else if (constraints.maxWidth < 900) {
-          crossAxisCount = 2;
-          childAspectRatio = 1.6;
-        } else if (constraints.maxWidth < 1250) {
-          crossAxisCount = 3;
-          childAspectRatio = 1.5;
-        } else {
-          crossAxisCount = 4;
-          childAspectRatio = 1.5;
-        }
-
-        return GridView.count(
-          crossAxisCount: crossAxisCount,
-          crossAxisSpacing: 18.0,
-          mainAxisSpacing: 18.0,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: childAspectRatio,
-          children: statCards,
-        );
-      },
-    );
   }
+}
+
+/// Custom painter for drawing a mini chart
+class _MiniChartPainter extends CustomPainter {
+  final List<double> dataPoints;
+  final Color lineColor;
+  final Color fillColor;
+
+  _MiniChartPainter({
+    required this.dataPoints,
+    required this.lineColor,
+    required this.fillColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (dataPoints.isEmpty) return;
+
+    final paint =
+        Paint()
+          ..color = lineColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0;
+
+    final fillPaint =
+        Paint()
+          ..color = fillColor
+          ..style = PaintingStyle.fill;
+
+    final path = Path();
+    final fillPath = Path();
+
+    final double xStep = size.width / (dataPoints.length - 1);
+
+    // Start path at the bottom left for fill
+    fillPath.moveTo(0, size.height);
+
+    // First point
+    path.moveTo(0, size.height * (1 - dataPoints[0]));
+    fillPath.lineTo(0, size.height * (1 - dataPoints[0]));
+
+    // Draw lines between points
+    for (int i = 1; i < dataPoints.length; i++) {
+      final x = xStep * i;
+      final y = size.height * (1 - dataPoints[i]);
+      path.lineTo(x, y);
+      fillPath.lineTo(x, y);
+    }
+
+    // Complete fill path
+    fillPath.lineTo(size.width, size.height);
+    fillPath.close();
+
+    // Draw fill first, then line
+    canvas.drawPath(fillPath, fillPaint);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(_MiniChartPainter oldDelegate) =>
+      oldDelegate.dataPoints != dataPoints ||
+      oldDelegate.lineColor != lineColor ||
+      oldDelegate.fillColor != fillColor;
 }

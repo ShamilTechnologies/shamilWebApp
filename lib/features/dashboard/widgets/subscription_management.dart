@@ -1,234 +1,329 @@
 /// File: lib/features/dashboard/widgets/subscription_management.dart
 /// --- Section for displaying recent subscriptions ---
-/// --- UPDATED: Limit displayed items to 2 to prevent overflow ---
+/// --- REFACTORED: Using reusable components for cleaner code ---
 library;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart'; // For date and currency formatting
+import 'package:firebase_auth/firebase_auth.dart';
 
 // Import Models and Utils needed
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
+import 'package:shamil_web_app/core/utils/error_handler.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
+import 'package:shamil_web_app/features/dashboard/data/subscription_repository.dart';
+
+// Import shared components
+import 'package:shamil_web_app/core/widgets/status_badge.dart';
+import 'package:shamil_web_app/core/widgets/expandable_card.dart';
+import 'package:shamil_web_app/core/widgets/detail_row.dart';
+import 'package:shamil_web_app/core/widgets/action_button.dart';
+
 // Import common helper widgets/functions
 import '../helper/dashboard_widgets.dart'; // Import the corrected helpers
+import 'package:shamil_web_app/features/dashboard/widgets/forms/subscription_form.dart';
+import 'package:shamil_web_app/core/widgets/filter_dropdown.dart';
 
-class SubscriptionManagementSection extends StatelessWidget {
+class SubscriptionManagement extends StatefulWidget {
   final List<Subscription> subscriptions;
-  const SubscriptionManagementSection({super.key, required this.subscriptions});
+  final List<dynamic>? availablePlans;
+  final String providerId;
 
-  // --- Helper Method to Show Details Dialog ---
-  void _showSubscriptionDetailsDialog(BuildContext context, Subscription sub) {
-    final DateFormat dateFormat = DateFormat('d MMM, yyyy'); // Format for dates
-    final currencyFormat = NumberFormat.currency(
-      locale: 'en_EG', // Use appropriate locale
-      symbol: 'EGP ', // Use appropriate currency symbol
-      decimalDigits: 2,
-    );
+  const SubscriptionManagement({
+    Key? key,
+    required this.subscriptions,
+    this.availablePlans,
+    required this.providerId,
+  }) : super(key: key);
 
-    showDialog(
+  @override
+  State<SubscriptionManagement> createState() => _SubscriptionManagementState();
+}
+
+class _SubscriptionManagementState extends State<SubscriptionManagement> {
+  late List<Subscription> displayedSubscriptions;
+  bool _isLoading = false;
+  String _filterStatus = 'All';
+  final SubscriptionRepository _repository = SubscriptionRepository();
+
+  @override
+  void initState() {
+    super.initState();
+    displayedSubscriptions = _filterSubscriptions(widget.subscriptions);
+  }
+
+  @override
+  void didUpdateWidget(SubscriptionManagement oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.subscriptions != widget.subscriptions) {
+      setState(() {
+        displayedSubscriptions = _filterSubscriptions(widget.subscriptions);
+      });
+    }
+  }
+
+  List<Subscription> _filterSubscriptions(List<Subscription> subscriptions) {
+    if (_filterStatus == 'All') {
+      return List.from(subscriptions)
+        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+    } else {
+      return subscriptions.where((sub) => sub.status == _filterStatus).toList()
+        ..sort((a, b) => b.startDate.compareTo(a.startDate));
+    }
+  }
+
+  Future<void> _showSubscriptionForm({Subscription? subscription}) async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) {
+      if (mounted) {
+        ErrorHandler.showErrorSnackBar(
+          context,
+          'Authentication error: Please sign in again',
+        );
+      }
+      return;
+    }
+
+    await showDialog(
       context: context,
       builder:
-          (dialogContext) => AlertDialog(
-            title: const Text("Subscription Details"),
-            content: SingleChildScrollView(
-              child: ListBody(
-                children: <Widget>[
-                  _buildDetailRow("Subscription ID:", sub.id),
-                  _buildDetailRow("User ID:", sub.userId),
-                  _buildDetailRow("User Name:", sub.userName),
-                  _buildDetailRow("Plan Name:", sub.planName),
-                  _buildDetailRow("Status:", sub.status),
-                  _buildDetailRow(
-                    "Start Date:",
-                    dateFormat.format(sub.startDate.toDate()),
-                  ),
-                  _buildDetailRow(
-                    "Expiry Date:",
-                    sub.expiryDate != null
-                        ? dateFormat.format(sub.expiryDate!.toDate())
-                        : "N/A",
-                  ),
-                  _buildDetailRow(
-                    "Price Paid:",
-                    sub.pricePaid != null
-                        ? currencyFormat.format(sub.pricePaid)
-                        : "N/A",
-                  ),
-                  _buildDetailRow(
-                    "Payment Info:",
-                    sub.paymentMethodInfo ?? "N/A",
-                  ),
-                  _buildDetailRow("Provider ID:", sub.providerId),
-                ],
+          (context) => AlertDialog(
+            title: Text(
+              subscription == null
+                  ? 'Create Subscription'
+                  : 'Edit Subscription',
+              style: getTitleStyle(fontSize: 20, fontWeight: FontWeight.w600),
+            ),
+            content: SizedBox(
+              width: 600,
+              child: SubscriptionForm(
+                initialSubscription: subscription,
+                availablePlans:
+                    widget.availablePlans?.map((plan) {
+                      if (plan is SubscriptionPlan) {
+                        return plan;
+                      } else {
+                        // Convert from other type if needed
+                        return SubscriptionPlan(
+                          id: plan.id,
+                          name: plan.name,
+                          price: plan.price,
+                          interval: plan.interval,
+                          intervalCount: plan.intervalCount,
+                          description: plan.description,
+                          features: plan.features,
+                          isActive: true,
+                        );
+                      }
+                    }).toList(),
+                onSubmit: (formData) async {
+                  Navigator.of(context).pop();
+                  setState(() => _isLoading = true);
+
+                  try {
+                    if (subscription == null) {
+                      // Create new subscription
+                      await _repository.createSubscription(
+                        providerId: widget.providerId,
+                        userId: formData['userId'],
+                        userName: formData['userName'],
+                        planName: formData['planName'],
+                        startDate: formData['startDate'],
+                        expiryDate: formData['expiryDate'],
+                        pricePaid: formData['pricePaid'],
+                        paymentMethodInfo: formData['paymentMethodInfo'],
+                      );
+                    } else {
+                      // Update existing subscription
+                      await _repository.updateSubscription(
+                        subscriptionId: subscription.id,
+                        status: formData['status'],
+                        planName: formData['planName'],
+                        expiryDate: formData['expiryDate'],
+                        pricePaid: formData['pricePaid'],
+                        paymentMethodInfo: formData['paymentMethodInfo'],
+                      );
+                    }
+
+                    // Refresh subscriptions
+                    final updatedSubscriptions = await _repository
+                        .fetchSubscriptions(providerId: widget.providerId);
+
+                    setState(() {
+                      displayedSubscriptions = _filterSubscriptions(
+                        updatedSubscriptions,
+                      );
+                      _isLoading = false;
+                    });
+
+                    if (mounted) {
+                      ErrorHandler.showSuccessSnackBar(
+                        context,
+                        subscription == null
+                            ? 'Subscription created successfully'
+                            : 'Subscription updated successfully',
+                      );
+                    }
+                  } catch (e) {
+                    setState(() => _isLoading = false);
+                    if (mounted) {
+                      ErrorHandler.showErrorSnackBar(context, 'Error: $e');
+                    }
+                  }
+                },
               ),
             ),
-            actions: <Widget>[
+            actions: [
               TextButton(
-                child: const Text('Close'),
-                onPressed: () => Navigator.of(dialogContext).pop(),
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
               ),
-              // Optional: Add more actions like "Cancel Subscription" etc.
             ],
           ),
     );
   }
 
-  // Helper for dialog rows
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text("$label ", style: getbodyStyle(fontWeight: FontWeight.w600)),
-          Expanded(child: Text(value, style: getbodyStyle())),
-        ],
+  Future<void> _confirmDeleteSubscription(Subscription subscription) async {
+    final confirmed = await ErrorHandler.showConfirmationDialog(
+      context: context,
+      title: 'Confirm Deletion',
+      message:
+          'Are you sure you want to delete the subscription for ${subscription.userName}?',
+      confirmText: 'Delete',
+      isDangerous: true,
+    );
+
+    if (confirmed && mounted) {
+      setState(() => _isLoading = true);
+      try {
+        await _repository.deleteSubscription(subscription.id);
+
+        // Refresh subscriptions
+        final updatedSubscriptions = await _repository.fetchSubscriptions(
+          providerId: widget.providerId,
+        );
+
+        setState(() {
+          displayedSubscriptions = _filterSubscriptions(updatedSubscriptions);
+          _isLoading = false;
+        });
+
+        if (mounted) {
+          ErrorHandler.showSuccessSnackBar(
+            context,
+            'Subscription deleted successfully',
+          );
+        }
+      } catch (e) {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ErrorHandler.showErrorSnackBar(context, 'Error: $e');
+        }
+      }
+    }
+  }
+
+  Widget _buildSubscriptionCard(Subscription sub) {
+    final startDate = DateFormat('MMM d, yyyy').format(sub.startDate.toDate());
+    final expiryDate =
+        sub.expiryDate != null
+            ? DateFormat('MMM d, yyyy').format(sub.expiryDate!.toDate())
+            : 'N/A';
+
+    // Create a list of detail rows for the content
+    final List<Widget> detailRows = [
+      DetailRow(label: "Start Date:", value: startDate),
+      DetailRow(label: "Expiry Date:", value: expiryDate),
+      if (sub.pricePaid != null)
+        DetailRow(
+          label: "Price Paid:",
+          value: "\$${sub.pricePaid!.toStringAsFixed(2)}",
+        ),
+      if (sub.paymentMethodInfo != null && sub.paymentMethodInfo!.isNotEmpty)
+        DetailRow(label: "Payment Method:", value: sub.paymentMethodInfo!),
+    ];
+
+    // Create action buttons
+    final List<Widget> actions = [
+      ActionButton.edit(
+        onPressed: () => _showSubscriptionForm(subscription: sub),
       ),
+      ActionButton.delete(onPressed: () => _confirmDeleteSubscription(sub)),
+    ];
+
+    return ExpandableCard(
+      title: Text(
+        sub.userName,
+        style: getTitleStyle(fontSize: 16),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(sub.planName, style: getSmallStyle()),
+      trailing: StatusBadge(status: sub.status),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: detailRows,
+      ),
+      actions: actions,
     );
   }
-  // --- End Helper Methods ---
 
   @override
   Widget build(BuildContext context) {
-    // *** Limit items shown on dashboard to 2 ***
-    final displayedSubscriptions = subscriptions.take(2).toList();
-
     // Uses the SectionContainer class wrapper which handles context correctly
     return SectionContainer(
-      // No title needed here, ListHeader handles it
+      title: "Recent Subscriptions",
       padding: const EdgeInsets.all(0), // Let content manage padding
-      child: Column(
-        // Column to stack header and list
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Use ListHeaderWithViewAll for the title and "View All"
-          ListHeaderWithViewAll(
-            title: "Recent Subscriptions",
-            // Show total count only if there are more items than displayed
-            totalItemCount:
-                subscriptions.length > displayedSubscriptions.length
-                    ? subscriptions.length
-                    : null,
-            onViewAllPressed:
-                subscriptions.length > displayedSubscriptions.length
-                    ? () {
-                      print("View All Subscriptions button tapped");
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            "Navigate to All Subscriptions not implemented.",
-                          ),
-                        ),
-                      );
-                    }
-                    : null,
-            padding: const EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 20,
-              bottom: 8, // Added top padding
-            ),
-          ),
-          // Conditionally display list or empty state
-          if (displayedSubscriptions.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20.0,
-                vertical: 8.0,
-              ),
-              child: buildEmptyState("No recent subscriptions."),
-            )
-          else
-            // Use ListView.separated for the limited list
-            ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: displayedSubscriptions.length,
-              separatorBuilder:
-                  (_, __) => const Divider(
-                    height: 1,
-                    thickness: 0.5,
-                    indent: 20,
-                    endIndent: 20,
-                  ),
-              itemBuilder: (context, index) {
-                final sub = displayedSubscriptions[index];
-                final formattedEndDate =
-                    sub.expiryDate != null
-                        ? DateFormat('d MMM, yy').format(
-                          sub.expiryDate!.toDate(),
-                        ) // Short format for list
-                        : 'N/A';
-
-                // Use the enhanced DashboardListTile
-                return DashboardListTile(
-                  key: ValueKey(sub.id),
-                  // isLast is not needed with separatorBuilder
-                  onTap: () => _showSubscriptionDetailsDialog(context, sub),
-                  leading: CircleAvatar(
-                    radius: 18, // Slightly smaller avatar
-                    backgroundColor: AppColors.primaryColor.withOpacity(0.1),
-                    child: Text(
-                      sub.userName.isNotEmpty
-                          ? sub.userName[0].toUpperCase()
-                          : "?",
-                      style: getTitleStyle(
-                        color: AppColors.primaryColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  title: Text(
-                    sub.userName,
-                    style: getbodyStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    "Plan: ${sub.planName}",
-                    style: getSmallStyle(
-                      color: AppColors.secondaryColor,
-                      fontSize: 11,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: SizedBox(
-                    width: 160, // Adjust trailing width as needed
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Expanded(
-                          child: buildStatusChip(sub.status),
-                        ), // Status chip
-                        const SizedBox(width: 12),
-                        Expanded(
-                          // Ensure date fits
-                          child: Text(
-                            formattedEndDate,
-                            style: getSmallStyle(
-                              color: AppColors.mediumGrey,
-                              fontSize: 11,
-                            ),
-                            textAlign: TextAlign.end,
-                            overflow: TextOverflow.ellipsis,
-                          ), // Handle potential overflow
-                        ),
-                      ],
-                    ),
-                  ),
+      actions: [
+        // Filter dropdown (use our reusable component)
+        FilterDropdown<String>(
+          value: _filterStatus,
+          items: ['All', 'Active', 'Expired', 'Cancelled'],
+          onChanged: (String? newValue) {
+            if (newValue != null) {
+              setState(() {
+                _filterStatus = newValue;
+                displayedSubscriptions = _filterSubscriptions(
+                  widget.subscriptions,
                 );
-              },
-            ),
-          const SizedBox(height: 12), // Bottom padding inside card
-        ],
-      ),
+              });
+            }
+          },
+        ),
+        const SizedBox(width: 8),
+        // Add new subscription button
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          tooltip: 'Add Subscription',
+          onPressed: () => _showSubscriptionForm(),
+        ),
+      ],
+      child:
+          _isLoading
+              ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+              : Padding(
+                padding: const EdgeInsets.all(16.0),
+                child:
+                    displayedSubscriptions.isEmpty
+                        ? buildEmptyState(
+                          "No subscriptions found.",
+                          icon: Icons.card_membership_outlined,
+                        )
+                        : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children:
+                              displayedSubscriptions
+                                  .take(5)
+                                  .map(_buildSubscriptionCard)
+                                  .toList(),
+                        ),
+              ),
     );
   }
 }

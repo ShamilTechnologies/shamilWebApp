@@ -6,7 +6,7 @@ library;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'
-    show ReservationType, reservationTypeFromString;
+    show ReservationType, reservationTypeFromString, PricingInterval;
 
 //----------------------------------------------------------------------------//
 // Dashboard Data Models                                                      //
@@ -24,6 +24,14 @@ class Subscription extends Equatable {
   final Timestamp? expiryDate;
   final String? paymentMethodInfo;
   final double? pricePaid;
+  // Additional properties for enhanced information display
+  final String? planDescription;
+  final List<String>? includedFeatures;
+  final Map<String, dynamic>? usageData;
+  final List<Map<String, dynamic>>? renewalHistory;
+  final Timestamp? nextRenewalDate;
+  final String? billingCycle;
+  final bool? isAutoRenewal;
 
   const Subscription({
     required this.id,
@@ -36,6 +44,13 @@ class Subscription extends Equatable {
     this.expiryDate,
     this.paymentMethodInfo,
     this.pricePaid,
+    this.planDescription,
+    this.includedFeatures,
+    this.usageData,
+    this.renewalHistory,
+    this.nextRenewalDate,
+    this.billingCycle,
+    this.isAutoRenewal,
   });
 
   factory Subscription.fromMap(String id, Map<String, dynamic> data) {
@@ -52,6 +67,15 @@ class Subscription extends Equatable {
           data['expiryDate'] as Timestamp? ?? data['endDate'] as Timestamp?,
       paymentMethodInfo: data['paymentMethodInfo'] as String?,
       pricePaid: (data['pricePaid'] as num?)?.toDouble(),
+      planDescription: data['planDescription'] as String?,
+      includedFeatures: (data['features'] as List<dynamic>?)?.cast<String>(),
+      usageData: data['usageData'] as Map<String, dynamic>?,
+      renewalHistory:
+          (data['renewalHistory'] as List<dynamic>?)
+              ?.cast<Map<String, dynamic>>(),
+      nextRenewalDate: data['nextRenewalDate'] as Timestamp?,
+      billingCycle: data['billingCycle'] as String?,
+      isAutoRenewal: data['autoRenew'] as bool?,
     );
   }
   factory Subscription.fromSnapshot(DocumentSnapshot doc) {
@@ -71,11 +95,17 @@ class Subscription extends Equatable {
       if (expiryDate != null) 'expiryDate': expiryDate,
       if (paymentMethodInfo != null) 'paymentMethodInfo': paymentMethodInfo,
       if (pricePaid != null) 'pricePaid': pricePaid,
+      if (planDescription != null) 'planDescription': planDescription,
+      if (includedFeatures != null) 'features': includedFeatures,
+      if (usageData != null) 'usageData': usageData,
+      if (renewalHistory != null) 'renewalHistory': renewalHistory,
+      if (nextRenewalDate != null) 'nextRenewalDate': nextRenewalDate,
+      if (billingCycle != null) 'billingCycle': billingCycle,
+      if (isAutoRenewal != null) 'autoRenew': isAutoRenewal,
     };
   }
 
   Subscription copyWith({
-    /* ... as before ... */
     String? id,
     String? userId,
     String? providerId,
@@ -86,6 +116,13 @@ class Subscription extends Equatable {
     Timestamp? expiryDate,
     String? paymentMethodInfo,
     double? pricePaid,
+    String? planDescription,
+    List<String>? includedFeatures,
+    Map<String, dynamic>? usageData,
+    List<Map<String, dynamic>>? renewalHistory,
+    Timestamp? nextRenewalDate,
+    String? billingCycle,
+    bool? isAutoRenewal,
   }) {
     return Subscription(
       id: id ?? this.id,
@@ -98,12 +135,18 @@ class Subscription extends Equatable {
       expiryDate: expiryDate ?? this.expiryDate,
       paymentMethodInfo: paymentMethodInfo ?? this.paymentMethodInfo,
       pricePaid: pricePaid ?? this.pricePaid,
+      planDescription: planDescription ?? this.planDescription,
+      includedFeatures: includedFeatures ?? this.includedFeatures,
+      usageData: usageData ?? this.usageData,
+      renewalHistory: renewalHistory ?? this.renewalHistory,
+      nextRenewalDate: nextRenewalDate ?? this.nextRenewalDate,
+      billingCycle: billingCycle ?? this.billingCycle,
+      isAutoRenewal: isAutoRenewal ?? this.isAutoRenewal,
     );
   }
 
   @override
   List<Object?> get props => [
-    /* ... as before ... */
     id,
     userId,
     providerId,
@@ -114,73 +157,166 @@ class Subscription extends Equatable {
     expiryDate,
     paymentMethodInfo,
     pricePaid,
+    planDescription,
+    includedFeatures,
+    usageData,
+    renewalHistory,
+    nextRenewalDate,
+    billingCycle,
+    isAutoRenewal,
   ];
 }
 
-// --- Reservation Model (UPDATED with sequence fields) ---
+/// Improved Reservation model that aligns with the mobile app implementation
 class Reservation extends Equatable {
   final String id;
   final String userId;
-  final String providerId;
-  final String governorateId;
   final String userName;
-  final Timestamp dateTime;
-  final String status;
+  final String providerId;
+  final String? serviceId;
   final String? serviceName;
-  final int? durationMinutes;
-  final String? notes;
-  final ReservationType type;
-  final bool isRecurring;
+  final Timestamp dateTime;
   final int groupSize;
-  final Map<String, dynamic> typeSpecificData;
-  final int? queuePosition; // <-- NEW: Optional position in sequence
-  final Timestamp? estimatedEntryTime; // <-- NEW: Optional estimated time
-
-  DateTime get startTime => dateTime.toDate();
-  DateTime? get endTime =>
-      durationMinutes != null
-          ? startTime.add(Duration(minutes: durationMinutes!))
-          : null;
+  final int? durationMinutes;
+  final String status;
+  final ReservationType type;
+  final String? notes;
+  final Map<String, dynamic>? typeSpecificData;
+  final List<Map<String, dynamic>>? attendees;
+  final double? totalPrice;
+  final bool isFullVenueReservation;
+  final bool isCommunityVisible;
+  final bool isQueueBased;
+  final String? paymentStatus;
+  final QueueStatus? queueStatus;
+  final String? paymentMethod;
+  final String? cancellationReason;
+  final Timestamp? checkInTime;
+  final Timestamp? checkOutTime;
 
   const Reservation({
     required this.id,
     required this.userId,
-    required this.providerId,
-    required this.governorateId,
     required this.userName,
+    required this.providerId,
     required this.dateTime,
     required this.status,
+    required this.type,
+    this.serviceId,
     this.serviceName,
+    this.groupSize = 1,
     this.durationMinutes,
     this.notes,
-    required this.type,
-    this.isRecurring = false,
-    this.groupSize = 1,
-    this.typeSpecificData = const {},
-    this.queuePosition, // <-- NEW
-    this.estimatedEntryTime, // <-- NEW
+    this.typeSpecificData,
+    this.attendees,
+    this.totalPrice,
+    this.isFullVenueReservation = false,
+    this.isCommunityVisible = false,
+    this.isQueueBased = false,
+    this.paymentStatus,
+    this.queueStatus,
+    this.paymentMethod,
+    this.cancellationReason,
+    this.checkInTime,
+    this.checkOutTime,
   });
 
-  factory Reservation.fromMap(String id, Map<String, dynamic> data) {
+  // Getter for startTime that returns dateTime as a DateTime
+  DateTime get startTime => dateTime.toDate();
+
+  // Getter for endTime that calculates based on startTime and durationMinutes
+  DateTime get endTime =>
+      dateTime.toDate().add(Duration(minutes: durationMinutes ?? 60));
+
+  factory Reservation.fromMap(String id, Map<String, dynamic>? map) {
+    if (map == null) {
+      return Reservation(
+        id: id,
+        userId: '',
+        userName: 'Unknown',
+        providerId: '',
+        dateTime: Timestamp.now(),
+        status: 'unknown',
+        type: ReservationType.unknown,
+      );
+    }
+
+    final typeStr = map['type'] as String? ?? map['reservationType'] as String?;
+    ReservationType reservationType;
+
+    switch ((typeStr ?? '').toLowerCase().replaceAll('-', '')) {
+      case 'timebased':
+        reservationType = ReservationType.timeBased;
+        break;
+      case 'servicebased':
+        reservationType = ReservationType.serviceBased;
+        break;
+      case 'seatbased':
+        reservationType = ReservationType.seatBased;
+        break;
+      case 'recurring':
+        reservationType = ReservationType.recurring;
+        break;
+      case 'group':
+        reservationType = ReservationType.group;
+        break;
+      case 'accessbased':
+        reservationType = ReservationType.accessBased;
+        break;
+      case 'sequencebased':
+        reservationType = ReservationType.sequenceBased;
+        break;
+      default:
+        reservationType = ReservationType.unknown;
+    }
+
+    // Handle queue status
+    QueueStatus? queueStatus;
+    if (map['queueStatus'] != null &&
+        map['queueStatus'] is Map<String, dynamic>) {
+      final queueData = map['queueStatus'] as Map<String, dynamic>;
+
+      queueStatus = QueueStatus(
+        id: queueData['id'] as String? ?? '',
+        position: queueData['position'] as int? ?? 0,
+        status: queueData['status'] as String? ?? 'waiting',
+        estimatedEntryTime:
+            (queueData['estimatedEntryTime'] is Timestamp)
+                ? (queueData['estimatedEntryTime'] as Timestamp).toDate()
+                : DateTime.now(),
+        peopleAhead: queueData['peopleAhead'] as int? ?? 0,
+      );
+    }
+
     return Reservation(
       id: id,
-      userId: data['userId'] as String? ?? '',
-      providerId: data['providerId'] as String? ?? '',
-      governorateId: data['governorateId'] as String? ?? '',
-      userName: data['userName'] as String? ?? 'Unknown User',
-      dateTime: data['dateTime'] as Timestamp? ?? Timestamp.now(),
-      status: data['status'] as String? ?? 'Unknown',
-      serviceName: data['serviceName'] as String?,
-      durationMinutes: data['durationMinutes'] as int?,
-      notes: data['notes'] as String?,
-      type: reservationTypeFromString(data['type'] as String?),
-      isRecurring: data['isRecurring'] as bool? ?? false,
-      groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
-      typeSpecificData: Map<String, dynamic>.from(
-        data['typeSpecificData'] as Map? ?? {},
-      ),
-      queuePosition: data['queuePosition'] as int?, // <-- NEW
-      estimatedEntryTime: data['estimatedEntryTime'] as Timestamp?, // <-- NEW
+      userId: map['userId'] as String? ?? '',
+      userName: map['userName'] as String? ?? 'Unknown',
+      providerId: map['providerId'] as String? ?? '',
+      dateTime:
+          map['reservationStartTime'] as Timestamp? ??
+          map['dateTime'] as Timestamp? ??
+          Timestamp.now(),
+      serviceId: map['serviceId'] as String?,
+      serviceName: map['serviceName'] as String?,
+      groupSize: (map['groupSize'] as num?)?.toInt() ?? 1,
+      durationMinutes: (map['durationMinutes'] as num?)?.toInt(),
+      status: map['status'] as String? ?? 'pending',
+      type: reservationType,
+      notes: map['notes'] as String?,
+      typeSpecificData: map['typeSpecificData'] as Map<String, dynamic>?,
+      attendees:
+          (map['attendees'] as List<dynamic>?)?.cast<Map<String, dynamic>>(),
+      totalPrice: (map['totalPrice'] as num?)?.toDouble(),
+      isFullVenueReservation: map['isFullVenueReservation'] as bool? ?? false,
+      isCommunityVisible: map['isCommunityVisible'] as bool? ?? false,
+      isQueueBased: map['queueBased'] as bool? ?? false,
+      paymentStatus: map['paymentStatus'] as String?,
+      queueStatus: queueStatus,
+      paymentMethod: map['paymentMethod'] as String?,
+      cancellationReason: map['cancellationReason'] as String?,
+      checkInTime: map['checkInTime'] as Timestamp?,
+      checkOutTime: map['checkOutTime'] as Timestamp?,
     );
   }
 
@@ -189,101 +325,128 @@ class Reservation extends Equatable {
     return Reservation.fromMap(doc.id, data);
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'userId': userId,
-      'providerId': providerId,
-      'governorateId': governorateId,
-      'userName': userName,
-      'dateTime': dateTime, 'status': status,
-      if (serviceName != null) 'serviceName': serviceName,
-      if (durationMinutes != null) 'durationMinutes': durationMinutes,
-      if (notes != null) 'notes': notes,
-      'type': type.name,
-      'isRecurring': isRecurring,
-      'groupSize': groupSize,
-      'typeSpecificData': typeSpecificData,
-      if (queuePosition != null) 'queuePosition': queuePosition, // <-- NEW
-      if (estimatedEntryTime != null)
-        'estimatedEntryTime': estimatedEntryTime, // <-- NEW
-    };
-  }
-
+  /// Creates a copy of this reservation with the given fields replaced with new values
   Reservation copyWith({
     String? id,
     String? userId,
-    String? providerId,
-    String? governorateId,
     String? userName,
-    Timestamp? dateTime,
-    String? status,
+    String? providerId,
+    String? serviceId,
     String? serviceName,
-    int? durationMinutes,
-    String? notes,
-    ReservationType? type,
-    bool? isRecurring,
+    Timestamp? dateTime,
     int? groupSize,
+    int? durationMinutes,
+    String? status,
+    ReservationType? type,
+    String? notes,
     Map<String, dynamic>? typeSpecificData,
-    int? queuePosition, // <-- NEW
-    Timestamp? estimatedEntryTime, // <-- NEW
+    List<Map<String, dynamic>>? attendees,
+    double? totalPrice,
+    bool? isFullVenueReservation,
+    bool? isCommunityVisible,
+    bool? isQueueBased,
+    String? paymentStatus,
+    QueueStatus? queueStatus,
+    String? paymentMethod,
+    String? cancellationReason,
+    Timestamp? checkInTime,
+    Timestamp? checkOutTime,
   }) {
-    bool explicitlySetServiceNameNull =
-        serviceName == null && this.serviceName != null;
-    bool explicitlySetDurationNull =
-        durationMinutes == null && this.durationMinutes != null;
-    bool explicitlySetNotesNull = notes == null && this.notes != null;
-    bool explicitlySetQueuePositionNull =
-        queuePosition == null && this.queuePosition != null; // <-- NEW
-    bool explicitlySetEstimatedTimeNull =
-        estimatedEntryTime == null &&
-        this.estimatedEntryTime != null; // <-- NEW
-
     return Reservation(
       id: id ?? this.id,
       userId: userId ?? this.userId,
-      providerId: providerId ?? this.providerId,
-      governorateId: governorateId ?? this.governorateId,
       userName: userName ?? this.userName,
+      providerId: providerId ?? this.providerId,
+      serviceId: serviceId ?? this.serviceId,
+      serviceName: serviceName ?? this.serviceName,
       dateTime: dateTime ?? this.dateTime,
-      status: status ?? this.status,
-      serviceName:
-          explicitlySetServiceNameNull
-              ? null
-              : (serviceName ?? this.serviceName),
-      durationMinutes:
-          explicitlySetDurationNull
-              ? null
-              : (durationMinutes ?? this.durationMinutes),
-      notes: explicitlySetNotesNull ? null : (notes ?? this.notes),
-      type: type ?? this.type,
-      isRecurring: isRecurring ?? this.isRecurring,
       groupSize: groupSize ?? this.groupSize,
+      durationMinutes: durationMinutes ?? this.durationMinutes,
+      status: status ?? this.status,
+      type: type ?? this.type,
+      notes: notes ?? this.notes,
       typeSpecificData: typeSpecificData ?? this.typeSpecificData,
-      queuePosition:
-          explicitlySetQueuePositionNull
-              ? null
-              : (queuePosition ?? this.queuePosition), // <-- NEW
-      estimatedEntryTime:
-          explicitlySetEstimatedTimeNull
-              ? null
-              : (estimatedEntryTime ?? this.estimatedEntryTime), // <-- NEW
+      attendees: attendees ?? this.attendees,
+      totalPrice: totalPrice ?? this.totalPrice,
+      isFullVenueReservation:
+          isFullVenueReservation ?? this.isFullVenueReservation,
+      isCommunityVisible: isCommunityVisible ?? this.isCommunityVisible,
+      isQueueBased: isQueueBased ?? this.isQueueBased,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      queueStatus: queueStatus ?? this.queueStatus,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      cancellationReason: cancellationReason ?? this.cancellationReason,
+      checkInTime: checkInTime ?? this.checkInTime,
+      checkOutTime: checkOutTime ?? this.checkOutTime,
     );
   }
 
   @override
   List<Object?> get props => [
-    /* ... existing props ... */
     id,
     userId,
-    providerId,
-    governorateId,
     userName,
+    providerId,
     dateTime,
     status,
+    type,
+    serviceId,
     serviceName,
-    durationMinutes, notes, type, isRecurring, groupSize, typeSpecificData,
-    queuePosition, estimatedEntryTime, // <-- NEW
+    groupSize,
+    durationMinutes,
+    notes,
+    typeSpecificData,
+    attendees,
+    totalPrice,
+    isFullVenueReservation,
+    isCommunityVisible,
+    isQueueBased,
+    paymentStatus,
+    queueStatus,
+    paymentMethod,
+    cancellationReason,
+    checkInTime,
+    checkOutTime,
   ];
+}
+
+/// Queue status for real-time queue updates
+class QueueStatus extends Equatable {
+  final String id;
+  final int position;
+  final String
+  status; // 'waiting', 'processing', 'completed', 'cancelled', 'no_show'
+  final DateTime estimatedEntryTime;
+  final int peopleAhead;
+
+  const QueueStatus({
+    required this.id,
+    required this.position,
+    required this.status,
+    required this.estimatedEntryTime,
+    this.peopleAhead = 0,
+  });
+
+  @override
+  List<Object?> get props => [
+    id,
+    position,
+    status,
+    estimatedEntryTime,
+    peopleAhead,
+  ];
+}
+
+/// Enum representing the type of reservation
+enum ReservationType {
+  timeBased,
+  serviceBased,
+  seatBased,
+  recurring,
+  group,
+  accessBased,
+  sequenceBased,
+  unknown,
 }
 
 // --- AccessLog Model (Keep as is) ---
@@ -445,4 +608,71 @@ class DashboardStats extends Equatable {
     checkInsToday,
     totalBookingsMonth,
   ];
+}
+
+// Create SubscriptionPlan class if it doesn't exist
+class SubscriptionPlan {
+  final String id;
+  final String name;
+  final double price;
+  final PricingInterval interval;
+  final int intervalCount;
+  final String? description;
+  final List<String>? features;
+  final bool isActive;
+
+  SubscriptionPlan({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.interval,
+    required this.intervalCount,
+    this.description,
+    this.features,
+    this.isActive = true,
+  });
+
+  // Factory method to create SubscriptionPlan from Firestore document
+  factory SubscriptionPlan.fromMap(Map<String, dynamic> map, {String? id}) {
+    return SubscriptionPlan(
+      id: id ?? map['id'] ?? '',
+      name: map['name'] ?? 'Unnamed Plan',
+      price: (map['price'] ?? 0.0).toDouble(),
+      interval: _getIntervalFromString(map['interval'] ?? 'month'),
+      intervalCount: map['intervalCount'] ?? 1,
+      description: map['description'],
+      features:
+          map['features'] != null ? List<String>.from(map['features']) : null,
+      isActive: map['isActive'] ?? true,
+    );
+  }
+
+  // Helper method to convert string to PricingInterval enum
+  static PricingInterval _getIntervalFromString(String interval) {
+    switch (interval.toLowerCase()) {
+      case 'day':
+        return PricingInterval.day;
+      case 'week':
+        return PricingInterval.week;
+      case 'year':
+        return PricingInterval.year;
+      case 'month':
+      default:
+        return PricingInterval.month;
+    }
+  }
+
+  // Convert to Map for Firestore
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'price': price,
+      'interval': interval.name,
+      'intervalCount': intervalCount,
+      'description': description,
+      'features': features,
+      'isActive': isActive,
+    };
+  }
 }

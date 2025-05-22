@@ -1,6 +1,5 @@
-
 /// File: lib/features/access_control/data/local_cache_models.dart
-/// --- UPDATED: Added fields to CachedReservation to align with ReservationModel ---
+/// --- CORRECTED: Removed invalid 'index' parameter from @HiveField ---
 library;
 
 import 'package:equatable/equatable.dart';
@@ -17,20 +16,44 @@ const int cachedSubscriptionTypeId = 1;
 const int cachedReservationTypeId = 2;
 const int localAccessLogTypeId = 3;
 
+/// Helper function to convert string to ReservationType enum
+ReservationType reservationTypeFromString(String typeString) {
+  switch (typeString.toLowerCase()) {
+    case 'timebased':
+      return ReservationType.timeBased;
+    case 'servicebased':
+      return ReservationType.serviceBased;
+    case 'seatbased':
+      return ReservationType.seatBased;
+    case 'recurring':
+      return ReservationType.recurring;
+    case 'group':
+      return ReservationType.group;
+    case 'accessbased':
+      return ReservationType.accessBased;
+    case 'sequencebased':
+      return ReservationType.sequenceBased;
+    default:
+      // Default to timeBased if unknown
+      print(
+        "Warning: Unknown reservation type '$typeString', defaulting to timeBased.",
+      );
+      return ReservationType.timeBased;
+  }
+}
 
 @HiveType(typeId: cachedUserTypeId)
-class CachedUser extends HiveObject implements EquatableMixin { // Extend HiveObject
+class CachedUser extends HiveObject implements EquatableMixin {
+  // Extend HiveObject
 
+  // Removed 'index: true'
   @HiveField(0) // Unique field index within this type
   final String userId; // Use as primary identifier, maybe key in Box
 
   @HiveField(1)
   final String userName;
 
-  CachedUser({
-    required this.userId,
-    required this.userName,
-  });
+  CachedUser({required this.userId, required this.userName});
 
   @override
   List<Object?> get props => [userId, userName];
@@ -39,10 +62,9 @@ class CachedUser extends HiveObject implements EquatableMixin { // Extend HiveOb
   bool? get stringify => true; // Optional: for better debug output
 }
 
-
 @HiveType(typeId: cachedSubscriptionTypeId)
 class CachedSubscription extends HiveObject implements EquatableMixin {
-
+  // Removed 'index: true'
   @HiveField(0)
   final String userId;
 
@@ -52,6 +74,7 @@ class CachedSubscription extends HiveObject implements EquatableMixin {
   @HiveField(2)
   final String planName;
 
+  // Removed 'index: true'
   @HiveField(3)
   final DateTime expiryDate;
 
@@ -69,10 +92,9 @@ class CachedSubscription extends HiveObject implements EquatableMixin {
   bool? get stringify => true;
 }
 
-
 @HiveType(typeId: cachedReservationTypeId)
 class CachedReservation extends HiveObject implements EquatableMixin {
-
+  // Removed 'index: true'
   @HiveField(0)
   final String userId;
 
@@ -82,9 +104,11 @@ class CachedReservation extends HiveObject implements EquatableMixin {
   @HiveField(2)
   final String serviceName;
 
+  // Removed 'index: true'
   @HiveField(3)
   final DateTime startTime;
 
+  // Removed 'index: true'
   @HiveField(4)
   final DateTime endTime;
 
@@ -113,21 +137,20 @@ class CachedReservation extends HiveObject implements EquatableMixin {
   @override
   List<Object?> get props => [
     userId, reservationId, serviceName, startTime, endTime,
-    typeString, groupSize // ** NEW **
+    typeString, groupSize, // ** NEW **
   ];
 
-   @override
+  @override
   bool? get stringify => true;
 }
 
-
 @HiveType(typeId: localAccessLogTypeId)
 class LocalAccessLog extends HiveObject implements EquatableMixin {
-
   @HiveField(0)
   final String userId;
   @HiveField(1)
   final String userName;
+  // Removed 'index: true'
   @HiveField(2)
   final DateTime timestamp;
   @HiveField(3)
@@ -136,6 +159,7 @@ class LocalAccessLog extends HiveObject implements EquatableMixin {
   final String? method;
   @HiveField(5)
   final String? denialReason;
+  // Removed 'index: true'
   @HiveField(6)
   final bool needsSync;
 
@@ -170,8 +194,16 @@ class LocalAccessLog extends HiveObject implements EquatableMixin {
   }
 
   @override
-  List<Object?> get props => [userId, userName, timestamp, status, method, denialReason, needsSync];
+  List<Object?> get props => [
+    userId,
+    userName,
+    timestamp,
+    status,
+    method,
+    denialReason,
+    needsSync,
+  ];
 
-   @override
+  @override
   bool? get stringify => true;
 }

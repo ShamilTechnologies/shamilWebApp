@@ -93,10 +93,11 @@ class _EnhancedSyncStatusNotifierWidgetState
     }
 
     // Get last sync time for display when idle or failed (optional)
-    final lastSyncTime = _syncManager.getLastSuccessfulSyncTime(); // Need to add this getter to SyncManager
-    final formattedLastSync = lastSyncTime != null
-        ? 'Last sync: ${DateFormat('MMM d, HH:mm').format(lastSyncTime)}'
-        : 'Never synced';
+    final lastSyncTime = _syncManager.lastSyncTimeNotifier.value;
+    final formattedLastSync =
+        lastSyncTime != null
+            ? 'Last sync: ${DateFormat('MMM d, HH:mm').format(lastSyncTime)}'
+            : 'Never synced';
 
     // Use AnimatedPositioned or AnimatedOpacity for smooth show/hide
     return AnimatedPositioned(
@@ -148,5 +149,6 @@ class _EnhancedSyncStatusNotifierWidgetState
   }
 }
 
+// Remove this comment since we're using the existing property instead
 // Add this getter to SyncManager class:
 // DateTime? getLastSuccessfulSyncTime() => _lastSuccessfulSyncTime;

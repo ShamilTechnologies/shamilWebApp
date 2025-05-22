@@ -1,10 +1,15 @@
 /// File: lib/features/dashboard/widgets/app_sidebar.dart /// <-- Assuming correct path is 'widgets'
 /// --- Defines the main application sidebar navigation widget ---
 /// --- UPDATED: Constrained width of leading/trailing content ---
+/// --- UPDATED: Use CachedNetworkImage ---
 library;
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart'; // For potential auth access
+// Import CachedNetworkImage
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:shamil_web_app/core/services/sync_manager.dart';
+import 'package:shamil_web_app/features/dashboard/widgets/sync_status_indicator.dart';
 
 // Import Models and Utils needed
 // *** IMPORTANT: Ensure these paths are correct ***
@@ -30,6 +35,7 @@ class AppSidebar extends StatelessWidget {
   // Define sidebar width as a constant or variable for consistency
   final double extendedWidth = 240.0;
 
+  // Added const constructor
   const AppSidebar({
     super.key,
     required this.selectedIndex,
@@ -77,6 +83,7 @@ class AppSidebar extends StatelessWidget {
       indicatorColor: AppColors.primaryColor.withOpacity(
         0.1,
       ), // Background for selected item
+      // Added const
       selectedIconTheme: const IconThemeData(
         color: AppColors.primaryColor,
       ), // Color for selected icon
@@ -98,6 +105,7 @@ class AppSidebar extends StatelessWidget {
         // *** FIXED: Constrain the width ***
         constraints: BoxConstraints(maxWidth: extendedWidth),
         child: Padding(
+          // Added const
           padding: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 16.0),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.start,
@@ -114,27 +122,23 @@ class AppSidebar extends StatelessWidget {
                   child:
                       (providerInfo.logoUrl != null &&
                               providerInfo.logoUrl!.isNotEmpty)
-                          ? Image.network(
-                            // Load logo from URL
-                            providerInfo.logoUrl!,
+                          // *** USE CachedNetworkImage ***
+                          ? CachedNetworkImage(
+                            imageUrl: providerInfo.logoUrl!,
                             fit: BoxFit.cover,
                             width: 36,
                             height: 36,
-                            // Show loading indicator while image loads
-                            loadingBuilder:
-                                (context, child, progress) =>
-                                    progress == null
-                                        ? child
-                                        : Center(
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: AppColors.primaryColor
-                                                .withOpacity(0.5),
-                                          ),
-                                        ),
-                            // Show initials if image fails to load
-                            errorBuilder:
-                                (context, error, stackTrace) => Center(
+                            placeholder:
+                                (context, url) => Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.primaryColor.withOpacity(
+                                      0.5,
+                                    ),
+                                  ),
+                                ),
+                            errorWidget:
+                                (context, url, error) => Center(
                                   child: Text(
                                     initials,
                                     style: getTitleStyle(
@@ -156,6 +160,7 @@ class AppSidebar extends StatelessWidget {
                           ),
                 ),
               ),
+              // Added const
               const SizedBox(width: 12),
               // Provider Name - Use Expanded within the constrained SizedBox
               Expanded(
@@ -188,6 +193,7 @@ class AppSidebar extends StatelessWidget {
                     dest['icon'] as IconData?,
                   ), // Icon when selected (can be different)
                   label: Text(dest['label'] as String), // Text label
+                  // Added const
                   padding: const EdgeInsets.symmetric(
                     vertical: 8.0,
                   ), // Padding around the destination item
@@ -202,114 +208,143 @@ class AppSidebar extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.end, // Align items to the bottom
           children: [
+            // Added const
             const Divider(
               height: 1,
               thickness: 0.5,
               indent: 16,
               endIndent: 16,
             ), // Divider above footer items
+            // Added const
             const SizedBox(height: 8),
-            // --- NFC Status Indicator ---
-            ValueListenableBuilder<SerialPortConnectionStatus>(
-              valueListenable:
-                  nfcStatusNotifier, // Listen to NFC status changes
-              builder: (context, status, _) {
-                IconData icon;
-                Color color;
-                String text;
-                // Determine icon, color, and text based on connection status
-                switch (status) {
-                  case SerialPortConnectionStatus.connected:
-                    icon = Icons.nfc_rounded;
-                    color = Colors.green.shade600;
-                    text = "NFC Reader Connected";
-                    break;
-                  case SerialPortConnectionStatus.connecting:
-                    icon = Icons.sync_rounded;
-                    color = AppColors.secondaryColor;
-                    text = "NFC Connecting...";
-                    break;
-                  case SerialPortConnectionStatus.error:
-                    icon = Icons.error_outline_rounded;
-                    color = AppColors.redColor;
-                    text = "NFC Connection Error";
-                    break;
-                  case SerialPortConnectionStatus.disconnected:
-                  default:
-                    icon = Icons.nfc_rounded;
-                    color = AppColors.mediumGrey;
-                    text = "NFC Reader Disconnected";
-                    break;
-                }
-                // Display the status row
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 6.0,
+            // Status indicators at the bottom
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.primaryColor.withOpacity(0.05),
+                border: Border(
+                  top: BorderSide(
+                    color: AppColors.primaryColor.withOpacity(0.1),
+                    width: 1.0,
                   ),
-                  child: Row(
-                    children: [
-                      Icon(icon, size: 20, color: color),
-                      const SizedBox(width: 16),
-                      // Use Expanded here now that the parent Column has width from SizedBox
-                      Expanded(
-                        child: Text(
-                          text,
-                          style: getSmallStyle(color: color),
-                          overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // NFC connection status indicator
+                  ValueListenableBuilder<SerialPortConnectionStatus>(
+                    valueListenable: nfcStatusNotifier,
+                    builder: (context, status, _) {
+                      final bool isConnected =
+                          status == SerialPortConnectionStatus.connected;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color:
+                              isConnected
+                                  ? Colors.green.withOpacity(0.1)
+                                  : Colors.orange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color:
+                                isConnected
+                                    ? Colors.green.withOpacity(0.3)
+                                    : Colors.orange.withOpacity(0.3),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              isConnected
+                                  ? Icons.nfc_rounded
+                                  : Icons.signal_wifi_off,
+                              color: isConnected ? Colors.green : Colors.orange,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                isConnected
+                                    ? "NFC Reader Connected"
+                                    : "NFC Reader Disconnected",
+                                style: getSmallStyle(
+                                  color:
+                                      isConnected
+                                          ? Colors.green
+                                          : Colors.orange,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+
+                  // Sync status indicator
+                  const SizedBox(height: 8),
+                  SyncStatusIndicator(
+                    syncStatusNotifier: SyncManager().syncStatusNotifier,
+                    lastSyncTime: SyncManager().lastSyncTimeNotifier.value,
+                    onManualSync: () => SyncManager().syncNow(),
+                  ),
+
+                  // Footer links
+                  const SizedBox(height: 16),
+                  ...List.generate(footerDestinations.length, (index) {
+                    final dest = footerDestinations[index];
+                    final bool isLogout = dest['isLogout'] ?? false;
+                    final Color color =
+                        isLogout
+                            ? AppColors.redColor
+                            : AppColors.secondaryColor;
+
+                    return InkWell(
+                      onTap: () => onFooterItemSelected(index),
+                      borderRadius: BorderRadius.circular(8.0),
+                      hoverColor: (isLogout
+                              ? AppColors.redColor
+                              : AppColors.primaryColor)
+                          .withOpacity(0.05),
+                      splashColor: (isLogout
+                              ? AppColors.redColor
+                              : AppColors.primaryColor)
+                          .withOpacity(0.1),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16.0,
+                          vertical: 10.0,
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              dest['icon'] as IconData?,
+                              size: 20,
+                              color: color,
+                            ),
+                            const SizedBox(width: 16),
+                            Text(
+                              dest['label'] as String,
+                              style: getbodyStyle(color: color),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                );
-              },
+                    );
+                  }),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
-            // --- Footer Links (Settings, Logout) ---
-            Column(
-              mainAxisSize: MainAxisSize.min, // Take minimum vertical space
-              children: List.generate(footerDestinations.length, (index) {
-                final dest = footerDestinations[index];
-                final bool isLogout = dest['isLogout'] ?? false;
-                final Color color =
-                    isLogout
-                        ? AppColors.redColor
-                        : AppColors.secondaryColor; // Red for logout
-                // Make footer items tappable
-                return InkWell(
-                  onTap: () => onFooterItemSelected(index), // Trigger callback
-                  borderRadius: BorderRadius.circular(8.0),
-                  hoverColor: (isLogout
-                          ? AppColors.redColor
-                          : AppColors.primaryColor)
-                      .withOpacity(0.05),
-                  splashColor: (isLogout
-                          ? AppColors.redColor
-                          : AppColors.primaryColor)
-                      .withOpacity(0.1),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 10.0,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          dest['icon'] as IconData?,
-                          size: 20,
-                          color: color,
-                        ), // Footer icon
-                        const SizedBox(width: 16),
-                        Text(
-                          dest['label'] as String,
-                          style: getbodyStyle(color: color),
-                        ), // Footer label
-                      ],
-                    ),
-                  ),
-                );
-              }),
-            ),
+            // Added const
             const SizedBox(height: 10), // Padding at the very bottom
           ],
         ),
