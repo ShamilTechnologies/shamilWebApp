@@ -8,6 +8,7 @@ import 'package:shamil_web_app/features/dashboard/bloc/users/user_event.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/users/user_state.dart';
 import 'package:shamil_web_app/features/dashboard/data/user_models.dart';
 import 'package:shamil_web_app/features/dashboard/services/user_reservations_repository.dart';
+import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 
 /// BLoC for managing user data in the user management screen
 class UserBloc extends Bloc<UserEvent, UserState> {
@@ -15,6 +16,8 @@ class UserBloc extends Bloc<UserEvent, UserState> {
   final UserReservationsRepository _userReservationsRepository =
       UserReservationsRepository();
   StreamSubscription? _usersSubscription;
+  // Flag to track if the bloc is closed
+  bool _isClosed = false;
 
   UserBloc() : super(UserInitial()) {
     on<LoadUsers>(_onLoadUsers);
@@ -33,38 +36,68 @@ class UserBloc extends Bloc<UserEvent, UserState> {
   /// Initialize the data service and set up subscriptions
   Future<void> _initializeDataService() async {
     try {
-      await _dataService.init();
+      // Skip initialization if the bloc is closed
+      if (_isClosed) {
+        print("UserBloc: Skipping initialization as bloc is closed");
+        return;
+      }
+
+      // Initialize access control service first to ensure Hive adapters are registered
+      final accessControlService = AccessControlSyncService();
+      await accessControlService.init();
+
+      // Check if data service is already initialized before initializing again
+      if (!_dataService.isInitializedNotifier.value) {
+        // Now initialize the centralized data service
+        await _dataService.init();
+      } else {
+        print("UserBloc: CentralizedDataService already initialized");
+        // Force a refresh of user data even if already initialized
+        await _dataService.forceDataRefresh();
+      }
+
+      // Set up subscription without forcing a full refresh
       _subscribeToUserUpdates();
+
+      // Skip loading initial data if the bloc is closed
+      if (!_isClosed) {
+        add(LoadUsers());
+      }
     } catch (e) {
       print("UserBloc: Error initializing data service: $e");
+
+      // Try to continue with at least the subscription if the bloc is still active
+      if (!_isClosed) {
+        try {
+          _subscribeToUserUpdates();
+          // Load what data we can get
+          add(LoadUsers());
+        } catch (subscriptionError) {
+          print(
+            "UserBloc: Error setting up user subscription: $subscriptionError",
+          );
+        }
+      }
     }
   }
 
   /// Subscribe to user data updates from the centralized service
   void _subscribeToUserUpdates() {
+    // Skip if the bloc is already closed
+    if (_isClosed) return;
+
     _usersSubscription = _dataService.usersStream.listen(
       (users) {
         // Check if the bloc is closed before adding an event
-        try {
+        if (!_isClosed) {
           add(UsersUpdated(users));
-        } catch (e) {
-          // If the bloc is closed, this will catch the exception
-          print("UserBloc: Cannot add event - bloc may be closed. Error: $e");
-          // Automatically cancel the subscription if the bloc is closed
-          _usersSubscription?.cancel();
-          _usersSubscription = null;
         }
       },
       onError: (e) {
         print("UserBloc: Error in users stream: $e");
-        try {
+        // Only add event if the bloc is still active
+        if (!_isClosed) {
           add(UsersUpdated([])); // Add empty users instead of directly emitting
-        } catch (e) {
-          // If the bloc is closed, this will catch the exception
-          print("UserBloc: Cannot add event - bloc may be closed. Error: $e");
-          // Automatically cancel the subscription if the bloc is closed
-          _usersSubscription?.cancel();
-          _usersSubscription = null;
         }
       },
     );
@@ -308,6 +341,8 @@ class UserBloc extends Bloc<UserEvent, UserState> {
 
   @override
   Future<void> close() {
+    // Set the closed flag first
+    _isClosed = true;
     _usersSubscription?.cancel();
     return super.close();
   }

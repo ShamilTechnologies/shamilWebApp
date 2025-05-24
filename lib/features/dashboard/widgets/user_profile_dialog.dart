@@ -115,6 +115,10 @@ class UserProfileDialog extends StatelessWidget {
         badgeColor = Colors.purple.shade700;
         typeLabel = 'Reserved & Subscribed';
         break;
+      case UserType.accessOnly:
+        badgeColor = Colors.amber.shade700;
+        typeLabel = 'Access Only';
+        break;
       case null:
         badgeColor = AppColors.mediumGrey;
         typeLabel = 'Unknown';
@@ -226,7 +230,10 @@ class UserProfileDialog extends StatelessWidget {
                                       ? Icons.calendar_today_outlined
                                       : (user.userType == UserType.subscribed
                                           ? Icons.card_membership_outlined
-                                          : Icons.star_outline),
+                                          : (user.userType ==
+                                                  UserType.accessOnly
+                                              ? Icons.badge_outlined
+                                              : Icons.star_outline)),
                                   color: Colors.white,
                                   size: 14,
                                 ),

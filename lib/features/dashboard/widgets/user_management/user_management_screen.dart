@@ -11,6 +11,8 @@ import 'package:shamil_web_app/features/dashboard/widgets/user_profile_dialog.da
 import 'package:shamil_web_app/features/dashboard/widgets/user_management/components/user_detail_panel.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/user_management/components/user_table.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/user_management/components/sidebar_filter.dart';
+import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:shamil_web_app/core/services/centralized_data_service.dart';
 
 /// Main user management screen with desktop-like interface
 class UserManagementScreen extends StatefulWidget {
@@ -22,6 +24,7 @@ class UserManagementScreen extends StatefulWidget {
 
 class _UserManagementScreenState extends State<UserManagementScreen> {
   late UserBloc _userBloc;
+  final CentralizedDataService _dataService = CentralizedDataService();
 
   // Selected user for detail panel
   AppUser? _selectedUser;
@@ -51,8 +54,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     // Create and initialize UserBloc
     _userBloc = UserBloc();
 
-    // Load initial data
-    _userBloc.add(LoadUsers());
+    // Check if data is already available in dashboard
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndUseDashboardData();
+    });
 
     // Set up auto-refresh timer
     Timer.periodic(const Duration(minutes: 2), (timer) {
@@ -60,6 +65,161 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         _userBloc.add(const RefreshUsers(showLoadingIndicator: false));
       }
     });
+  }
+
+  void _checkAndUseDashboardData() async {
+    // Check if DashboardBloc has already loaded data
+    try {
+      final dashboardState = context.read<DashboardBloc>().state;
+      if (dashboardState is DashboardLoadSuccess) {
+        print("UserManagementScreen: Using existing data from DashboardBloc");
+
+        // Extract user data from dashboard state
+        final usersMap = <String, AppUser>{};
+
+        // Add users from subscriptions
+        for (final subscription in dashboardState.subscriptions) {
+          if (subscription.userId != null && subscription.userName != null) {
+            final record = RelatedRecord(
+              id: subscription.id ?? '',
+              type: RecordType.subscription,
+              name: subscription.planName ?? 'Subscription',
+              status: subscription.status ?? 'Unknown',
+              date: subscription.startDate?.toDate() ?? DateTime.now(),
+              additionalData: {
+                'planName': subscription.planName,
+                'startDate': subscription.startDate?.toDate(),
+                'expiryDate': subscription.expiryDate?.toDate(),
+                'status': subscription.status,
+              },
+            );
+
+            if (usersMap.containsKey(subscription.userId)) {
+              // Add record to existing user
+              final existingRecords = List<RelatedRecord>.from(
+                usersMap[subscription.userId!]!.relatedRecords,
+              );
+              existingRecords.add(record);
+
+              usersMap[subscription.userId!] = usersMap[subscription.userId!]!
+                  .copyWith(
+                    relatedRecords: existingRecords,
+                    userType: UserType.subscribed,
+                  );
+            } else {
+              // Create new user
+              usersMap[subscription.userId!] = AppUser(
+                userId: subscription.userId!,
+                name: subscription.userName ?? 'Unknown User',
+                userType: UserType.subscribed,
+                relatedRecords: [record],
+              );
+            }
+          }
+        }
+
+        // Add users from reservations
+        for (final reservation in dashboardState.reservations) {
+          if (reservation.userId != null && reservation.userName != null) {
+            final record = RelatedRecord(
+              id: reservation.id ?? '',
+              type: RecordType.reservation,
+              name: reservation.serviceName ?? 'Reservation',
+              status: reservation.status ?? 'Unknown',
+              date: reservation.dateTime.toDate(),
+              additionalData: {
+                'startTime': reservation.dateTime.toDate(),
+                'endTime': reservation.endTime,
+                'notes': reservation.notes,
+                'groupSize': reservation.groupSize,
+              },
+            );
+
+            if (usersMap.containsKey(reservation.userId)) {
+              // Add record to existing user
+              final existingRecords = List<RelatedRecord>.from(
+                usersMap[reservation.userId!]!.relatedRecords,
+              );
+              existingRecords.add(record);
+
+              // Determine user type (reserved, subscribed, or both)
+              final currentType = usersMap[reservation.userId!]!.userType;
+              final newType =
+                  currentType == UserType.subscribed
+                      ? UserType.both
+                      : UserType.reserved;
+
+              usersMap[reservation.userId!] = usersMap[reservation.userId!]!
+                  .copyWith(relatedRecords: existingRecords, userType: newType);
+            } else {
+              // Create new user
+              usersMap[reservation.userId!] = AppUser(
+                userId: reservation.userId!,
+                name: reservation.userName ?? 'Unknown User',
+                userType: UserType.reserved,
+                relatedRecords: [record],
+              );
+            }
+          }
+        }
+
+        // Convert map to list
+        final usersList = usersMap.values.toList();
+
+        // Now enrich the users with additional details from CentralizedDataService
+        final enrichedUsers = <AppUser>[];
+
+        // Show loading state while enriching
+        _userBloc.add(LoadUsers());
+
+        // Process users in smaller batches to avoid UI freezes
+        const batchSize = 10;
+        for (var i = 0; i < usersList.length; i += batchSize) {
+          final batch = usersList.sublist(
+            i,
+            i + batchSize < usersList.length ? i + batchSize : usersList.length,
+          );
+
+          // Enrich each user in the batch
+          for (final user in batch) {
+            try {
+              // Fetch user details from centralized service
+              final fullUserData = await _dataService.getUserById(user.userId);
+
+              if (fullUserData != null) {
+                // Merge the data, keeping the records we've already built
+                final mergedUser = fullUserData.copyWith(
+                  relatedRecords: user.relatedRecords,
+                  userType: user.userType,
+                );
+                enrichedUsers.add(mergedUser);
+              } else {
+                // If user details not found, just use what we have
+                enrichedUsers.add(user);
+              }
+            } catch (e) {
+              print("Error enriching user ${user.userId}: $e");
+              enrichedUsers.add(user);
+            }
+          }
+
+          // Update the UI with batch progress if processing large sets
+          if (usersList.length > batchSize && mounted) {
+            _userBloc.add(UsersUpdated(enrichedUsers));
+          }
+        }
+
+        // Add the enriched users to the UserBloc
+        _userBloc.add(UsersUpdated(enrichedUsers));
+        return;
+      }
+    } catch (e) {
+      print("UserManagementScreen: Error accessing dashboard data: $e");
+    }
+
+    // If we get here, either the dashboard data wasn't available or there was an error
+    // Fall back to normal data loading
+    _userBloc.add(LoadUsers());
   }
 
   @override

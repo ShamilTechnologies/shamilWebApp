@@ -151,7 +151,7 @@ class StatsSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
         children: [
           // Icon and title
           Row(
@@ -203,45 +203,33 @@ class StatsSection extends StatelessWidget {
           const SizedBox(height: 8),
 
           // Value and title
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$value',
-                  style: getTitleStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  title,
-                  style: getbodyStyle(
-                    fontSize: 12,
-                    color: AppColors.secondaryColor,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (subtext != null) ...[
-                  const SizedBox(height: 1),
-                  Text(
-                    subtext,
-                    style: getSmallStyle(
-                      fontSize: 10,
-                      color: AppColors.mediumGrey,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ],
+          Text(
+            '$value',
+            style: getTitleStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Flexible(
+            child: Text(
+              title,
+              style: getbodyStyle(
+                fontSize: 12,
+                color: AppColors.secondaryColor,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (subtext != null) ...[
+            const SizedBox(height: 1),
+            Text(
+              subtext,
+              style: getSmallStyle(fontSize: 10, color: AppColors.mediumGrey),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
         ],
       ),
     );

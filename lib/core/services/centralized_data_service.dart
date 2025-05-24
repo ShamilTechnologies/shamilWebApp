@@ -7,13 +7,19 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hive/hive.dart';
 import 'package:shamil_web_app/core/services/sync_manager.dart';
 import 'package:shamil_web_app/core/services/user_listing_service.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_repository.dart';
+import 'package:shamil_web_app/features/access_control/data/local_cache_models.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 import 'package:shamil_web_app/features/dashboard/data/user_models.dart';
 import 'package:shamil_web_app/features/dashboard/services/reservation_sync_service.dart';
 import 'package:rxdart/rxdart.dart'; // Add for BehaviorSubject
+import 'package:shamil_web_app/core/services/enhanced_offline_service.dart';
+import 'package:shamil_web_app/core/services/connectivity_service.dart';
+import 'package:shamil_web_app/features/access_control/service/offline_first_access_service.dart';
+import 'package:shamil_web_app/core/services/unified_cache_service.dart';
 
 /// This service centralizes all data access in the application to prevent
 /// conflicting implementations and inconsistent data across the application.
@@ -75,6 +81,7 @@ class CentralizedDataService {
 
   // Debouncing variables to prevent infinite loops
   bool _isRefreshing = false;
+  bool _isInitializing = false;
   DateTime? _lastRefresh;
   static const Duration _refreshCooldown = Duration(seconds: 5);
 
@@ -82,2106 +89,1697 @@ class CentralizedDataService {
   AccessControlRepository get accessControlRepository =>
       _accessControlRepository;
 
-  /// Initialize the service and its dependencies
+  /// Dependencies
+  final EnhancedOfflineService _offlineService = EnhancedOfflineService();
+  final ConnectivityService _connectivityService = ConnectivityService();
+  final UnifiedCacheService _cacheService = UnifiedCacheService();
+
+  // State tracking
+  final ValueNotifier<bool> isInitializedNotifier = ValueNotifier(false);
+  final ValueNotifier<OfflineStatus> offlineStatusNotifier = ValueNotifier(
+    OfflineStatus.unknown,
+  );
+
+  // Cached data notifiers for UI components
+  final ValueNotifier<List<AccessLog>> recentAccessLogsNotifier =
+      ValueNotifier<List<AccessLog>>([]);
+  final ValueNotifier<List<AppUser>> usersWithAccessNotifier =
+      ValueNotifier<List<AppUser>>([]);
+  final ValueNotifier<List<Subscription>> activeSubscriptionsNotifier =
+      ValueNotifier<List<Subscription>>([]);
+  final ValueNotifier<List<Reservation>> upcomingReservationsNotifier =
+      ValueNotifier<List<Reservation>>([]);
+
+  /// Initialize the service and prepare data
   Future<void> init() async {
-    if (_isInitialized) {
-      print("CentralizedDataService: Already initialized, skipping");
+    // First check if already fully initialized
+    if (_isInitialized && isInitializedNotifier.value) {
+      print('CentralizedDataService: Already initialized (private flag)');
+      // Even if already initialized, we should make sure data is loaded
+      if (!_isRefreshing) {
+        _loadInitialData();
+      }
       return;
     }
 
+    // Prevent concurrent initialization attempts
+    if (_isInitializing) {
+      print('CentralizedDataService: Initialization already in progress');
+      return;
+    }
+
+    // Set flags immediately to prevent concurrent initialization
+    _isInitializing = true;
+    _isInitialized = false;
+
+    isLoadingNotifier.value = true;
+    errorNotifier.value = null;
+
     try {
-      isLoadingNotifier.value = true;
-      errorNotifier.value = null;
+      print('CentralizedDataService: Initializing services...');
 
-      // Initialize sub-services
-      await _accessControlRepository.initialize();
-      await _reservationSyncService.init();
+      // Initialize connectivity service first
+      await _connectivityService.initialize();
 
-      // Set up automatic mobile app data sync (every 15 minutes)
-      print(
-        "CentralizedDataService: Setting up automatic mobile app data sync",
+      // Ensure Hive adapters are registered properly
+      if (!Hive.isAdapterRegistered(localAccessLogTypeId)) {
+        try {
+          print(
+            'CentralizedDataService: Explicitly registering LocalAccessLogAdapter',
+          );
+          Hive.registerAdapter(LocalAccessLogAdapter());
+        } catch (e) {
+          print(
+            'CentralizedDataService: Error registering LocalAccessLogAdapter: $e',
+          );
+          // Continue initialization even if adapter registration fails
+        }
+      }
+
+      // Initialize enhanced offline service
+      final offlineInitSuccess = await _offlineService.initialize();
+      if (!offlineInitSuccess) {
+        throw Exception('Failed to initialize offline services');
+      }
+
+      // Initialize cache service
+      await _cacheService.init();
+
+      // Listen to offline status changes
+      _offlineService.offlineStatusNotifier.addListener(
+        _onOfflineStatusChanged,
       );
-      await _accessControlRepository.setupAutomaticSync(
-        interval: const Duration(minutes: 15),
-      );
 
-      // Initial data load
+      // Initial data load from cache
       await _loadInitialData();
 
-      // Mark as initialized
+      // Set the public notifier BEFORE starting real-time listeners
+      isInitializedNotifier.value = true;
       _isInitialized = true;
+
+      // Start real-time listeners after initialization is complete
+      if (!_listenersStarted) {
+        await startRealTimeListeners();
+      }
+
+      // Force a data refresh if we're online
+      if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+        // Don't await this to prevent blocking the initialization
+        forceDataRefresh();
+      }
+
+      print('CentralizedDataService: Initialization complete');
+    } catch (e) {
+      // Reset the private flag on error
+      _isInitialized = false;
+      _isInitializing = false;
+      errorNotifier.value = 'Error initializing data service: $e';
+      print('CentralizedDataService: Initialization failed - $e');
+    } finally {
       isLoadingNotifier.value = false;
-    } catch (e, stackTrace) {
-      print("CentralizedDataService: Error during initialization - $e");
-      print("Stack trace: $stackTrace");
+      _isInitializing = false;
+    }
+  }
+
+  /// Handle changes in offline status
+  void _onOfflineStatusChanged() {
+    final status = _offlineService.offlineStatusNotifier.value;
+    offlineStatusNotifier.value = status;
+
+    print('CentralizedDataService: Offline status changed to $status');
+
+    // Update UI components about capability changes
+    if (status == OfflineStatus.limited) {
       errorNotifier.value =
-          "Failed to initialize data service: ${e.toString()}";
-      isLoadingNotifier.value = false;
-      rethrow;
+          'Limited offline data available. Some features may be restricted.';
+    } else if (status == OfflineStatus.ready) {
+      errorNotifier.value = null;
     }
   }
 
-  /// Check if user is authenticated and throw appropriate exception if not
-  void _checkAuthentication() {
-    final User? user = _auth.currentUser;
-    if (user == null) {
-      throw Exception('User not authenticated. Please log in to continue.');
-    }
-  }
-
-  /// Load initial data for the app
+  /// Load initial data from cache
   Future<void> _loadInitialData() async {
     try {
-      // Check authentication
-      _checkAuthentication();
-
-      // Load data in parallel for efficiency
-      await Future.wait([
-        _loadAccessLogs(),
-        _loadUsers(),
-        _loadReservations(),
-        _loadSubscriptions(),
-      ]);
-
-      // Subscribe to sync updates
-      SyncManager().syncStatusNotifier.addListener(_onSyncStatusChanged);
-
-      // Start periodic status checks
-      _startPeriodicStatusChecks();
-    } catch (e) {
-      print("CentralizedDataService: Error loading initial data - $e");
-      errorNotifier.value = "Failed to load initial data: ${e.toString()}";
-      // We don't rethrow here to allow partial initialization
-    }
-  }
-
-  /// Start periodic checks to update reservation states
-  void _startPeriodicStatusChecks() {
-    // Prevent duplicate timers
-    if (_statusUpdateTimer != null && _statusUpdateTimer!.isActive) {
-      print("CentralizedDataService: Status update timer already running");
-      return;
-    }
-
-    // Check every 15 minutes for status changes
-    _statusUpdateTimer = Timer.periodic(const Duration(minutes: 15), (_) {
-      _updateReservationStatuses();
-    });
-
-    // Also update immediately on init (but only once)
-    _updateReservationStatuses();
-  }
-
-  /// Update reservation statuses based on dates
-  Future<void> _updateReservationStatuses() async {
-    try {
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      bool hasChanges = false;
-
-      final updatedReservations = List<Reservation>.from(_cachedReservations);
-
-      for (int i = 0; i < updatedReservations.length; i++) {
-        final reservation = updatedReservations[i];
-        // Convert Timestamp to DateTime before accessing properties
-        final dateTimeObj = reservation.dateTime.toDate();
-        final reservationDate = DateTime(
-          dateTimeObj.year,
-          dateTimeObj.month,
-          dateTimeObj.day,
-        );
-
-        // Logic for automatic status transitions
-        if (reservation.status == 'Pending') {
-          // If reservation date has passed, mark as expired
-          if (reservationDate.isBefore(today)) {
-            updatedReservations[i] = reservation.copyWith(
-              status: 'Expired',
-              lastUpdated: Timestamp.now(),
-            );
-            hasChanges = true;
-          }
-        } else if (reservation.status == 'Confirmed') {
-          // If confirmed reservation date has passed without being marked as completed
-          if (reservationDate.isBefore(today)) {
-            updatedReservations[i] = reservation.copyWith(
-              status: 'Completed',
-              lastUpdated: Timestamp.now(),
-            );
-            hasChanges = true;
-          }
-        }
-      }
-
-      // If we made changes, update cache and notify listeners
-      if (hasChanges) {
-        _cachedReservations.clear();
-        _cachedReservations.addAll(updatedReservations);
-
-        // Notify listeners of updated reservations
-        if (!_reservationsSubject.isClosed) {
-          _reservationsSubject.add(_cachedReservations);
-        }
-
-        // Also save changes to Firestore
-        _saveReservationStatusChanges(
-          updatedReservations
-              .where(
-                (r) =>
-                    r.lastUpdated != null &&
-                    r.lastUpdated!.toDate().isAfter(
-                      now.subtract(const Duration(minutes: 20)),
-                    ),
-              )
-              .toList(),
-        );
-      }
-    } catch (e) {
-      print("CentralizedDataService: Error updating reservation statuses - $e");
-    }
-  }
-
-  /// Save reservation status changes to Firestore
-  Future<void> _saveReservationStatusChanges(
-    List<Reservation> updatedReservations,
-  ) async {
-    if (updatedReservations.isEmpty) return;
-
-    final batch = FirebaseFirestore.instance.batch();
-    final providers = <String>{};
-
-    for (final reservation in updatedReservations) {
-      try {
-        // Add to unique provider IDs set
-        if (reservation.providerId != null) {
-          providers.add(reservation.providerId!);
-        }
-
-        // Update in both main reservations collection and user's reservations
-        if (reservation.id != null && reservation.userId != null) {
-          // Update main reservation doc using set with merge to handle non-existent docs
-          final mainRef = FirebaseFirestore.instance
-              .collection('reservations')
-              .doc(reservation.id);
-
-          batch.set(mainRef, {
-            'status': reservation.status,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-
-          // Update in user's collection using set with merge
-          final userRef = FirebaseFirestore.instance
-              .collection('endUsers')
-              .doc(reservation.userId)
-              .collection('reservations')
-              .doc(reservation.id);
-
-          batch.set(userRef, {
-            'status': reservation.status,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-
-          // Update provider reference collections based on status
-          if (reservation.providerId != null) {
-            // Remove from old status collection and add to new one
-            switch (reservation.status) {
-              case 'Completed':
-                // Move from confirmed to completed
-                final confirmedRef = FirebaseFirestore.instance
-                    .collection('serviceProviders')
-                    .doc(reservation.providerId)
-                    .collection('confirmedReservations')
-                    .doc(reservation.id);
-
-                // Use delete only if we're sure it might exist
-                try {
-                  batch.delete(confirmedRef);
-                } catch (e) {
-                  print(
-                    "CentralizedDataService: Could not delete from confirmed reservations: $e",
-                  );
-                }
-
-                final completedRef = FirebaseFirestore.instance
-                    .collection('serviceProviders')
-                    .doc(reservation.providerId)
-                    .collection('completedReservations')
-                    .doc(reservation.id);
-
-                batch.set(completedRef, {
-                  'reservationId': reservation.id,
-                  'userId': reservation.userId,
-                  'userName': reservation.userName,
-                  'dateTime': reservation.dateTime,
-                  'status': 'Completed',
-                  'timestamp': FieldValue.serverTimestamp(),
-                });
-                break;
-
-              case 'Expired':
-                // Move from pending to expired
-                final pendingRef = FirebaseFirestore.instance
-                    .collection('serviceProviders')
-                    .doc(reservation.providerId)
-                    .collection('pendingReservations')
-                    .doc(reservation.id);
-
-                try {
-                  batch.delete(pendingRef);
-                } catch (e) {
-                  print(
-                    "CentralizedDataService: Could not delete from pending reservations: $e",
-                  );
-                }
-
-                final expiredRef = FirebaseFirestore.instance
-                    .collection('serviceProviders')
-                    .doc(reservation.providerId)
-                    .collection('expiredReservations')
-                    .doc(reservation.id);
-
-                batch.set(expiredRef, {
-                  'reservationId': reservation.id,
-                  'userId': reservation.userId,
-                  'userName': reservation.userName,
-                  'dateTime': reservation.dateTime,
-                  'status': 'Expired',
-                  'timestamp': FieldValue.serverTimestamp(),
-                });
-                break;
-            }
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error preparing batch update for reservation ${reservation.id}: $e",
-        );
-        // Continue with other reservations instead of failing completely
-      }
-    }
-
-    try {
-      // Commit batch with error handling
-      await batch.commit();
-      print(
-        "CentralizedDataService: Successfully committed status changes for ${updatedReservations.length} reservations",
-      );
-    } catch (e) {
-      print("CentralizedDataService: Error committing batch updates: $e");
-      // Don't rethrow to prevent crashing the entire app
-      return;
-    }
-
-    // After updating database, refresh data for affected providers
-    for (final providerId in providers) {
-      try {
-        // Instead of using refreshProviderData, use refreshMobileAppData
-        await refreshMobileAppData();
-        print(
-          "CentralizedDataService: Refreshed data for provider $providerId after status updates",
-        );
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error refreshing data for provider $providerId: $e",
-        );
-        // Continue with other providers
-      }
-    }
-  }
-
-  /// Load reservations data
-  Future<void> _loadReservations() async {
-    try {
-      print("CentralizedDataService: Starting comprehensive reservation fetch");
-
-      // Get the provider ID - needed for fetching from provider's collections
-      final providerId = _auth.currentUser?.uid;
-      if (providerId == null) {
-        print(
-          "CentralizedDataService: Cannot load reservations - Provider not authenticated",
-        );
-        return;
-      }
-
-      // Set up date range for queries - this matches the old implementation
-      final now = DateTime.now();
-      final pastDate = now.subtract(const Duration(days: 7));
-      final futureDate = now.add(const Duration(days: 60));
-      final today = DateTime(now.year, now.month, now.day);
-      final endOfDay = DateTime(now.year, now.month, now.day, 23, 59, 59);
-
-      // List to hold all reservations with a map to track duplicates
-      final Map<String, Reservation> reservationMap = {};
-
-      // 1. FIRST METHOD (from ReservationSyncService): Query collectionGroup to find ALL users who have reservations with this provider
-      try {
-        print(
-          "CentralizedDataService: Querying collection group 'reservations' for providerId $providerId",
-        );
-
-        // Use today/endOfDay for more focused results for today's reservations (matches old implementation)
-        final todayReservationsQuery =
-            await FirebaseFirestore.instance
-                .collectionGroup('reservations')
-                .where('providerId', isEqualTo: providerId)
-                .where(
-                  'dateTime',
-                  isGreaterThanOrEqualTo: Timestamp.fromDate(today),
-                )
-                .where(
-                  'dateTime',
-                  isLessThanOrEqualTo: Timestamp.fromDate(endOfDay),
-                )
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${todayReservationsQuery.docs.length} reservations for TODAY across all users",
-        );
-
-        // Process each document in the today query
-        for (final doc in todayReservationsQuery.docs) {
-          try {
-            final data = doc.data();
-            final reservationId = doc.id;
-
-            if (!reservationMap.containsKey(reservationId)) {
-              final reservation = Reservation.fromMap(reservationId, data);
-              reservationMap[reservationId] = reservation;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing today's reservation doc: $e",
-            );
-          }
-        }
-
-        // Also query for future reservations (to get a more complete picture)
-        final reservationsQuery =
-            await FirebaseFirestore.instance
-                .collectionGroup('reservations')
-                .where('providerId', isEqualTo: providerId)
-                .where('dateTime', isGreaterThan: Timestamp.fromDate(pastDate))
-                .where('dateTime', isLessThan: Timestamp.fromDate(futureDate))
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${reservationsQuery.docs.length} reservations across all users via collectionGroup",
-        );
-
-        // Process each document in the collection group query
-        for (final doc in reservationsQuery.docs) {
-          try {
-            final data = doc.data();
-            final reservationId = doc.id;
-
-            // Only add if we don't already have it
-            if (!reservationMap.containsKey(reservationId)) {
-              final reservation = Reservation.fromMap(reservationId, data);
-              reservationMap[reservationId] = reservation;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing reservation doc: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error querying collection group 'reservations': $e",
-        );
-        print("CentralizedDataService: Will continue with other methods");
-      }
-
-      // 2. SECOND METHOD (from AccessControlRemoteDataSource): Check endUsers collection for each user's reservations directly
-      try {
-        // For this approach, we would need to know the user IDs first
-        // However, without a specific user, we can rely on the next methods that use the serviceProvider collections
-        // This would be more effective when working with individual users
-        print(
-          "CentralizedDataService: Skipping direct endUsers query since we don't have specific user IDs",
-        );
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error in direct endUsers query approach: $e",
-        );
-      }
-
-      // 3. Check pendingReservations subcollection (from both implementations)
-      try {
-        print(
-          "CentralizedDataService: Fetching pending reservations from serviceProviders/$providerId/pendingReservations",
-        );
-
-        final pendingQuery =
-            await FirebaseFirestore.instance
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('pendingReservations')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${pendingQuery.docs.length} pending reservation references",
-        );
-
-        // For each reference, get the full reservation data
-        for (final doc in pendingQuery.docs) {
-          try {
-            final reservationId = doc.data()['reservationId'] as String?;
-            final userId = doc.data()['userId'] as String?;
-
-            if (reservationId == null || userId == null) {
-              print(
-                "CentralizedDataService: Missing data in pending reference",
-              );
-              continue;
-            }
-
-            // Skip if we already have this reservation
-            if (reservationMap.containsKey(reservationId)) {
-              continue;
-            }
-
-            // Try to get from endUsers collection first
-            try {
-              final reservationDoc =
-                  await FirebaseFirestore.instance
-                      .collection('endUsers')
-                      .doc(userId)
-                      .collection('reservations')
-                      .doc(reservationId)
-                      .get();
-
-              if (reservationDoc.exists) {
-                final data = reservationDoc.data();
-                if (data != null) {
-                  data['status'] = 'Pending'; // Ensure status is set correctly
-                  final reservation = Reservation.fromMap(reservationId, data);
-                  reservationMap[reservationId] = reservation;
-                  continue; // Skip the next part if we found it
-                }
-              }
-            } catch (e) {
-              print(
-                "CentralizedDataService: Error fetching pending reservation from endUser: $e",
-              );
-            }
-
-            // If not found in endUsers, use the data from the reference itself
-            // This matches the old implementation logic that used both serviceProvider and endUser data
-            final refData = doc.data();
-            if (refData.containsKey('dateTime')) {
-              refData['status'] = 'Pending'; // Ensure status is set correctly
-              final reservation = Reservation.fromMap(reservationId, refData);
-              reservationMap[reservationId] = reservation;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing pending reservation: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error fetching pending reservations: $e",
-        );
-      }
-
-      // 4. Check confirmedReservations subcollection (from both implementations)
-      try {
-        print(
-          "CentralizedDataService: Fetching confirmed reservations from serviceProviders/$providerId/confirmedReservations",
-        );
-
-        final confirmedQuery =
-            await FirebaseFirestore.instance
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('confirmedReservations')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${confirmedQuery.docs.length} confirmed reservation references",
-        );
-
-        // Similar logic as with pending reservations
-        for (final doc in confirmedQuery.docs) {
-          try {
-            final reservationId = doc.data()['reservationId'] as String?;
-            final userId = doc.data()['userId'] as String?;
-
-            if (reservationId == null || userId == null) {
-              continue;
-            }
-
-            // Skip if we already have this reservation
-            if (reservationMap.containsKey(reservationId)) {
-              continue;
-            }
-
-            // Try to get from endUsers collection first
-            try {
-              final reservationDoc =
-                  await FirebaseFirestore.instance
-                      .collection('endUsers')
-                      .doc(userId)
-                      .collection('reservations')
-                      .doc(reservationId)
-                      .get();
-
-              if (reservationDoc.exists) {
-                final data = reservationDoc.data();
-                if (data != null) {
-                  data['status'] =
-                      'Confirmed'; // Ensure status is set correctly
-                  final reservation = Reservation.fromMap(reservationId, data);
-                  reservationMap[reservationId] = reservation;
-                  continue;
-                }
-              }
-            } catch (e) {
-              print(
-                "CentralizedDataService: Error fetching confirmed reservation from endUser: $e",
-              );
-            }
-
-            // If not found in endUsers, use the data from the reference itself
-            final refData = doc.data();
-            if (refData.containsKey('dateTime')) {
-              refData['status'] = 'Confirmed'; // Ensure status is set correctly
-              final reservation = Reservation.fromMap(reservationId, refData);
-              reservationMap[reservationId] = reservation;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing confirmed reservation: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error fetching confirmed reservations: $e",
-        );
-      }
-
-      // 5. Check cancelledReservations subcollection (from ReservationSyncService)
-      try {
-        print(
-          "CentralizedDataService: Fetching cancelled reservations from serviceProviders/$providerId/cancelledReservations",
-        );
-
-        final cancelledQuery =
-            await FirebaseFirestore.instance
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('cancelledReservations')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${cancelledQuery.docs.length} cancelled reservation references",
-        );
-
-        // Similar logic as above
-        for (final doc in cancelledQuery.docs) {
-          try {
-            final reservationId = doc.data()['reservationId'] as String?;
-            final userId = doc.data()['userId'] as String?;
-
-            if (reservationId == null || userId == null) {
-              continue;
-            }
-
-            // Skip if we already have this reservation
-            if (reservationMap.containsKey(reservationId)) {
-              continue;
-            }
-
-            // Try to get from endUsers collection first
-            try {
-              final reservationDoc =
-                  await FirebaseFirestore.instance
-                      .collection('endUsers')
-                      .doc(userId)
-                      .collection('reservations')
-                      .doc(reservationId)
-                      .get();
-
-              if (reservationDoc.exists) {
-                final data = reservationDoc.data();
-                if (data != null) {
-                  data['status'] =
-                      'Cancelled'; // Ensure status is set correctly
-                  final reservation = Reservation.fromMap(reservationId, data);
-                  reservationMap[reservationId] = reservation;
-                  continue;
-                }
-              }
-            } catch (e) {
-              print(
-                "CentralizedDataService: Error fetching cancelled reservation from endUser: $e",
-              );
-            }
-
-            // If not found in endUsers, use the data from the reference itself
-            final refData = doc.data();
-            if (refData.containsKey('dateTime')) {
-              refData['status'] = 'Cancelled'; // Ensure status is set correctly
-              final reservation = Reservation.fromMap(reservationId, refData);
-              reservationMap[reservationId] = reservation;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing cancelled reservation: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error fetching cancelled reservations: $e",
-        );
-      }
-
-      // Convert the map to a list
-      final allReservations = reservationMap.values.toList();
-
-      // Sort by date, just like the old implementation
-      allReservations.sort((a, b) => a.dateTime.compareTo(b.dateTime));
-
-      // Update cache
+      // Load access logs
+      final accessLogs = _offlineService.getRecentAccessLogs(50);
+      recentAccessLogsNotifier.value = _convertToAccessLogs(accessLogs);
+
+      // Load users with access
+      final users = _offlineService.getAvailableUsers();
+      usersWithAccessNotifier.value = _convertToAppUsers(users);
+
+      // Load active subscriptions
+      final cachedSubscriptions = _offlineService.getActiveSubscriptions();
+      final subscriptions = _convertToSubscriptions(cachedSubscriptions);
+      _cachedSubscriptions.clear();
+      _cachedSubscriptions.addAll(subscriptions);
+      activeSubscriptionsNotifier.value = subscriptions;
+      _subscriptionsSubject.add(subscriptions);
+
+      // Load upcoming reservations
+      final cachedReservations = _offlineService.getUpcomingReservations();
+      final reservations = _convertToReservations(cachedReservations);
       _cachedReservations.clear();
-      _cachedReservations.addAll(allReservations);
+      _cachedReservations.addAll(reservations);
+      upcomingReservationsNotifier.value = reservations;
+      _reservationsSubject.add(reservations);
 
-      // Update BehaviorSubject
-      if (!_reservationsSubject.isClosed) {
-        _reservationsSubject.add(_cachedReservations);
+      // Try to update user names in subscriptions with available user data
+      if (subscriptions.isNotEmpty && users.isNotEmpty) {
+        final updatedSubscriptions = await _updateSubscriptionUserNames(
+          subscriptions,
+        );
+        if (updatedSubscriptions.isNotEmpty) {
+          _cachedSubscriptions.clear();
+          _cachedSubscriptions.addAll(updatedSubscriptions);
+          activeSubscriptionsNotifier.value = updatedSubscriptions;
+          _subscriptionsSubject.add(updatedSubscriptions);
+        }
       }
 
-      print(
-        "CentralizedDataService: Loaded total of ${allReservations.length} unique reservations",
-      );
+      print('CentralizedDataService: Initial data loaded from cache');
     } catch (e) {
-      print("CentralizedDataService: Error loading reservations - $e");
-      // Don't rethrow to allow other data to load
+      print('CentralizedDataService: Error loading initial data - $e');
+      errorNotifier.value = 'Error loading cached data: $e';
     }
   }
 
-  /// Load subscriptions data - WITH GRACEFUL INDEX ERROR HANDLING
-  Future<void> _loadSubscriptions() async {
-    try {
-      print(
-        "CentralizedDataService: Starting comprehensive subscription fetch",
-      );
+  /// Convert local cache access logs to dashboard models
+  List<AccessLog> _convertToAccessLogs(List<LocalAccessLog> logs) {
+    final String providerId = _auth.currentUser?.uid ?? '';
 
-      // Get the provider ID - needed for fetching from provider's collections
+    return logs
+        .map(
+          (log) => AccessLog(
+            providerId: providerId,
+            userId: log.userId,
+            userName: log.userName,
+            timestamp: Timestamp.fromDate(log.timestamp),
+            status: log.status,
+            method: log.method,
+            denialReason: log.denialReason,
+          ),
+        )
+        .toList();
+  }
+
+  /// Convert cached users to app users
+  List<AppUser> _convertToAppUsers(List<CachedUser> users) {
+    return users
+        .map(
+          (user) => AppUser(
+            userId: user.userId,
+            name: user.userName,
+            // We'll need to determine access type later
+            accessType: 'Unknown',
+          ),
+        )
+        .toList();
+  }
+
+  /// Convert cached reservations to dashboard models
+  List<Reservation> _convertToReservations(
+    List<CachedReservation> reservations,
+  ) {
+    final String providerId = _auth.currentUser?.uid ?? '';
+
+    return reservations
+        .map(
+          (res) => Reservation(
+            id: res.reservationId,
+            userId: res.userId,
+            userName: 'Unknown User', // CachedReservation doesn't have userName
+            providerId: providerId,
+            dateTime: Timestamp.fromDate(res.startTime),
+            serviceId: null, // Can be populated from server data if needed
+            serviceName: res.serviceName,
+            groupSize: res.groupSize,
+            durationMinutes: res.endTime.difference(res.startTime).inMinutes,
+            status: res.status,
+            // Convert to dashboard ReservationType using string value
+            type: ReservationType.values.firstWhere(
+              (e) =>
+                  e.toString().split('.').last.toLowerCase() ==
+                  res.typeString.toLowerCase(),
+              orElse: () => ReservationType.unknown,
+            ),
+          ),
+        )
+        .toList();
+  }
+
+  /// Convert cached subscriptions to dashboard models
+  List<Subscription> _convertToSubscriptions(
+    List<CachedSubscription> subscriptions,
+  ) {
+    final String providerId = _auth.currentUser?.uid ?? '';
+
+    return subscriptions
+        .map(
+          (sub) => Subscription(
+            id: sub.subscriptionId,
+            userId: sub.userId,
+            userName: _getUserNameForSubscription(sub.userId),
+            providerId: providerId,
+            planName: sub.planName,
+            status: 'Active',
+            startDate: Timestamp.now(), // Default start date since not in cache
+            expiryDate: Timestamp.fromDate(sub.expiryDate),
+            isAutoRenewal: false, // Default, can be updated from server
+            pricePaid: 0.0, // Default, can be updated from server
+          ),
+        )
+        .toList();
+  }
+
+  /// Get user name for subscription by user ID
+  String _getUserNameForSubscription(String userId) {
+    // Try to find user in cache
+    final cachedUsers = usersWithAccessNotifier.value;
+    final user = cachedUsers.where((u) => u.userId == userId).firstOrNull;
+
+    if (user != null) {
+      return user.name;
+    }
+
+    return 'Unknown User';
+  }
+
+  /// Refresh all data (used when user manually pulls to refresh)
+  Future<void> refreshAllData() async {
+    if (isLoadingNotifier.value) {
+      return; // Prevent multiple concurrent refreshes
+    }
+
+    isLoadingNotifier.value = true;
+    errorNotifier.value = null;
+
+    try {
+      // If online, attempt to sync first
+      if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+        await _offlineService.performFullSync();
+      }
+
+      // Reload from cache regardless of sync result
+      await _loadInitialData();
+
+      // Ensure streams are updated with latest data
+      _accessLogsStreamController.add(recentAccessLogsNotifier.value);
+      _usersStreamController.add(usersWithAccessNotifier.value);
+      _reservationsSubject.add(_cachedReservations);
+      _subscriptionsSubject.add(_cachedSubscriptions);
+
+      print('CentralizedDataService: All data refreshed and streams updated');
+    } catch (e) {
+      errorNotifier.value = 'Error refreshing data: $e';
+      print('CentralizedDataService: Error during refresh - $e');
+    } finally {
+      isLoadingNotifier.value = false;
+    }
+  }
+
+  /// Get reservations with optional refresh
+  Future<List<Reservation>> getReservations({bool forceRefresh = false}) async {
+    if (forceRefresh) {
+      await refreshAllData();
+    }
+
+    try {
       final providerId = _auth.currentUser?.uid;
       if (providerId == null) {
-        print(
-          "CentralizedDataService: Cannot load subscriptions - Provider not authenticated",
-        );
-        return;
+        throw Exception('User not authenticated');
       }
 
-      // Map to hold unique subscriptions
-      final Map<String, Subscription> subscriptionMap = {};
+      // Check if we're online and should fetch directly from Firestore
+      final isOnline =
+          _connectivityService.statusNotifier.value == NetworkStatus.online;
 
-      // METHOD 1: Collection Group Query (may fail due to missing index)
-      try {
+      if (isOnline) {
         print(
-          "CentralizedDataService: Querying collection group 'subscriptions' for providerId $providerId",
+          'CentralizedDataService: Fetching reservations directly from Firestore',
         );
 
-        final subscriptionsQuery =
-            await _firestore
-                .collectionGroup('subscriptions')
-                .where('providerId', isEqualTo: providerId)
-                .where('status', isEqualTo: 'Active')
-                .get();
+        try {
+          // Use ReservationSyncService's approach for finding reservations
+          final reservationSync = ReservationSyncService();
+          final List<Reservation> allReservations = [];
 
-        print(
-          "CentralizedDataService: Found ${subscriptionsQuery.docs.length} active subscriptions across all users via collectionGroup",
-        );
-
-        for (final doc in subscriptionsQuery.docs) {
+          // Method 1: Look for reservations in the endUsers collection directly
           try {
-            final data = doc.data();
-            final subscription = Subscription.fromMap(doc.id, data);
-            subscriptionMap[doc.id] = subscription;
-          } catch (e) {
             print(
-              "CentralizedDataService: Error processing subscription ${doc.id}: $e",
+              'CentralizedDataService: Searching for reservations in endUsers collection',
             );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Collection group query failed (expected if index missing): $e",
-        );
-        // Continue with alternative methods - this is expected if index is missing
-      }
-
-      // METHOD 2: Global subscriptions collection (fallback) - SKIP DUE TO INDEX ISSUE
-      print(
-        "CentralizedDataService: Skipping global subscriptions query due to missing index",
-      );
-
-      // METHOD 3: Provider-specific collections (most reliable)
-      try {
-        print(
-          "CentralizedDataService: Fetching active subscriptions from serviceProviders/$providerId/activeSubscriptions",
-        );
-
-        final activeSubsSnapshot =
-            await _firestore
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('activeSubscriptions')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${activeSubsSnapshot.docs.length} active subscription references",
-        );
-
-        for (final doc in activeSubsSnapshot.docs) {
-          try {
-            final data = doc.data();
-            final subscriptionId = data['subscriptionId'] as String?;
-            final userId = data['userId'] as String?;
-
-            if (subscriptionId == null || userId == null) {
-              // Try to treat the document as a direct subscription
-              if (!subscriptionMap.containsKey(doc.id)) {
-                final subscription = Subscription.fromMap(doc.id, data);
-                subscriptionMap[doc.id] = subscription;
-              }
-              continue;
-            }
-
-            // If we already have this subscription, skip
-            if (subscriptionMap.containsKey(subscriptionId)) continue;
-
-            // Fetch full subscription from endUsers collection
-            final subscriptionDoc =
+            final reservationsQuery =
                 await _firestore
-                    .collection('endUsers')
-                    .doc(userId)
-                    .collection('subscriptions')
-                    .doc(subscriptionId)
+                    .collectionGroup('reservations')
+                    .where('providerId', isEqualTo: providerId)
                     .get();
 
-            if (subscriptionDoc.exists) {
-              final subscriptionData = subscriptionDoc.data();
-              if (subscriptionData != null) {
-                final subscription = Subscription.fromMap(
-                  subscriptionId,
-                  subscriptionData,
+            print(
+              'CentralizedDataService: Found ${reservationsQuery.docs.length} reservations in endUsers collection',
+            );
+
+            // Process each document
+            for (final doc in reservationsQuery.docs) {
+              try {
+                final data = doc.data();
+                final reservationId = doc.id;
+                allReservations.add(Reservation.fromMap(reservationId, data));
+              } catch (e) {
+                print(
+                  'CentralizedDataService: Error processing reservation doc: $e',
                 );
-                subscriptionMap[subscriptionId] = subscription;
               }
             }
           } catch (e) {
             print(
-              "CentralizedDataService: Error processing active subscription reference ${doc.id}: $e",
+              'CentralizedDataService: Error querying endUsers reservations: $e',
             );
           }
-        }
 
-        // Also check expired subscriptions for completeness
-        print(
-          "CentralizedDataService: Fetching expired subscriptions from serviceProviders/$providerId/expiredSubscriptions",
-        );
-
-        final expiredSubsSnapshot =
-            await _firestore
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('expiredSubscriptions')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${expiredSubsSnapshot.docs.length} expired subscription references",
-        );
-
-        // Process expired subscriptions (they might still be relevant for grace periods)
-        for (final doc in expiredSubsSnapshot.docs) {
+          // Method 2: Look for pending and confirmed reservations using references
           try {
-            final data = doc.data();
-            final subscriptionId = data['subscriptionId'] as String?;
-            final userId = data['userId'] as String?;
+            // Get pending reservations
+            final pendingReservations =
+                await reservationSync.fetchPendingReservations();
 
-            if (subscriptionId == null || userId == null) {
-              continue;
+            // Get confirmed reservations
+            final confirmedReservations =
+                await reservationSync.fetchConfirmedReservations();
+
+            // Add to our list
+            allReservations.addAll(pendingReservations);
+            allReservations.addAll(confirmedReservations);
+
+            print(
+              'CentralizedDataService: Found ${pendingReservations.length} pending and ${confirmedReservations.length} confirmed reservations',
+            );
+          } catch (e) {
+            print(
+              'CentralizedDataService: Error fetching reservation references: $e',
+            );
+          }
+
+          // Method 3: Also try the traditional path
+          try {
+            // Get the provider info to get governorateId
+            final providerRef = _firestore
+                .collection('serviceProviders')
+                .doc(providerId);
+            final providerDoc = await providerRef.get();
+
+            if (!providerDoc.exists) {
+              throw Exception('Provider document not found');
             }
 
-            // If we already have this subscription, skip
-            if (subscriptionMap.containsKey(subscriptionId)) continue;
+            final providerData = providerDoc.data();
+            final governorateId = providerData?['governorateId'] as String?;
 
-            // Fetch full subscription from endUsers collection
-            final subscriptionDoc =
+            if (governorateId == null) {
+              throw Exception('Provider governorateId not found');
+            }
+
+            print(
+              'CentralizedDataService: Provider governorateId: $governorateId',
+            );
+
+            // Traditional method - try all known collection paths
+
+            // Path 1: serviceProviders/{providerId}/confirmedReservations
+            print(
+              'CentralizedDataService: Trying path 1 - serviceProviders/{providerId}/confirmedReservations',
+            );
+            final confirmedQuery =
                 await _firestore
-                    .collection('endUsers')
-                    .doc(userId)
-                    .collection('subscriptions')
-                    .doc(subscriptionId)
+                    .collection('serviceProviders')
+                    .doc(providerId)
+                    .collection('confirmedReservations')
                     .get();
 
-            if (subscriptionDoc.exists) {
-              final subscriptionData = subscriptionDoc.data();
-              if (subscriptionData != null) {
-                final subscription = Subscription.fromMap(
-                  subscriptionId,
-                  subscriptionData,
-                );
-                // Only include if expired recently (within 24 hours)
-                if (subscription.expiryDate != null) {
-                  final expiredDate = subscription.expiryDate!.toDate();
-                  final now = DateTime.now();
-                  if (expiredDate.isAfter(
-                    now.subtract(const Duration(hours: 24)),
-                  )) {
-                    subscriptionMap[subscriptionId] = subscription;
+            print(
+              'CentralizedDataService: Found ${confirmedQuery.docs.length} confirmed reservations in path 1',
+            );
+
+            // Path 2: serviceProviders/{providerId}/pendingReservations
+            print(
+              'CentralizedDataService: Trying path 2 - serviceProviders/{providerId}/pendingReservations',
+            );
+            final pendingQuery =
+                await _firestore
+                    .collection('serviceProviders')
+                    .doc(providerId)
+                    .collection('pendingReservations')
+                    .get();
+
+            print(
+              'CentralizedDataService: Found ${pendingQuery.docs.length} pending reservations in path 2',
+            );
+
+            // Path 3: reservations/{governorateId}/{providerId}
+            print(
+              'CentralizedDataService: Trying path 3 - main reservations collection',
+            );
+            final mainQuery =
+                await _firestore
+                    .collection('reservations')
+                    .doc(governorateId)
+                    .collection(providerId)
+                    .get();
+
+            print(
+              'CentralizedDataService: Found ${mainQuery.docs.length} reservations in path 3',
+            );
+
+            // Process all the results from traditional paths
+            int totalTraditionalResults = 0;
+
+            for (final doc in [
+              ...confirmedQuery.docs,
+              ...pendingQuery.docs,
+              ...mainQuery.docs,
+            ]) {
+              try {
+                // Extract the real reservationId if this is a reference
+                String? reservationId;
+                String? userId;
+                Map<String, dynamic>? fullData;
+
+                if (doc.data().containsKey('reservationId')) {
+                  // This is a reference, we need to fetch the actual reservation
+                  reservationId = doc.data()['reservationId'] as String?;
+                  userId = doc.data()['userId'] as String?;
+
+                  if (reservationId != null && userId != null) {
+                    final actualDoc =
+                        await _firestore
+                            .collection('endUsers')
+                            .doc(userId)
+                            .collection('reservations')
+                            .doc(reservationId)
+                            .get();
+
+                    if (actualDoc.exists) {
+                      fullData = actualDoc.data();
+                    }
+                  }
+                } else {
+                  // This is a full reservation document
+                  reservationId = doc.id;
+                  fullData = doc.data();
+                }
+
+                // If we have data, create a reservation
+                if (reservationId != null && fullData != null) {
+                  // Check if we already have this reservation
+                  final existing = allReservations.any(
+                    (r) => r.id == reservationId,
+                  );
+                  if (!existing) {
+                    allReservations.add(
+                      Reservation.fromMap(reservationId, fullData),
+                    );
+                    totalTraditionalResults++;
                   }
                 }
+              } catch (e) {
+                print(
+                  'CentralizedDataService: Error processing reservation doc: $e',
+                );
               }
             }
+
+            print(
+              'CentralizedDataService: Total reservations found: ${allReservations.length}',
+            );
           } catch (e) {
             print(
-              "CentralizedDataService: Error processing expired subscription reference ${doc.id}: $e",
+              'CentralizedDataService: Error with traditional reservation paths: $e',
             );
           }
+
+          // Sort reservations by date
+          allReservations.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+
+          // Cache the results - using a simpler approach that doesn't rely on toDate()
+          for (final reservation in allReservations) {
+            try {
+              // Convert Timestamp to DateTime safely
+              DateTime startTime;
+              DateTime endTime;
+
+              // Handle dateTime conversion
+              if (reservation.dateTime is Timestamp) {
+                startTime = (reservation.dateTime as Timestamp).toDate();
+              } else if (reservation.dateTime is DateTime) {
+                startTime = reservation.dateTime as DateTime;
+              } else {
+                startTime = DateTime.now(); // Fallback
+              }
+
+              // Handle endTime conversion - making sure it's never null
+              if (reservation.endTime != null) {
+                if (reservation.endTime is Timestamp) {
+                  endTime = (reservation.endTime as Timestamp).toDate();
+                } else if (reservation.endTime is DateTime) {
+                  endTime = reservation.endTime as DateTime;
+                } else {
+                  // Fallback: Calculate from duration if available
+                  endTime = startTime.add(
+                    Duration(minutes: reservation.durationMinutes ?? 60),
+                  );
+                }
+              } else {
+                // Calculate from duration if available
+                endTime = startTime.add(
+                  Duration(minutes: reservation.durationMinutes ?? 60),
+                );
+              }
+
+              final cachedReservation = CachedReservation(
+                userId: reservation.userId ?? '',
+                reservationId: reservation.id ?? '',
+                serviceName: reservation.serviceName ?? 'Unnamed Service',
+                startTime: startTime,
+                endTime: endTime,
+                typeString: reservation.type.toString().split('.').last,
+                groupSize: reservation.groupSize ?? 1,
+                status: reservation.status ?? 'Pending',
+              );
+
+              _cacheService.cachedReservationsBox.put(
+                reservation.id,
+                cachedReservation,
+              );
+            } catch (e) {
+              print('CentralizedDataService: Error caching reservation: $e');
+            }
+          }
+
+          // Update the stream
+          _reservationsSubject.add(allReservations);
+
+          return allReservations;
+        } catch (e) {
+          print(
+            'CentralizedDataService: Error fetching reservations from Firestore: $e',
+          );
+          // Fall back to cache
         }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error fetching provider subscriptions: $e",
-        );
       }
 
-      final allSubscriptions = subscriptionMap.values.toList();
-
-      // Sort by expiry date (active first, then by expiry date)
-      allSubscriptions.sort((a, b) {
-        final now = DateTime.now();
-        final aActive = a.expiryDate?.toDate().isAfter(now) ?? false;
-        final bActive = b.expiryDate?.toDate().isAfter(now) ?? false;
-
-        if (aActive && !bActive) return -1;
-        if (!aActive && bActive) return 1;
-
-        // Both active or both expired, sort by expiry date
-        if (a.expiryDate == null && b.expiryDate == null) return 0;
-        if (a.expiryDate == null) return 1;
-        if (b.expiryDate == null) return -1;
-        return b.expiryDate!.compareTo(a.expiryDate!);
-      });
-
-      // Update cache
-      _cachedSubscriptions.clear();
-      _cachedSubscriptions.addAll(allSubscriptions);
-
-      // Update BehaviorSubject
-      if (!_subscriptionsSubject.isClosed) {
-        _subscriptionsSubject.add(_cachedSubscriptions);
-      }
-
-      print(
-        "CentralizedDataService: Loaded total of ${allSubscriptions.length} active unique subscriptions",
-      );
+      // If we're offline or the Firestore query failed, use the cache
+      return await _getCachedReservations();
     } catch (e) {
-      print("CentralizedDataService: Error loading subscriptions - $e");
-      // Don't rethrow to allow other data to load
+      print('CentralizedDataService: Error in getReservations: $e');
+      return [];
     }
   }
 
-  /// Triggered when sync status changes - WITH DEBOUNCING
-  void _onSyncStatusChanged() {
-    final status = SyncManager().syncStatusNotifier.value;
-
-    // Only refresh on successful sync, and use debouncing
-    if (status == SyncStatus.success) {
-      _debouncedRefresh();
-    } else if (status == SyncStatus.failed) {
-      // Handle sync error
-      final error = SyncManager().lastErrorNotifier.value;
-      if (error != null) {
-        errorNotifier.value = "Sync error: $error";
-      }
-    }
-  }
-
-  /// Debounced refresh to prevent infinite loops
-  void _debouncedRefresh() {
-    // Cancel existing timer if any
-    _debounceTimer?.cancel();
-
-    // Set up new debounced refresh
-    _debounceTimer = Timer(const Duration(seconds: 2), () {
-      if (!_isRefreshing) {
-        _refreshAllDataInternal();
-      }
-    });
-  }
-
-  /// Internal refresh method with loop prevention
-  Future<void> _refreshAllDataInternal() async {
-    // Prevent concurrent refreshes and rapid successive calls
-    final now = DateTime.now();
-    if (_isRefreshing ||
-        (_lastRefresh != null &&
-            now.difference(_lastRefresh!) < _refreshCooldown)) {
-      print(
-        "CentralizedDataService: Skipping refresh due to cooldown or concurrent operation",
-      );
-      return;
-    }
-
-    _isRefreshing = true;
-    _lastRefresh = now;
-
-    try {
-      await Future.wait([
-        _loadAccessLogs(),
-        _loadUsers(),
-        _loadReservations(),
-        _loadSubscriptions(),
-      ]);
-    } catch (e) {
-      print("CentralizedDataService: Error in internal refresh - $e");
-    } finally {
-      _isRefreshing = false;
-    }
-  }
-
-  /// Load access logs from Firestore
-  Future<void> _loadAccessLogs() async {
-    try {
-      final logs = await _accessControlRepository.getRecentAccessLogs(
-        limit: 50,
-      );
-      _cachedAccessLogs.clear();
-      _cachedAccessLogs.addAll(logs);
-
-      // Only add to stream if it's still open
-      if (!_accessLogsStreamController.isClosed) {
-        _accessLogsStreamController.add(_cachedAccessLogs);
-      }
-    } catch (e) {
-      print("CentralizedDataService: Error loading access logs - $e");
-      // Don't rethrow to allow partial data loading
-    }
-  }
-
-  /// Load users from UserListingService
-  Future<void> _loadUsers() async {
-    try {
-      final allUsers = await _userListingService.getAllUsers();
-
-      // Update user cache
-      _cachedUsers.clear();
-      for (var user in allUsers) {
-        _cachedUsers[user.userId] = user;
-      }
-
-      // Only add to stream if it's still open
-      if (!_usersStreamController.isClosed) {
-        _usersStreamController.add(allUsers);
-      }
-    } catch (e) {
-      print("CentralizedDataService: Error loading users - $e");
-      // Don't rethrow to allow partial data loading
-    }
-  }
-
-  /// Get all users (from cache if available, or fetch if needed)
-  Future<List<AppUser>> getUsers({bool forceRefresh = false}) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    if (forceRefresh || _cachedUsers.isEmpty) {
-      await _loadUsers();
-    }
-    return _cachedUsers.values.toList();
-  }
-
-  /// Get all reservations
-  Future<List<Reservation>> getReservations({bool forceRefresh = false}) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    if (forceRefresh || _cachedReservations.isEmpty) {
-      await _loadReservations();
-    }
-    return _cachedReservations;
-  }
-
-  /// Get all subscriptions
+  /// Get subscriptions with optional refresh
   Future<List<Subscription>> getSubscriptions({
     bool forceRefresh = false,
   }) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
+    if (forceRefresh) {
+      await refreshAllData();
     }
 
-    if (forceRefresh || _cachedSubscriptions.isEmpty) {
-      await _loadSubscriptions();
+    try {
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        throw Exception('User not authenticated');
+      }
+
+      // Check if we're online and should fetch directly from Firestore
+      final isOnline =
+          _connectivityService.statusNotifier.value == NetworkStatus.online;
+
+      if (isOnline) {
+        print(
+          'CentralizedDataService: Fetching subscriptions directly from Firestore',
+        );
+
+        try {
+          // Comprehensive approach to find all subscriptions
+          final List<Subscription> allSubscriptions = [];
+
+          // Method 1: Look for subscriptions in endUsers collection
+          try {
+            print(
+              'CentralizedDataService: Searching for subscriptions in endUsers collection',
+            );
+            final subscriptionsQuery =
+                await _firestore
+                    .collectionGroup('subscriptions')
+                    .where('providerId', isEqualTo: providerId)
+                    .where('status', isEqualTo: 'Active')
+                    .get();
+
+            print(
+              'CentralizedDataService: Found ${subscriptionsQuery.docs.length} subscriptions in endUsers collection',
+            );
+
+            // Process each document
+            for (final doc in subscriptionsQuery.docs) {
+              try {
+                final data = doc.data();
+                final subscriptionId = doc.id;
+                final userId = data['userId'] as String?;
+
+                if (userId != null) {
+                  // Get user name
+                  String userName = "Unknown User";
+                  try {
+                    final userDoc =
+                        await _firestore
+                            .collection('endUsers')
+                            .doc(userId)
+                            .get();
+                    if (userDoc.exists && userDoc.data() != null) {
+                      final userData = userDoc.data()!;
+                      userName =
+                          userData['displayName'] ??
+                          userData['name'] ??
+                          'Unknown User';
+                    }
+                  } catch (e) {
+                    print(
+                      'CentralizedDataService: Error fetching user data for subscription: $e',
+                    );
+                  }
+
+                  final subscription = Subscription(
+                    id: subscriptionId,
+                    userId: userId,
+                    userName: userName,
+                    providerId: providerId,
+                    planName: data['planName'] as String? ?? 'Membership Plan',
+                    status: data['status'] as String? ?? 'Active',
+                    startDate:
+                        data['startDate'] as Timestamp? ?? Timestamp.now(),
+                    expiryDate: data['expiryDate'] as Timestamp?,
+                    isAutoRenewal: data['autoRenew'] as bool? ?? false,
+                    pricePaid: (data['price'] as num?)?.toDouble() ?? 0.0,
+                  );
+
+                  allSubscriptions.add(subscription);
+                }
+              } catch (e) {
+                print(
+                  'CentralizedDataService: Error processing subscription doc: $e',
+                );
+              }
+            }
+          } catch (e) {
+            print(
+              'CentralizedDataService: Error querying endUsers subscriptions: $e',
+            );
+          }
+
+          // Method 2: Check serviceProviders/{providerId}/activeSubscriptions collection
+          try {
+            print(
+              'CentralizedDataService: Checking serviceProviders activeSubscriptions collection',
+            );
+            final activeSubsQuery =
+                await _firestore
+                    .collection('serviceProviders')
+                    .doc(providerId)
+                    .collection('activeSubscriptions')
+                    .get();
+
+            print(
+              'CentralizedDataService: Found ${activeSubsQuery.docs.length} subscription references',
+            );
+
+            // Process each document - these might be references
+            for (final doc in activeSubsQuery.docs) {
+              try {
+                final data = doc.data();
+                final userId = data['userId'] as String?;
+                final subscriptionId =
+                    data['subscriptionId'] as String? ?? doc.id;
+
+                // Check if we already have this subscription
+                if (allSubscriptions.any((s) => s.id == subscriptionId)) {
+                  continue;
+                }
+
+                if (userId != null) {
+                  // This might be a reference, try to get the actual subscription
+                  try {
+                    final subDoc =
+                        await _firestore
+                            .collection('endUsers')
+                            .doc(userId)
+                            .collection('subscriptions')
+                            .doc(subscriptionId)
+                            .get();
+
+                    if (subDoc.exists && subDoc.data() != null) {
+                      final subData = subDoc.data()!;
+
+                      // Get user name
+                      String userName = "Unknown User";
+                      try {
+                        final userDoc =
+                            await _firestore
+                                .collection('endUsers')
+                                .doc(userId)
+                                .get();
+                        if (userDoc.exists && userDoc.data() != null) {
+                          final userData = userDoc.data()!;
+                          userName =
+                              userData['displayName'] ??
+                              userData['name'] ??
+                              'Unknown User';
+                        }
+                      } catch (e) {
+                        print(
+                          'CentralizedDataService: Error fetching user data for subscription: $e',
+                        );
+                      }
+
+                      final subscription = Subscription(
+                        id: subscriptionId,
+                        userId: userId,
+                        userName: userName,
+                        providerId: providerId,
+                        planName:
+                            subData['planName'] as String? ?? 'Membership Plan',
+                        status: subData['status'] as String? ?? 'Active',
+                        startDate:
+                            subData['startDate'] as Timestamp? ??
+                            Timestamp.now(),
+                        expiryDate: subData['expiryDate'] as Timestamp?,
+                        isAutoRenewal: subData['autoRenew'] as bool? ?? false,
+                        pricePaid:
+                            (subData['price'] as num?)?.toDouble() ?? 0.0,
+                      );
+
+                      allSubscriptions.add(subscription);
+                    } else {
+                      // If we can't find the actual subscription, use the reference data
+                      // Get user name
+                      String userName = "Unknown User";
+                      try {
+                        final userDoc =
+                            await _firestore
+                                .collection('endUsers')
+                                .doc(userId)
+                                .get();
+                        if (userDoc.exists && userDoc.data() != null) {
+                          final userData = userDoc.data()!;
+                          userName =
+                              userData['displayName'] ??
+                              userData['name'] ??
+                              'Unknown User';
+                        }
+                      } catch (e) {
+                        print(
+                          'CentralizedDataService: Error fetching user data for subscription: $e',
+                        );
+                      }
+
+                      final subscription = Subscription(
+                        id: subscriptionId,
+                        userId: userId,
+                        userName: userName,
+                        providerId: providerId,
+                        planName:
+                            data['planName'] as String? ?? 'Membership Plan',
+                        status: 'Active',
+                        startDate:
+                            data['startDate'] as Timestamp? ?? Timestamp.now(),
+                        expiryDate: data['expiryDate'] as Timestamp?,
+                        isAutoRenewal: data['autoRenew'] as bool? ?? false,
+                        pricePaid: (data['price'] as num?)?.toDouble(),
+                      );
+
+                      allSubscriptions.add(subscription);
+                    }
+                  } catch (e) {
+                    print(
+                      'CentralizedDataService: Error fetching actual subscription: $e',
+                    );
+                  }
+                }
+              } catch (e) {
+                print(
+                  'CentralizedDataService: Error processing subscription reference: $e',
+                );
+              }
+            }
+          } catch (e) {
+            print(
+              'CentralizedDataService: Error querying serviceProviders subscriptions: $e',
+            );
+          }
+
+          // Sort subscriptions by expiry date
+          allSubscriptions.sort((a, b) {
+            if (a.expiryDate == null && b.expiryDate == null) return 0;
+            if (a.expiryDate == null) return 1; // Null dates sort last
+            if (b.expiryDate == null) return -1;
+            return b.expiryDate!.compareTo(
+              a.expiryDate!,
+            ); // Most recent expiry first
+          });
+
+          print(
+            'CentralizedDataService: Found ${allSubscriptions.length} total subscriptions',
+          );
+
+          // Update the BehaviorSubject
+          _subscriptionsSubject.add(allSubscriptions);
+
+          return allSubscriptions;
+        } catch (e) {
+          print(
+            'CentralizedDataService: Error fetching subscriptions from Firestore: $e',
+          );
+          // Fall back to cache
+        }
+      }
+
+      // If we're offline or the Firestore query failed, use the cached subscriptions
+      final cachedSubscriptions = _subscriptionsSubject.value;
+      if (cachedSubscriptions.isNotEmpty) {
+        print(
+          'CentralizedDataService: Using ${cachedSubscriptions.length} cached subscriptions',
+        );
+        return cachedSubscriptions;
+      }
+
+      // If BehaviorSubject is empty, check offline service as a last resort
+      try {
+        final offlineSubscriptions = _offlineService.getActiveSubscriptions();
+        if (offlineSubscriptions.isNotEmpty) {
+          print(
+            'CentralizedDataService: Using ${offlineSubscriptions.length} offline subscriptions',
+          );
+          // Convert offline format to Subscription model
+          return offlineSubscriptions
+              .map(
+                (s) => Subscription(
+                  id: s.subscriptionId,
+                  userId: s.userId,
+                  providerId: providerId,
+                  userName:
+                      'Unknown User', // CachedSubscription doesn't have a userName property
+                  planName: s.planName,
+                  status: 'Active',
+                  startDate: Timestamp.now(), // Default start time
+                  // Handle expiryDate properly - s.expiryDate is already a DateTime
+                  expiryDate:
+                      s.expiryDate != null
+                          ? Timestamp.fromDate(s.expiryDate!)
+                          : null,
+                ),
+              )
+              .toList();
+        }
+      } catch (e) {
+        print(
+          'CentralizedDataService: Error getting offline subscriptions: $e',
+        );
+      }
+
+      return [];
+    } catch (e) {
+      print('CentralizedDataService: Error in getSubscriptions: $e');
+      errorNotifier.value = 'Error loading subscriptions: $e';
+      return [];
     }
-    return _cachedSubscriptions;
   }
 
-  /// Get users of a specific type (all, reserved, or subscribed)
-  Future<List<AppUser>> getUsersByType(
-    UserType? type, {
-    bool forceRefresh = false,
-  }) async {
-    final allUsers = await getUsers(forceRefresh: forceRefresh);
-
-    // If type is null, return all users
-    if (type == null) {
-      return allUsers;
-    }
-
-    switch (type) {
-      case UserType.reserved:
-        return allUsers
-            .where(
-              (user) =>
-                  user.userType == UserType.reserved ||
-                  user.userType == UserType.both,
-            )
-            .toList();
-      case UserType.subscribed:
-        return allUsers
-            .where(
-              (user) =>
-                  user.userType == UserType.subscribed ||
-                  user.userType == UserType.both,
-            )
-            .toList();
-      case UserType.both:
-        return allUsers
-            .where((user) => user.userType == UserType.both)
-            .toList();
-    }
-  }
-
-  /// Get recent access logs
+  /// Get recent access logs, optionally forcing a refresh
   Future<List<AccessLog>> getRecentAccessLogs({
     bool forceRefresh = false,
     int limit = 50,
   }) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    if (forceRefresh || _cachedAccessLogs.isEmpty) {
-      await _loadAccessLogs();
-    }
-
-    if (limit > 0 && limit < _cachedAccessLogs.length) {
-      return _cachedAccessLogs.sublist(0, limit);
-    }
-
-    return _cachedAccessLogs;
-  }
-
-  /// Enhanced smart access checking with provider-specific validation
-  Future<Map<String, dynamic>> smartCheckUserAccess(String userId) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
+    if (forceRefresh) {
+      await refreshAllData();
     }
 
     try {
-      final now = DateTime.now();
-      final user = _auth.currentUser;
-      if (user == null) {
-        return {
-          'success': false,
-          'hasAccess': false,
-          'accessType': 'denied',
-          'message':
-              'System authentication error - please contact administrator',
-          'reason': 'no_auth',
-        };
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        throw Exception('User not authenticated');
       }
 
-      final providerId = user.uid;
-      print(
-        'SmartAccess: Checking access for user $userId with provider $providerId',
-      );
+      // Check if we're online and should fetch directly from Firestore
+      final isOnline =
+          _connectivityService.statusNotifier.value == NetworkStatus.online;
 
-      // Get user information first
-      final appUser = await getUserById(userId);
-      if (appUser == null) {
-        return {
-          'success': true,
-          'hasAccess': false,
-          'accessType': 'denied',
-          'message': 'User not found in system - please register first',
-          'reason': 'user_not_found',
-          'smartComment':
-              'This user ID is not registered in our system. Please ensure the user has completed registration.',
-        };
-      }
+      if (isOnline || forceRefresh) {
+        print(
+          'CentralizedDataService: Fetching access logs directly from Firestore',
+        );
 
-      // Check for active reservations with this specific provider
-      final userReservations = await _getUserReservations(userId);
-      final providerReservations =
-          userReservations
-              .where(
-                (r) =>
-                    r.providerId == providerId &&
-                    r.status.toLowerCase() != 'cancelled',
-              )
-              .toList();
+        try {
+          // Fetch directly from Firestore using original repository pattern
+          final querySnapshot =
+              await _firestore
+                  .collection('accessLogs')
+                  .where('providerId', isEqualTo: providerId)
+                  .orderBy('timestamp', descending: true)
+                  .limit(limit)
+                  .get();
 
-      // Check for active subscriptions with this specific provider
-      final userSubscriptions = await _getUserSubscriptions(userId);
-      final providerSubscriptions =
-          userSubscriptions
-              .where(
-                (s) =>
-                    s.providerId == providerId &&
-                    s.status.toLowerCase() == 'active' &&
-                    s.expiryDate != null &&
-                    s.expiryDate!.toDate().isAfter(now),
-              )
-              .toList();
+          final List<AccessLog> accessLogs = [];
 
-      print(
-        'SmartAccess: Found ${providerReservations.length} reservations and ${providerSubscriptions.length} subscriptions for provider',
-      );
+          for (final doc in querySnapshot.docs) {
+            try {
+              final data = doc.data();
+              final timestamp = data['timestamp'] as Timestamp?;
+              final userId = data['userId'] as String? ?? '';
+              final userName = data['userName'] as String? ?? 'Unknown';
+              final status = data['status'] as String? ?? 'unknown';
+              final method = data['method'] as String?;
+              final denialReason = data['denialReason'] as String?;
 
-      // Check subscription access first (higher priority)
-      if (providerSubscriptions.isNotEmpty) {
-        final subscription = providerSubscriptions.first;
-        final daysRemaining =
-            subscription.expiryDate!.toDate().difference(now).inDays;
+              if (timestamp != null) {
+                // Create an AccessLog model
+                final accessLog = AccessLog(
+                  id: doc.id,
+                  providerId: providerId,
+                  userId: userId,
+                  userName: userName,
+                  timestamp: timestamp,
+                  status: status,
+                  method: method,
+                  denialReason: denialReason,
+                );
 
-        String smartComment;
-        if (daysRemaining > 30) {
-          smartComment =
-              'Active subscriber with ${daysRemaining} days remaining. Full access granted.';
-        } else if (daysRemaining > 7) {
-          smartComment =
-              'Subscription expires in ${daysRemaining} days. Consider renewal reminder.';
-        } else {
-          smartComment =
-              'Subscription expires soon (${daysRemaining} days). Urgent renewal needed.';
-        }
+                accessLogs.add(accessLog);
 
-        return {
-          'success': true,
-          'hasAccess': true,
-          'accessType': 'subscription',
-          'message': 'Access granted - Active subscription',
-          'reason': 'valid_subscription',
-          'smartComment': smartComment,
-          'subscription': subscription.toMap(),
-          'expiryDate': subscription.expiryDate!.toDate().toIso8601String(),
-          'daysRemaining': daysRemaining,
-        };
-      }
+                // Skip writing to Hive since we're having adapter issues
+                // We'll still return the fetched data even if we can't cache it
+                /* 
+                // Also cache the access log for offline access
+                final localAccessLog = LocalAccessLog(
+                  userId: userId,
+                  userName: userName,
+                  timestamp: timestamp.toDate(),
+                  status: status,
+                  method: method ?? 'unknown',
+                  denialReason: denialReason,
+                  needsSync: false, // Already in Firestore
+                );
 
-      // Check reservation access
-      if (providerReservations.isNotEmpty) {
-        // Check for reservations today
-        final todayReservations =
-            providerReservations.where((r) {
-              final reservationDate = r.dateTime.toDate();
-              return reservationDate.year == now.year &&
-                  reservationDate.month == now.month &&
-                  reservationDate.day == now.day;
-            }).toList();
-
-        if (todayReservations.isNotEmpty) {
-          final reservation = todayReservations.first;
-          final reservationTime = reservation.dateTime.toDate();
-          final timeDifference = now.difference(reservationTime);
-
-          String smartComment;
-          String accessMessage;
-
-          if (reservation.status.toLowerCase() == 'confirmed') {
-            if (timeDifference.abs().inMinutes <= 30) {
-              smartComment =
-                  'Reservation confirmed for today. User is on time for their ${reservation.serviceName ?? 'session'}.';
-              accessMessage = 'Access granted - Today\'s confirmed reservation';
-            } else if (timeDifference.inMinutes > 30) {
-              smartComment =
-                  'Late arrival - reservation was ${timeDifference.inMinutes} minutes ago. Access granted with warning.';
-              accessMessage = 'Access granted - Late arrival';
-            } else {
-              smartComment =
-                  'Early arrival - reservation is in ${timeDifference.abs().inMinutes} minutes. Access granted.';
-              accessMessage = 'Access granted - Early arrival';
+                await _cacheService.localAccessLogsBox.put(
+                  doc.id,
+                  localAccessLog,
+                );
+                */
+              }
+            } catch (e) {
+              print('CentralizedDataService: Error processing access log: $e');
             }
-
-            return {
-              'success': true,
-              'hasAccess': true,
-              'accessType': 'reservation',
-              'message': accessMessage,
-              'reason': 'valid_reservation',
-              'smartComment': smartComment,
-              'reservation': reservation.toMap(),
-              'reservationTime': reservationTime.toIso8601String(),
-              'status': reservation.status,
-            };
-          } else if (reservation.status.toLowerCase() == 'pending') {
-            return {
-              'success': true,
-              'hasAccess': false,
-              'accessType': 'pending',
-              'message': 'Access denied - Reservation pending confirmation',
-              'reason': 'pending_reservation',
-              'smartComment':
-                  'Reservation exists but is still pending approval. Please wait for confirmation or contact staff.',
-              'reservation': reservation.toMap(),
-            };
           }
+
+          // Update cache with the fetched data
+          recentAccessLogsNotifier.value = accessLogs;
+          _accessLogsStreamController.add(accessLogs);
+
+          return accessLogs;
+        } catch (e) {
+          print(
+            'CentralizedDataService: Error fetching access logs from Firestore: $e',
+          );
+          print('CentralizedDataService: Falling back to cached access logs');
+
+          // Fallback to cached logs
+          return _getCachedAccessLogs(limit);
         }
-
-        // Check for future reservations
-        final futureReservations =
-            providerReservations.where((r) {
-              final reservationDate = r.dateTime.toDate();
-              return reservationDate.isAfter(now) &&
-                  reservationDate.difference(now).inDays <=
-                      7; // Within next week
-            }).toList();
-
-        if (futureReservations.isNotEmpty) {
-          final nextReservation = futureReservations.first;
-          final daysUntil =
-              nextReservation.dateTime != null
-                  ? nextReservation.dateTime!.toDate().difference(now).inDays
-                  : 0;
-
-          return {
-            'success': true,
-            'hasAccess': false,
-            'accessType': 'future_reservation',
-            'message': 'Access denied - No access today',
-            'reason': 'future_reservation',
-            'smartComment':
-                'User has a ${nextReservation.status} reservation in ${daysUntil} day(s). No access granted for today.',
-            'nextReservation': nextReservation.toMap(),
-          };
-        }
-
-        // Has reservations but none for today
-        return {
-          'success': true,
-          'hasAccess': false,
-          'accessType': 'no_current_reservation',
-          'message': 'Access denied - No reservation for today',
-          'reason': 'no_current_reservation',
-          'smartComment':
-              'User has made reservations before but none scheduled for today. Please book a new reservation.',
-        };
+      } else {
+        // Offline mode: get from cache
+        print(
+          'CentralizedDataService: Using cached access logs (offline mode)',
+        );
+        return _getCachedAccessLogs(limit);
       }
-
-      // No reservations or subscriptions with this provider
-      return {
-        'success': true,
-        'hasAccess': false,
-        'accessType': 'no_access',
-        'message': 'Access denied - No active reservations or subscriptions',
-        'reason': 'no_service_relationship',
-        'smartComment':
-            'User has no active reservations or subscriptions with this service provider. Please book a service or subscribe to gain access.',
-      };
     } catch (e) {
-      print('Error in smartCheckUserAccess: $e');
-      return {
-        'success': false,
-        'hasAccess': false,
-        'accessType': 'error',
-        'message': 'System error during access validation',
-        'reason': 'system_error',
-        'smartComment':
-            'Technical error occurred during validation. Please try again or contact support.',
-        'error': e.toString(),
-      };
-    }
-  }
-
-  /// Get user reservations
-  Future<List<Reservation>> _getUserReservations(String userId) async {
-    try {
-      return _cachedReservations.where((r) => r.userId == userId).toList();
-    } catch (e) {
-      print('Error getting user reservations: $e');
+      print('CentralizedDataService: Error getting access logs - $e');
       return [];
     }
   }
 
-  /// Get user subscriptions
-  Future<List<Subscription>> _getUserSubscriptions(String userId) async {
+  /// Get cached access logs without trying to fetch new ones
+  List<AccessLog> _getCachedAccessLogs(int limit) {
     try {
-      return _cachedSubscriptions.where((s) => s.userId == userId).toList();
+      final localLogs = _offlineService.getRecentAccessLogs(limit);
+      final logs = _convertToAccessLogs(localLogs);
+
+      // Update notifiers
+      recentAccessLogsNotifier.value = logs;
+      _accessLogsStreamController.add(logs);
+
+      return logs;
     } catch (e) {
-      print('Error getting user subscriptions: $e');
+      print('CentralizedDataService: Error getting cached access logs - $e');
+      // Return empty list on error to avoid crashes
       return [];
     }
   }
 
-  /// Record smart access attempt with enhanced logging
+  /// Helper method to convert string to ReservationType
+  ReservationType _getReservationType(String? typeString) {
+    if (typeString == null) return ReservationType.unknown;
+
+    switch (typeString.toLowerCase()) {
+      case 'class':
+      case 'classbooking':
+        return ReservationType.timeBased;
+      case 'personal':
+      case 'personaltraining':
+        return ReservationType.serviceBased;
+      case 'event':
+        return ReservationType.group;
+      case 'facility':
+      case 'facilitybooking':
+        return ReservationType.timeBased;
+      case 'service':
+        return ReservationType.serviceBased;
+      default:
+        return ReservationType.unknown;
+    }
+  }
+
+  /// Get users with active access
+  Future<List<AppUser>> getUsersWithActiveAccess({
+    bool forceRefresh = false,
+  }) async {
+    if (forceRefresh) {
+      await refreshAllData();
+    }
+
+    return usersWithAccessNotifier.value;
+  }
+
+  /// Get user details by ID
+  Future<AppUser?> getUserById(String userId) async {
+    // First check in local cache
+    final cachedUsers = usersWithAccessNotifier.value;
+    final user = cachedUsers.where((u) => u.userId == userId).firstOrNull;
+
+    if (user != null) {
+      return user;
+    }
+
+    // Not found in cache, try to get from offline service
+    try {
+      final cachedUser =
+          _offlineService
+              .getAvailableUsers()
+              .where((u) => u.userId == userId)
+              .firstOrNull;
+
+      if (cachedUser != null) {
+        return AppUser(
+          userId: cachedUser.userId,
+          name: cachedUser.userName,
+          accessType: 'Unknown', // We'll determine this later
+        );
+      }
+    } catch (e) {
+      print('CentralizedDataService: Error getting cached user - $e');
+    }
+
+    // If online, we could try to fetch from the server here
+
+    return null;
+  }
+
+  /// Record a smart access attempt using offline-capable logic
   Future<Map<String, dynamic>> recordSmartAccess({
     required String userId,
     required String userName,
   }) async {
     try {
-      final result = await smartCheckUserAccess(userId);
-      final now = Timestamp.now();
-      final user = _auth.currentUser;
+      // Check if user has access based on cached data
+      final accessResult = await _offlineService.checkUserAccess(userId);
 
-      if (user == null) {
-        return {'success': false, 'message': 'Authentication error'};
-      }
-
-      // Create detailed access log with enhanced method field
-      final smartComment = result['smartComment'] as String? ?? '';
-      final reason = result['reason'] as String? ?? '';
-
-      final accessLog = AccessLog(
-        id: '', // Will be set by Firestore
-        userId: userId,
-        userName: userName,
-        timestamp: now,
-        status: result['hasAccess'] == true ? 'Granted' : 'Denied',
-        providerId: user.uid,
-        method: 'Smart Access Control - ${result['accessType'] ?? 'unknown'}',
-        denialReason:
-            result['hasAccess'] == true ? null : '$reason: $smartComment',
+      // Record the access attempt - using positional parameters
+      await _offlineService.recordAccessAttempt(
+        userId,
+        userName,
+        accessResult['hasAccess'] as bool,
+        accessResult['hasAccess'] as bool
+            ? null
+            : accessResult['reason'] as String?,
       );
 
-      // Save to Firestore using the existing method
-      final saveResult = await recordAccess(
-        userId: userId,
-        userName: userName,
-        status: result['hasAccess'] == true ? 'Granted' : 'Denied',
-        method: 'Smart Access Control - ${result['accessType'] ?? 'unknown'}',
-        denialReason:
-            result['hasAccess'] == true ? null : '$reason: $smartComment',
-      );
+      // Update the access logs notifier
+      final logs = _offlineService.getRecentAccessLogs(50);
+      recentAccessLogsNotifier.value = _convertToAccessLogs(logs);
 
-      print(
-        'SmartAccess: Recorded access attempt - ${result['hasAccess'] == true ? 'GRANTED' : 'DENIED'}',
-      );
-
-      // Merge the access result with save result
-      return {
-        ...result,
-        'recordSaved': saveResult['success'] == true,
-        'logId': saveResult['logId'],
-      };
+      return accessResult;
     } catch (e) {
-      print('Error recording smart access: $e');
+      print('CentralizedDataService: Error processing access - $e');
+
+      // Record failure - using positional parameters
+      await _offlineService.recordAccessAttempt(
+        userId,
+        userName,
+        false,
+        'System error: $e',
+      );
+
       return {
-        'success': false,
         'hasAccess': false,
-        'message': 'Failed to record access attempt',
-        'error': e.toString(),
+        'message': 'System error occurred',
+        'accessType': null,
+        'reason': 'System error: $e',
       };
     }
   }
 
-  /// Record access attempt
-  Future<Map<String, dynamic>> recordAccess({
+  /// Record an access attempt through the UI
+  Future<void> recordAccess({
     required String userId,
     required String userName,
     required String status,
-    String? method,
+    required String method,
     String? denialReason,
   }) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
     try {
-      final User? user = _auth.currentUser;
-      if (user == null) {
-        throw Exception('User not authenticated. Please log in to continue.');
+      // Create an instance of OfflineFirstAccessService to use its methods
+      final offlineFirstService = OfflineFirstAccessService();
+
+      // Ensure it's initialized
+      if (!offlineFirstService.isInitializedNotifier.value) {
+        await offlineFirstService.initialize();
       }
 
-      final providerId = user.uid;
-      final timestamp = Timestamp.now();
-
-      // Create a new AccessLog
-      final log = AccessLog(
+      // Record the access attempt with the correct named parameters
+      await offlineFirstService.recordAccessAttemptNamed(
         userId: userId,
         userName: userName,
-        providerId: providerId,
-        timestamp: timestamp,
-        status: status,
-        method: method ?? 'Manual',
+        granted: status == 'Granted',
         denialReason: denialReason,
+        method: method,
       );
 
-      // Save to Firestore
-      final docRef = FirebaseFirestore.instance.collection('accessLogs').doc();
-      await docRef.set(log.toMap());
+      // Update UI notifiers
+      final logs = _offlineService.getRecentAccessLogs(50);
+      recentAccessLogsNotifier.value = _convertToAccessLogs(logs);
 
-      // Update local cache and notify listeners
-      final updatedLog = log.copyWith(id: docRef.id);
-      _cachedAccessLogs.insert(0, updatedLog); // Add to beginning
-      if (_cachedAccessLogs.length > 50) {
-        _cachedAccessLogs.removeLast(); // Keep only the most recent 50
-      }
-
-      if (!_accessLogsStreamController.isClosed) {
-        _accessLogsStreamController.add(_cachedAccessLogs);
-      }
-
-      return {
-        'success': true,
-        'message': 'Access log recorded successfully',
-        'logId': docRef.id,
-      };
+      print(
+        'CentralizedDataService: Recorded access attempt for $userName ($status)',
+      );
     } catch (e) {
-      print("CentralizedDataService: Error recording access - $e");
-      return {
-        'success': false,
-        'error': e.toString(),
-        'message': 'Failed to record access attempt',
-      };
+      print('CentralizedDataService: Error recording access - $e');
+      errorNotifier.value = 'Error recording access: $e';
     }
   }
 
-  /// Get a specific user by ID, with option to force refresh
-  Future<AppUser?> getUserById(
-    String userId, {
-    bool forceRefresh = false,
-  }) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    if (_cachedUsers.containsKey(userId) && !forceRefresh) {
-      return _cachedUsers[userId];
+  /// Trigger manual sync of data
+  Future<bool> syncNow() async {
+    if (_connectivityService.statusNotifier.value != NetworkStatus.online) {
+      errorNotifier.value = 'Cannot sync - device is offline';
+      return false;
     }
 
     try {
-      final user = await _userListingService.getUser(userId);
-      if (user != null) {
-        _cachedUsers[userId] = user;
-      }
-      return user;
-    } catch (e) {
-      print("CentralizedDataService: Error getting user by ID - $e");
-      return null;
-    }
-  }
-
-  /// Cleanup resources when no longer needed
-  Future<void> dispose() async {
-    // Cancel all timers
-    _statusUpdateTimer?.cancel();
-    _debounceTimer?.cancel();
-
-    // Cancel stream subscriptions
-    _syncStatusSubscription?.cancel();
-
-    // Remove listeners
-    try {
-      SyncManager().syncStatusNotifier.removeListener(_onSyncStatusChanged);
-    } catch (e) {
-      print("CentralizedDataService: Error removing sync status listener: $e");
-    }
-
-    // Stop the automatic sync timer
-    try {
-      _accessControlRepository.stopAutomaticSync();
-    } catch (e) {
-      print("CentralizedDataService: Error stopping automatic sync: $e");
-    }
-
-    // Close stream controllers safely
-    if (!_accessLogsStreamController.isClosed) {
-      await _accessLogsStreamController.close();
-    }
-
-    if (!_usersStreamController.isClosed) {
-      await _usersStreamController.close();
-    }
-
-    if (!_reservationsSubject.isClosed) {
-      await _reservationsSubject.close();
-    }
-
-    if (!_subscriptionsSubject.isClosed) {
-      await _subscriptionsSubject.close();
-    }
-
-    // Clear cached data
-    _cachedUsers.clear();
-    _cachedAccessLogs.clear();
-    _cachedReservations.clear();
-    _cachedSubscriptions.clear();
-
-    // Reset state
-    _isInitialized = false;
-    _listenersStarted = false;
-    _isRefreshing = false;
-    _lastRefresh = null;
-  }
-
-  /// Revised refreshProviderData method - using refreshMobileAppData() instead
-  Future<bool> refreshProviderData(String providerId) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    try {
-      print("CentralizedDataService: Refreshing data for provider $providerId");
-
-      // Use the existing refreshMobileAppData method which updates all provider data
-      final success = await refreshMobileAppData();
+      final success = await _offlineService.performFullSync();
 
       if (success) {
-        // Specifically check for reservations/subscriptions with this provider ID
-        final reservations =
-            _cachedReservations
-                .where((res) => res.providerId == providerId)
-                .toList();
-
-        final subscriptions =
-            _cachedSubscriptions
-                .where((sub) => sub.providerId == providerId)
-                .toList();
-
-        print(
-          "CentralizedDataService: Refreshed ${reservations.length} reservations and ${subscriptions.length} subscriptions for provider $providerId",
-        );
+        // Reload data after sync
+        await _loadInitialData();
       }
 
       return success;
     } catch (e) {
-      print("CentralizedDataService: Error refreshing provider data - $e");
+      errorNotifier.value = 'Sync error: $e';
+      print('CentralizedDataService: Error during manual sync - $e');
       return false;
     }
   }
 
-  /// Add getUsersWithActiveAccess method
-  Future<List<AppUser>> getUsersWithActiveAccess() async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
+  /// Update subscription user names from user data
+  Future<List<Subscription>> _updateSubscriptionUserNames(
+    List<Subscription> subscriptions,
+  ) async {
+    // Create a list of updated subscriptions
+    final List<Subscription> updatedSubscriptions = [];
 
     try {
-      print("CentralizedDataService: Fetching users with active access");
-
-      // Get all users first
-      final allUsers = await getUsers();
-      final List<AppUser> usersWithAccess = [];
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-
-      // Check each user for active access
-      for (final user in allUsers) {
-        // First check if the user has active subscriptions in our cache
-        final hasActiveSubscription = _cachedSubscriptions.any(
-          (sub) =>
-              sub.userId == user.userId &&
-              sub.status == 'Active' &&
-              (sub.expiryDate == null || sub.expiryDate!.toDate().isAfter(now)),
-        );
-
-        // Then check if the user has a confirmed reservation for today
-        final hasConfirmedReservationToday = _cachedReservations.any((res) {
-          if (res.userId != user.userId) return false;
-
-          // Check if reservation is for today
-          final resDateObj = res.dateTime.toDate();
-          final resDate = DateTime(
-            resDateObj.year,
-            resDateObj.month,
-            resDateObj.day,
-          );
-          return resDate.isAtSameMomentAs(today) &&
-              (res.status == 'Confirmed' || res.status == 'Pending');
-        });
-
-        // If the user has either an active subscription or a confirmed reservation
-        if (hasActiveSubscription || hasConfirmedReservationToday) {
-          final accessType =
-              hasActiveSubscription ? 'Subscription' : 'Reservation';
-
-          // Use the user info to create an updated user with access info
-          final updatedUser = user.copyWith(
-            accessType: accessType,
-            lastCheck: now,
-          );
-
-          usersWithAccess.add(updatedUser);
-
-          // Also update our cache
-          _cachedUsers[user.userId] = updatedUser;
-        }
-      }
-
-      print(
-        "CentralizedDataService: Found ${usersWithAccess.length} users with active access",
-      );
-      return usersWithAccess;
-    } catch (e) {
-      print(
-        "CentralizedDataService: Error getting users with active access - $e",
-      );
-      return [];
-    }
-  }
-
-  /// Add refreshMobileAppData method if it was deleted
-  Future<bool> refreshMobileAppData() async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    try {
-      print(
-        "CentralizedDataService: Starting comprehensive mobile data refresh",
-      );
-
-      isLoadingNotifier.value = true;
-      errorNotifier.value = null;
-
-      final result = await _accessControlRepository.refreshMobileAppData();
-
-      if (result) {
-        // If successful, refresh our local data
-        print(
-          "CentralizedDataService: Mobile data refresh successful, updating cached data",
-        );
-        await _refreshAllDataInternal();
-      } else {
-        print(
-          "CentralizedDataService: Mobile data refresh returned no results",
-        );
-      }
-
-      isLoadingNotifier.value = false;
-      return result;
-    } catch (e) {
-      print("CentralizedDataService: Error refreshing mobile app data - $e");
-      errorNotifier.value =
-          "Failed to refresh mobile app data: ${e.toString()}";
-      isLoadingNotifier.value = false;
-      return false;
-    }
-  }
-
-  /// Add refreshUserData method if it was deleted
-  Future<bool> refreshUserData(String userId) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    try {
-      print(
-        "CentralizedDataService: Starting focused refresh for user $userId",
-      );
-
-      // Use access control repository to refresh specific user data
-      final result = await _accessControlRepository.refreshUserData(userId);
-
-      if (result) {
-        // If this user's data was refreshed, update our cache for this user
-        print(
-          "CentralizedDataService: User data refresh successful, updating user data",
-        );
-
-        // Instead of refreshing all data, just update this specific user
+      for (final subscription in subscriptions) {
         try {
-          final user = await _userListingService.getUser(userId);
-          if (user != null) {
-            _cachedUsers[userId] = user;
+          final user = await getUserById(subscription.userId);
 
-            // Only add to stream if it's still open
-            if (!_usersStreamController.isClosed) {
-              _usersStreamController.add(_cachedUsers.values.toList());
-            }
+          if (user != null) {
+            // Create a new subscription with updated userName
+            updatedSubscriptions.add(
+              subscription.copyWith(userName: user.name),
+            );
+          } else {
+            // Keep original if user not found
+            updatedSubscriptions.add(subscription);
           }
         } catch (e) {
+          // If error occurs for this specific subscription, keep original
           print(
-            "CentralizedDataService: Error updating user data after refresh - $e",
+            'CentralizedDataService: Error updating subscription user name: $e',
           );
+          updatedSubscriptions.add(subscription);
         }
-      } else {
-        print("CentralizedDataService: User data refresh returned no results");
       }
 
-      return result;
+      return updatedSubscriptions;
     } catch (e) {
-      print("CentralizedDataService: Error refreshing user data - $e");
-      errorNotifier.value = "Failed to refresh user data: ${e.toString()}";
-      return false;
+      print(
+        'CentralizedDataService: Error updating subscription user names: $e',
+      );
+      // Return original subscriptions if overall process fails
+      return subscriptions;
     }
   }
 
-  /// Check user access status to determine if they should be granted access
-  Future<Map<String, dynamic>> checkUserAccess(String userId) async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
+  /// Get users with optional refresh
+  Future<List<AppUser>> getUsers({bool forceRefresh = false}) async {
+    if (forceRefresh) {
+      await refreshAllData();
     }
 
     try {
-      // Use the existing smartCheckUserAccess method
-      final result = await smartCheckUserAccess(userId);
+      // Return cached users
+      final users = usersWithAccessNotifier.value;
 
-      // Get user info for better display in the UI
-      final user = await getUserById(userId);
+      // Update stream
+      _usersStreamController.add(users);
 
-      // Return result with additional user data for UI
-      return {
-        'success': true,
-        'hasAccess': result['hasAccess'] == true,
-        'accessType': result['accessType'],
-        'message': result['message'],
-        'userName': user?.name ?? 'Unknown User',
-        'userId': userId,
-        'reservation': result['reservation'],
-        'subscription': result['subscription'],
-        // Additional fields for subscription/reservation if appropriate
-        'planName':
-            result['accessType'] == 'subscription' &&
-                    result['subscription'] != null
-                ? result['subscription']['planName']
-                : null,
-        'serviceName':
-            result['accessType'] == 'reservation' &&
-                    result['reservation'] != null
-                ? result['reservation']['serviceName']
-                : null,
-        'reason': result['hasAccess'] != true ? result['message'] : null,
-      };
+      return users;
     } catch (e) {
-      print("CentralizedDataService: Error in checkUserAccess - $e");
-      return {
-        'success': false,
-        'hasAccess': false,
-        'accessType': 'error',
-        'message': 'Error checking access: ${e.toString()}',
-        'reason': 'Technical error: ${e.toString()}',
-      };
-    }
-  }
-
-  /// Trigger an immediate sync of all data
-  Future<bool> syncNow() async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    try {
-      // Trigger mobile app data refresh through AccessControlRepository
-      final success = await refreshMobileAppData();
-
-      if (success) {
-        // Further refresh local app data to ensure consistency
-        await _refreshAllDataInternal();
-      }
-
-      return success;
-    } catch (e) {
-      print("CentralizedDataService: Error in syncNow - $e");
-      return false;
-    }
-  }
-
-  /// Comprehensive subscription fetch with error handling
-  Future<List<Subscription>> fetchSubscriptions() async {
-    if (!_isInitialized) {
-      throw Exception(
-        'CentralizedDataService not initialized. Call init() first.',
-      );
-    }
-
-    final User? user = _auth.currentUser;
-    if (user == null) {
-      print("CentralizedDataService: Cannot fetch - User not authenticated");
+      print('CentralizedDataService: Error getting users - $e');
+      errorNotifier.value = 'Error loading users: $e';
       return [];
     }
+  }
 
-    final String providerId = user.uid;
-    print("CentralizedDataService: Starting comprehensive subscription fetch");
+  /// Refresh mobile app data
+  Future<bool> refreshMobileAppData() async {
+    if (isLoadingNotifier.value) {
+      print('CentralizedDataService: Already refreshing data, skipping');
+      return false;
+    }
+
+    // Use a refresh timestamp to avoid refreshing too frequently
+    final now = DateTime.now();
+    if (_lastRefresh != null &&
+        now.difference(_lastRefresh!) < _refreshCooldown) {
+      print('CentralizedDataService: Refresh called too soon, skipping');
+      return false;
+    }
+
+    _lastRefresh = now;
+    isLoadingNotifier.value = true;
+    _isRefreshing = true;
 
     try {
-      final Map<String, Subscription> subscriptionMap = {};
+      print(
+        'CentralizedDataService: Starting comprehensive mobile app data refresh',
+      );
 
-      // Method 1: Try collection group query (may fail due to missing index)
-      try {
-        print(
-          "CentralizedDataService: Querying collection group 'subscriptions' for providerId $providerId",
-        );
-
-        final subscriptionsQuery =
-            await _firestore
-                .collectionGroup('subscriptions')
-                .where('providerId', isEqualTo: providerId)
-                .where('status', isEqualTo: 'Active')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${subscriptionsQuery.docs.length} active subscriptions across all users via collectionGroup",
-        );
-
-        for (final doc in subscriptionsQuery.docs) {
-          try {
-            final data = doc.data();
-            final subscription = Subscription.fromMap(doc.id, data);
-            subscriptionMap[doc.id] = subscription;
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing subscription ${doc.id}: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Collection group query failed (likely missing index): $e",
-        );
-        // Continue with alternative methods
+      // First check if we're online
+      final isOnline =
+          _connectivityService.statusNotifier.value == NetworkStatus.online;
+      if (!isOnline) {
+        print('CentralizedDataService: Cannot refresh - device is offline');
+        errorNotifier.value = 'Cannot refresh - device is offline';
+        return false;
       }
 
-      // Method 2: Query legacy subscriptions collection (fallback)
-      try {
-        print(
-          "CentralizedDataService: Querying global subscriptions collection for active subscriptions",
-        );
+      // 1. First sync the basic data
+      final syncSuccess = await _offlineService.performFullSync();
 
-        final globalSubsQuery =
-            await _firestore
-                .collection("subscriptions")
-                .where("providerId", isEqualTo: providerId)
-                .where("status", isEqualTo: "Active")
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${globalSubsQuery.docs.length} subscriptions in global collection",
-        );
-
-        for (final doc in globalSubsQuery.docs) {
-          try {
-            final subscription = Subscription.fromSnapshot(doc);
-            if (!subscriptionMap.containsKey(subscription.id)) {
-              subscriptionMap[subscription.id] = subscription;
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing global subscription ${doc.id}: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error querying global subscriptions: $e",
-        );
-        // Continue with provider-specific method
+      // 2. Force refresh reservations and subscriptions
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        throw Exception('User not authenticated');
       }
 
-      // Method 3: Get subscriptions from provider's collections
-      try {
-        print(
-          "CentralizedDataService: Fetching active subscriptions from serviceProviders/$providerId/activeSubscriptions",
-        );
-
-        final activeSubsSnapshot =
-            await _firestore
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('activeSubscriptions')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${activeSubsSnapshot.docs.length} active subscription references",
-        );
-
-        for (final doc in activeSubsSnapshot.docs) {
-          try {
-            final data = doc.data();
-            final subscriptionId = data['subscriptionId'] as String?;
-            final userId = data['userId'] as String?;
-
-            if (subscriptionId == null || userId == null) {
-              // Try to treat the document as a direct subscription
-              if (!subscriptionMap.containsKey(doc.id)) {
-                final subscription = Subscription.fromMap(doc.id, data);
-                subscriptionMap[doc.id] = subscription;
-              }
-              continue;
-            }
-
-            // If we already have this subscription, skip
-            if (subscriptionMap.containsKey(subscriptionId)) continue;
-
-            // Fetch full subscription from endUsers collection
-            final subscriptionDoc =
-                await _firestore
-                    .collection('endUsers')
-                    .doc(userId)
-                    .collection('subscriptions')
-                    .doc(subscriptionId)
-                    .get();
-
-            if (subscriptionDoc.exists) {
-              final subscriptionData = subscriptionDoc.data();
-              if (subscriptionData != null) {
-                final subscription = Subscription.fromMap(
-                  subscriptionId,
-                  subscriptionData,
-                );
-                subscriptionMap[subscriptionId] = subscription;
-              }
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing active subscription reference ${doc.id}: $e",
-            );
-          }
-        }
-
-        // Also check expired subscriptions for completeness
-        print(
-          "CentralizedDataService: Fetching expired subscriptions from serviceProviders/$providerId/expiredSubscriptions",
-        );
-
-        final expiredSubsSnapshot =
-            await _firestore
-                .collection('serviceProviders')
-                .doc(providerId)
-                .collection('expiredSubscriptions')
-                .get();
-
-        print(
-          "CentralizedDataService: Found ${expiredSubsSnapshot.docs.length} expired subscription references",
-        );
-
-        // Process expired subscriptions (they might still be relevant for grace periods)
-        for (final doc in expiredSubsSnapshot.docs) {
-          try {
-            final data = doc.data();
-            final subscriptionId = data['subscriptionId'] as String?;
-            final userId = data['userId'] as String?;
-
-            if (subscriptionId == null || userId == null) {
-              continue;
-            }
-
-            // If we already have this subscription, skip
-            if (subscriptionMap.containsKey(subscriptionId)) continue;
-
-            // Fetch full subscription from endUsers collection
-            final subscriptionDoc =
-                await _firestore
-                    .collection('endUsers')
-                    .doc(userId)
-                    .collection('subscriptions')
-                    .doc(subscriptionId)
-                    .get();
-
-            if (subscriptionDoc.exists) {
-              final subscriptionData = subscriptionDoc.data();
-              if (subscriptionData != null) {
-                final subscription = Subscription.fromMap(
-                  subscriptionId,
-                  subscriptionData,
-                );
-                // Only include if expired recently (within 24 hours)
-                if (subscription.expiryDate != null) {
-                  final expiredDate = subscription.expiryDate!.toDate();
-                  final now = DateTime.now();
-                  if (expiredDate.isAfter(
-                    now.subtract(const Duration(hours: 24)),
-                  )) {
-                    subscriptionMap[subscriptionId] = subscription;
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            print(
-              "CentralizedDataService: Error processing expired subscription reference ${doc.id}: $e",
-            );
-          }
-        }
-      } catch (e) {
-        print(
-          "CentralizedDataService: Error fetching provider subscriptions: $e",
-        );
-      }
-
-      final allSubscriptions = subscriptionMap.values.toList();
-
-      // Sort by expiry date (active first, then by expiry date)
-      allSubscriptions.sort((a, b) {
-        final now = DateTime.now();
-        final aActive = a.expiryDate?.toDate().isAfter(now) ?? false;
-        final bActive = b.expiryDate?.toDate().isAfter(now) ?? false;
-
-        if (aActive && !bActive) return -1;
-        if (!aActive && bActive) return 1;
-
-        // Both active or both expired, sort by expiry date
-        if (a.expiryDate == null && b.expiryDate == null) return 0;
-        if (a.expiryDate == null) return 1;
-        if (b.expiryDate == null) return -1;
-        return b.expiryDate!.compareTo(a.expiryDate!);
+      // 3. Perform parallel refreshes of different data types
+      final results = await Future.wait([
+        getReservations(forceRefresh: true),
+        getSubscriptions(forceRefresh: true),
+        getRecentAccessLogs(forceRefresh: true, limit: 50),
+        _refreshUsers(providerId),
+      ], eagerError: false).catchError((e) {
+        print('CentralizedDataService: Error in parallel refresh: $e');
+        // Continue anyway
+        return [[], [], [], []];
       });
 
       print(
-        "CentralizedDataService: Loaded total of ${allSubscriptions.length} active unique subscriptions",
+        'CentralizedDataService: Refreshed ${results[0].length} reservations',
+      );
+      print(
+        'CentralizedDataService: Refreshed ${results[1].length} subscriptions',
+      );
+      print(
+        'CentralizedDataService: Refreshed ${results[2].length} access logs',
+      );
+      print('CentralizedDataService: Refreshed ${results[3].length} users');
+
+      // 4. Always ensure real-time listeners are active if we're online
+      if (isOnline && !_listenersStarted) {
+        await startRealTimeListeners();
+      }
+
+      // 5. Reload initial data to ensure everything is in sync
+      await _loadInitialData();
+
+      print(
+        'CentralizedDataService: Mobile app data refresh completed successfully',
+      );
+      return true;
+    } catch (e) {
+      print('CentralizedDataService: Error refreshing mobile app data - $e');
+      errorNotifier.value = 'Error refreshing mobile app data: $e';
+      return false;
+    } finally {
+      isLoadingNotifier.value = false;
+      _isRefreshing = false;
+    }
+  }
+
+  /// Refresh users from Firestore
+  Future<List<AppUser>> _refreshUsers(String providerId) async {
+    try {
+      print('CentralizedDataService: Refreshing users data');
+
+      // Use UserListingService to get updated user data
+      final users = await _userListingService.getAllUsers(
+        limit: 100, // Get a larger number of users
       );
 
-      return allSubscriptions;
+      // Cache the users
+      for (final user in users) {
+        await _cacheService.ensureUserInCache(user.userId, user.name);
+      }
+
+      // Update notifiers
+      usersWithAccessNotifier.value = users;
+      _usersStreamController.add(users);
+
+      return users;
     } catch (e) {
-      print("CentralizedDataService: Error in fetchSubscriptions: $e");
+      print('CentralizedDataService: Error refreshing users - $e');
       return [];
     }
   }
 
-  /// Force refresh all app data (public method) - WITH DEBOUNCING
-  Future<void> refreshAllData() async {
+  /// Dispose resources
+  void dispose() {
+    _offlineService.offlineStatusNotifier.removeListener(
+      _onOfflineStatusChanged,
+    );
+
+    // Close streams
+    _accessLogsStreamController.close();
+    _usersStreamController.close();
+    _reservationsSubject.close();
+    _subscriptionsSubject.close();
+
+    // Dispose notifiers
+    isInitializedNotifier.dispose();
+    isLoadingNotifier.dispose();
+    errorNotifier.dispose();
+    offlineStatusNotifier.dispose();
+    recentAccessLogsNotifier.dispose();
+    usersWithAccessNotifier.dispose();
+    activeSubscriptionsNotifier.dispose();
+    upcomingReservationsNotifier.dispose();
+  }
+
+  /// Get the current user access status
+  Future<Map<String, dynamic>> checkUserAccess(String userId) async {
     try {
-      isLoadingNotifier.value = true;
-      errorNotifier.value = null;
-
-      // Verify authentication before proceeding
-      _checkAuthentication();
-
-      await _refreshAllDataInternal();
-
-      isLoadingNotifier.value = false;
+      return await _offlineService.checkUserAccess(userId);
     } catch (e) {
-      print("CentralizedDataService: Error refreshing data - $e");
-      errorNotifier.value = "Failed to refresh data: ${e.toString()}";
-      isLoadingNotifier.value = false;
+      print('CentralizedDataService: Error checking user access - $e');
+      return {
+        'hasAccess': false,
+        'message': 'Error checking access: $e',
+        'accessType': null,
+        'reason': 'System error',
+      };
+    }
+  }
+
+  /// Start real-time listeners for data changes
+  Future<void> startRealTimeListeners() async {
+    // If we already started listeners, don't start them again
+    if (_listenersStarted) {
+      print('CentralizedDataService: Listeners already started, skipping');
+      return;
+    }
+
+    // Check for initialization but don't trigger init() to avoid circular dependency
+    if (!isInitializedNotifier.value && !_isInitialized) {
+      print('CentralizedDataService: Cannot start listeners - not initialized');
+      return;
+    }
+
+    try {
+      // Setup listeners for online data changes if we're online
+      if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
+        final User? user = _auth.currentUser;
+        final String providerId = user?.uid ?? '';
+
+        if (providerId.isEmpty) {
+          print(
+            'CentralizedDataService: Cannot start listeners - no authenticated user',
+          );
+          return;
+        }
+
+        print(
+          'CentralizedDataService: Starting real-time listeners for provider $providerId',
+        );
+
+        // Set up listeners from Firestore
+        _listenToReservations(providerId);
+        _listenToSubscriptions(providerId);
+        _listenToAccessLogs(providerId);
+
+        // Mark listeners as started
+        _listenersStarted = true;
+
+        // After listeners are started, force an initial refresh of data
+        if (!_isRefreshing) {
+          // Use the new method to force data refresh
+          forceDataRefresh();
+        }
+      } else {
+        print(
+          'CentralizedDataService: Device is offline, skipping real-time listeners',
+        );
+      }
+    } catch (e) {
+      print('CentralizedDataService: Error starting real-time listeners - $e');
+      errorNotifier.value = 'Error setting up data listeners: $e';
+    }
+  }
+
+  /// Listen to reservation changes
+  void _listenToReservations(String providerId) {
+    try {
+      // Setup Firestore listener for changes
+      final reservationsRef = _firestore
+          .collection('serviceProviders')
+          .doc(providerId)
+          .collection('upcomingReservations');
+
+      reservationsRef.snapshots().listen(
+        (snapshot) async {
+          print(
+            'CentralizedDataService: Reservation changes detected, refreshing data',
+          );
+          // Force refresh of reservations
+          await getReservations(forceRefresh: true);
+        },
+        onError: (e) {
+          print('CentralizedDataService: Error in reservation listener - $e');
+        },
+      );
+    } catch (e) {
+      print(
+        'CentralizedDataService: Failed to start reservation listener - $e',
+      );
+    }
+  }
+
+  /// Listen to subscription changes
+  void _listenToSubscriptions(String providerId) {
+    try {
+      // Setup Firestore listener for changes
+      final subscriptionsRef = _firestore
+          .collection('serviceProviders')
+          .doc(providerId)
+          .collection('activeSubscriptions');
+
+      subscriptionsRef.snapshots().listen(
+        (snapshot) async {
+          print(
+            'CentralizedDataService: Subscription changes detected, refreshing data',
+          );
+          // Force refresh of subscriptions
+          await getSubscriptions(forceRefresh: true);
+        },
+        onError: (e) {
+          print('CentralizedDataService: Error in subscription listener - $e');
+        },
+      );
+    } catch (e) {
+      print(
+        'CentralizedDataService: Failed to start subscription listener - $e',
+      );
+    }
+  }
+
+  /// Listen to access log changes
+  void _listenToAccessLogs(String providerId) {
+    try {
+      // Setup Firestore listener for changes
+      final accessLogsRef = _firestore
+          .collection('serviceProviders')
+          .doc(providerId)
+          .collection('accessLogs')
+          .orderBy('timestamp', descending: true)
+          .limit(50);
+
+      accessLogsRef.snapshots().listen(
+        (snapshot) async {
+          print(
+            'CentralizedDataService: Access logs changes detected, refreshing data',
+          );
+          // Force refresh of access logs
+          await getRecentAccessLogs(forceRefresh: true, limit: 50);
+        },
+        onError: (e) {
+          print('CentralizedDataService: Error in access logs listener - $e');
+        },
+      );
+    } catch (e) {
+      print(
+        'CentralizedDataService: Failed to start access logs listener - $e',
+      );
+    }
+  }
+
+  /// Helper method to ensure a user is in the cache
+  Future<void> ensureUserInCache(String userId, String? userName) async {
+    try {
+      // Initialize cache service if not already initialized
+      await _cacheService.init();
+
+      // Use the cache service's method
+      await _cacheService.ensureUserInCache(userId, userName);
+    } catch (e) {
+      print('CentralizedDataService: Error ensuring user in cache - $e');
+    }
+  }
+
+  /// Force refresh of all data, regardless of initialization state
+  Future<void> forceDataRefresh() async {
+    if (_isRefreshing) {
+      print('CentralizedDataService: Already refreshing data, skipping');
+      return;
+    }
+
+    _isRefreshing = true;
+
+    try {
+      print('CentralizedDataService: Forcing data refresh...');
+
+      if (_auth.currentUser == null) {
+        print(
+          'CentralizedDataService: No authenticated user, skipping refresh',
+        );
+        return;
+      }
+
+      final providerId = _auth.currentUser!.uid;
+      print('CentralizedDataService: Refreshing data for provider $providerId');
+
+      // Force refresh users first
+      try {
+        print('CentralizedDataService: Refreshing users data...');
+        final users = await _userListingService.getAllUsers(limit: 100);
+        print('CentralizedDataService: Found ${users.length} users');
+
+        // Update notifiers
+        usersWithAccessNotifier.value = users;
+        _usersStreamController.add(users);
+      } catch (e) {
+        print('CentralizedDataService: Error refreshing users: $e');
+      }
+
+      // Force refresh of all data types, ignoring errors
+      try {
+        print('CentralizedDataService: Refreshing reservations...');
+        await getReservations(forceRefresh: true);
+      } catch (e) {
+        print('CentralizedDataService: Error refreshing reservations: $e');
+      }
+
+      try {
+        print('CentralizedDataService: Refreshing subscriptions...');
+        await getSubscriptions(forceRefresh: true);
+      } catch (e) {
+        print('CentralizedDataService: Error refreshing subscriptions: $e');
+      }
+
+      try {
+        print('CentralizedDataService: Refreshing access logs...');
+        await getRecentAccessLogs(forceRefresh: true, limit: 50);
+      } catch (e) {
+        print('CentralizedDataService: Error refreshing access logs: $e');
+      }
+
+      print('CentralizedDataService: Force refresh completed');
+    } catch (e) {
+      print('CentralizedDataService: Error during force refresh: $e');
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  /// Get reservations from cache
+  Future<List<Reservation>> _getCachedReservations() async {
+    try {
+      print('CentralizedDataService: Getting reservations from cache');
+
+      // Get the current value from the BehaviorSubject, which should have the latest data
+      final List<Reservation> reservations = _reservationsSubject.value;
+
+      if (reservations.isEmpty) {
+        print('CentralizedDataService: No cached reservations found in stream');
+        // As fallback, get from _offlineService if available
+        try {
+          final cachedData = _offlineService.getUpcomingReservations();
+          print(
+            'CentralizedDataService: Found ${cachedData.length} offline reservations',
+          );
+          return _convertToReservations(cachedData);
+        } catch (e) {
+          print(
+            'CentralizedDataService: Error getting offline reservations: $e',
+          );
+          return [];
+        }
+      } else {
+        print(
+          'CentralizedDataService: Found ${reservations.length} cached reservations in stream',
+        );
+        return reservations;
+      }
+    } catch (e) {
+      print('CentralizedDataService: Error getting cached reservations: $e');
+      return [];
     }
   }
 }

@@ -15,6 +15,9 @@ enum UserType {
 
   /// User who has both reservations and subscriptions
   both,
+
+  /// User with access logs only
+  accessOnly,
 }
 
 /// Enum representing the type of record (reservation or subscription)
@@ -146,6 +149,8 @@ class AppUser extends Equatable {
         return UserType.subscribed;
       case 'both':
         return UserType.both;
+      case 'accessonly':
+        return UserType.accessOnly;
       default:
         return null;
     }

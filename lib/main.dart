@@ -15,6 +15,7 @@ import 'package:timezone/data/latest_all.dart'
     as tz; // Keep for setup in splash
 import 'package:timezone/timezone.dart' as tz; // Keep for setup in splash
 import 'package:connectivity_plus/connectivity_plus.dart'; // Import Connectivity package
+import 'package:hive/hive.dart'; // Add Hive import
 
 // Import project specific files (Adjust paths as necessary)
 // Core Services & Widgets
@@ -28,6 +29,7 @@ import 'package:shamil_web_app/core/utils/hive_cleanup.dart'; // Import the clea
 // Feature Services
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
+import 'package:shamil_web_app/features/access_control/data/local_cache_models.dart'; // Import for Hive adapters
 
 // BLoCs
 import 'package:shamil_web_app/features/auth/views/bloc/service_provider_bloc.dart';
@@ -44,6 +46,9 @@ import 'presentation/bloc/access_control/access_control_bloc.dart';
 
 // Import the new sliding sync indicator
 import 'package:shamil_web_app/core/widgets/sliding_sync_indicator.dart';
+
+// Import the necessary classes
+import 'package:shamil_web_app/data/datasources/access_control_local_datasource.dart';
 
 // Define a global instance of the AccessPointBloc for global access
 AccessPointBloc? _globalAccessPointBloc;
@@ -81,6 +86,36 @@ Future<void> main() async {
     // Continue anyway as we'll initialize a fresh database
   }
 
+  // Register Hive adapters early to prevent "Cannot write, unknown type" errors
+  try {
+    print("main: Registering Hive adapters");
+
+    if (!Hive.isAdapterRegistered(cachedUserTypeId)) {
+      Hive.registerAdapter(CachedUserAdapter());
+      print("main: Registered CachedUserAdapter");
+    }
+
+    if (!Hive.isAdapterRegistered(cachedSubscriptionTypeId)) {
+      Hive.registerAdapter(CachedSubscriptionAdapter());
+      print("main: Registered CachedSubscriptionAdapter");
+    }
+
+    if (!Hive.isAdapterRegistered(cachedReservationTypeId)) {
+      Hive.registerAdapter(CachedReservationAdapter());
+      print("main: Registered CachedReservationAdapter");
+    }
+
+    if (!Hive.isAdapterRegistered(localAccessLogTypeId)) {
+      Hive.registerAdapter(LocalAccessLogAdapter());
+      print("main: Registered LocalAccessLogAdapter");
+    }
+
+    print("main: Hive adapters registered successfully");
+  } catch (e) {
+    print("main: Error registering Hive adapters: $e");
+    // Continue anyway and let the app handle this later
+  }
+
   // Initialize Firebase with the correct options
   try {
     await Firebase.initializeApp(
@@ -109,6 +144,16 @@ Future<void> main() async {
     } catch (e) {
       print("main: Failed to create Connectivity directly: $e");
     }
+  }
+
+  // Explicitly initialize the AccessControlLocalDataSource to prevent "not initialized" errors
+  try {
+    print("main: Initializing AccessControlLocalDataSource");
+    final localDataSource = AccessControlLocalDataSourceImpl();
+    await localDataSource.initialize();
+    print("main: AccessControlLocalDataSource initialized successfully");
+  } catch (e) {
+    print("main: Error initializing AccessControlLocalDataSource: $e");
   }
 
   // Run the application, starting with the SplashScreenApp

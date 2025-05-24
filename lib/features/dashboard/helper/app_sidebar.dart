@@ -1,6 +1,6 @@
 /// File: lib/features/dashboard/widgets/app_sidebar.dart /// <-- Assuming correct path is 'widgets'
 /// --- Defines the main application sidebar navigation widget ---
-/// --- UPDATED: Constrained width of leading/trailing content ---
+/// --- UPDATED: Now collapsible with modern design ---
 /// --- UPDATED: Use CachedNetworkImage ---
 library;
 
@@ -16,26 +16,26 @@ import 'package:shamil_web_app/features/dashboard/widgets/sync_status_indicator.
 // Use project name from user-provided code
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
-import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
+import 'package:shamil_web_app/features/access_control/service/com_port_device_service.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'; // For ServiceProviderModel & PricingModel
 // Import NFC Service for Enum
 // *** Ensure this path is correct ***
 
-class AppSidebar extends StatelessWidget {
+class AppSidebar extends StatefulWidget {
   final int selectedIndex;
-  final List<Map<String, dynamic>>
-  destinations; // Already filtered destinations
+  final List<Map<String, dynamic>> destinations;
   final List<Map<String, dynamic>> footerDestinations;
-  final ValueChanged<int> onDestinationSelected; // Callback for main items
-  final ValueChanged<int> onFooterItemSelected; // Callback for footer items
-  final ServiceProviderModel providerInfo; // Pass provider info for header
-  final ValueNotifier<SerialPortConnectionStatus>
-  nfcStatusNotifier; // Keep NFC status
+  final ValueChanged<int> onDestinationSelected;
+  final ValueChanged<int> onFooterItemSelected;
+  final ServiceProviderModel providerInfo;
 
-  // Define sidebar width as a constant or variable for consistency
-  final double extendedWidth = 240.0;
+  // Optional parameter to control initial collapsed state
+  final bool initiallyCollapsed;
 
-  // Added const constructor
+  // Define sidebar widths as constants
+  static const double extendedWidth = 240.0;
+  static const double collapsedWidth = 70.0;
+
   const AppSidebar({
     super.key,
     required this.selectedIndex,
@@ -44,8 +44,77 @@ class AppSidebar extends StatelessWidget {
     required this.onDestinationSelected,
     required this.onFooterItemSelected,
     required this.providerInfo,
-    required this.nfcStatusNotifier, // Keep NFC status notifier
+    this.initiallyCollapsed = false,
   });
+
+  @override
+  State<AppSidebar> createState() => _AppSidebarState();
+}
+
+class _AppSidebarState extends State<AppSidebar>
+    with SingleTickerProviderStateMixin {
+  // Controller for the collapse/expand animation
+  late AnimationController _animationController;
+  late Animation<double> _widthAnimation;
+
+  // Flag to track collapsed state
+  bool _isCollapsed = false;
+
+  // Access device service singleton
+  final ComPortDeviceService _comPortService = ComPortDeviceService();
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Initialize with the provided state
+    _isCollapsed = widget.initiallyCollapsed;
+
+    // Setup animation controller
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    // Initialize at correct position
+    if (_isCollapsed) {
+      _animationController.value = 1.0;
+    }
+
+    // Setup animation for width
+    _widthAnimation = Tween<double>(
+      begin: AppSidebar.extendedWidth,
+      end: AppSidebar.collapsedWidth,
+    ).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: Curves.easeInOutQuart,
+      ),
+    );
+
+    // Listen for width changes to rebuild
+    _animationController.addListener(() {
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  // Toggle collapsed state
+  void _toggleCollapsed() {
+    setState(() {
+      _isCollapsed = !_isCollapsed;
+      if (_isCollapsed) {
+        _animationController.forward();
+      } else {
+        _animationController.reverse();
+      }
+    });
+  }
 
   // Helper for building user avatars
   Widget _buildUserAvatar(String initial, Color color) {
@@ -63,291 +132,493 @@ class AppSidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     // Determine display name
     final String displayName =
-        providerInfo.businessName.isNotEmpty
-            ? providerInfo.businessName
-            : providerInfo.name.isNotEmpty
-            ? providerInfo.name
+        widget.providerInfo.businessName.isNotEmpty
+            ? widget.providerInfo.businessName
+            : widget.providerInfo.name.isNotEmpty
+            ? widget.providerInfo.name
             : "Admin";
 
     // Determine initials for avatar fallback
     final String initials =
         displayName.isNotEmpty ? displayName[0].toUpperCase() : "?";
 
-    return NavigationRail(
-      selectedIndex: selectedIndex,
-      onDestinationSelected: onDestinationSelected,
-      labelType:
-          NavigationRailLabelType
-              .none, // Use none when extended is true for cleaner look
-      backgroundColor: AppColors.white, // Sidebar background
-      indicatorColor: AppColors.primaryColor.withOpacity(
-        0.1,
-      ), // Background for selected item
-      // Added const
-      selectedIconTheme: const IconThemeData(
-        color: AppColors.primaryColor,
-      ), // Color for selected icon
-      unselectedIconTheme: IconThemeData(
-        color: AppColors.secondaryColor.withOpacity(0.7),
-      ), // Color for unselected icons
-      selectedLabelTextStyle: getbodyStyle(
-        color: AppColors.primaryColor,
-        fontWeight: FontWeight.bold,
-      ), // Style for selected label
-      unselectedLabelTextStyle: getbodyStyle(
-        color: AppColors.secondaryColor,
-      ), // Style for unselected label
-      minExtendedWidth: extendedWidth, // Use variable
-      useIndicator: true, // Show the indicator background for selected item
-      extended: true, // Keep the rail extended to show labels and header
-      // --- Header (Logo/Title) ---
-      leading: ConstrainedBox(
-        // *** FIXED: Constrain the width ***
-        constraints: BoxConstraints(maxWidth: extendedWidth),
-        child: Padding(
-          // Added const
-          padding: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
+    return AnimatedBuilder(
+      animation: _animationController,
+      builder: (context, child) {
+        return Container(
+          width: _widthAnimation.value,
+          color: AppColors.white,
+          height: double.infinity,
+          child: Column(
             children: [
-              // Provider Logo or Initials
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  color: AppColors.primaryColor.withOpacity(
-                    0.1,
-                  ), // Background for logo area
-                  child:
-                      (providerInfo.logoUrl != null &&
-                              providerInfo.logoUrl!.isNotEmpty)
-                          // *** USE CachedNetworkImage ***
-                          ? CachedNetworkImage(
-                            imageUrl: providerInfo.logoUrl!,
-                            fit: BoxFit.cover,
-                            width: 36,
-                            height: 36,
-                            placeholder:
-                                (context, url) => Center(
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppColors.primaryColor.withOpacity(
-                                      0.5,
-                                    ),
-                                  ),
-                                ),
-                            errorWidget:
-                                (context, url, error) => Center(
-                                  child: Text(
-                                    initials,
-                                    style: getTitleStyle(
-                                      color: AppColors.primaryColor,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                          )
-                          // Show initials if no logo URL is provided
-                          : Center(
-                            child: Text(
-                              initials,
-                              style: getTitleStyle(
-                                color: AppColors.primaryColor,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
+              // Header with logo and collapse button
+              _buildHeader(displayName, initials),
+
+              // Toggle button
+              _buildCollapseToggle(),
+
+              // Main navigation items
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      // Main navigation destinations
+                      ..._buildDestinations(),
+                    ],
+                  ),
                 ),
               ),
-              // Added const
-              const SizedBox(width: 12),
-              // Provider Name - Use Expanded within the constrained SizedBox
-              Expanded(
-                child: Text(
-                  displayName,
-                  style: getTitleStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+
+              // Footer with device status and settings
+              _buildFooter(),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Build header with logo and business name
+  Widget _buildHeader(String displayName, String initials) {
+    return Container(
+      height: 70,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Logo/avatar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 36,
+              height: 36,
+              color: AppColors.primaryColor.withOpacity(0.1),
+              child:
+                  (widget.providerInfo.logoUrl != null &&
+                          widget.providerInfo.logoUrl!.isNotEmpty)
+                      ? CachedNetworkImage(
+                        imageUrl: widget.providerInfo.logoUrl!,
+                        fit: BoxFit.cover,
+                        width: 36,
+                        height: 36,
+                        placeholder:
+                            (context, url) => Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primaryColor.withOpacity(0.5),
+                              ),
+                            ),
+                        errorWidget:
+                            (context, url, error) => Center(
+                              child: Text(
+                                initials,
+                                style: getTitleStyle(
+                                  color: AppColors.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                      )
+                      : Center(
+                        child: Text(
+                          initials,
+                          style: getTitleStyle(
+                            color: AppColors.primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+            ),
+          ),
+
+          // Business name - only show when expanded
+          if (_widthAnimation.value > AppSidebar.collapsedWidth * 1.5) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                displayName,
+                style: getTitleStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Build collapse toggle button
+  Widget _buildCollapseToggle() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: InkWell(
+        onTap: _toggleCollapsed,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          decoration: BoxDecoration(
+            color: AppColors.lightGrey,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment:
+                _isCollapsed
+                    ? MainAxisAlignment.center
+                    : MainAxisAlignment.spaceBetween,
+            children: [
+              if (!_isCollapsed)
+                Expanded(
+                  child: Text(
+                    'Collapse Menu',
+                    style: getSmallStyle(color: AppColors.darkGrey),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow:
-                      TextOverflow
-                          .ellipsis, // Handle overflow if name is too long
-                  maxLines: 2, // Allow wrapping slightly
                 ),
+              Icon(
+                _isCollapsed ? Icons.chevron_right : Icons.chevron_left,
+                color: AppColors.darkGrey,
+                size: 20,
               ),
             ],
           ),
         ),
       ),
+    );
+  }
 
-      // --- Main Navigation Destinations ---
-      destinations:
-          destinations
-              .map(
-                (dest) => NavigationRailDestination(
-                  icon: Icon(
-                    dest['icon'] as IconData?,
-                  ), // Icon for the destination
-                  selectedIcon: Icon(
-                    dest['icon'] as IconData?,
-                  ), // Icon when selected (can be different)
-                  label: Text(dest['label'] as String), // Text label
-                  // Added const
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 8.0,
-                  ), // Padding around the destination item
-                ),
-              )
-              .toList(),
+  // Build main navigation destinations
+  List<Widget> _buildDestinations() {
+    return List.generate(widget.destinations.length, (index) {
+      final dest = widget.destinations[index];
+      final bool isSelected = index == widget.selectedIndex;
 
-      // --- Footer Items (NFC Status, Settings, Logout) ---
-      trailing: ConstrainedBox(
-        // *** FIXED: Constrain the width ***
-        constraints: BoxConstraints(maxWidth: extendedWidth),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.end, // Align items to the bottom
-          children: [
-            // Added const
-            const Divider(
-              height: 1,
-              thickness: 0.5,
-              indent: 16,
-              endIndent: 16,
-            ), // Divider above footer items
-            // Added const
-            const SizedBox(height: 8),
-            // Status indicators at the bottom
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.primaryColor.withOpacity(0.05),
-                border: Border(
-                  top: BorderSide(
-                    color: AppColors.primaryColor.withOpacity(0.1),
-                    width: 1.0,
-                  ),
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // NFC connection status indicator
-                  ValueListenableBuilder<SerialPortConnectionStatus>(
-                    valueListenable: nfcStatusNotifier,
-                    builder: (context, status, _) {
-                      final bool isConnected =
-                          status == SerialPortConnectionStatus.connected;
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              isConnected
-                                  ? Colors.green.withOpacity(0.1)
-                                  : Colors.orange.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color:
-                                isConnected
-                                    ? Colors.green.withOpacity(0.3)
-                                    : Colors.orange.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              isConnected
-                                  ? Icons.nfc_rounded
-                                  : Icons.signal_wifi_off,
-                              color: isConnected ? Colors.green : Colors.orange,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                isConnected
-                                    ? "NFC Reader Connected"
-                                    : "NFC Reader Disconnected",
-                                style: getSmallStyle(
-                                  color:
-                                      isConnected
-                                          ? Colors.green
-                                          : Colors.orange,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-
-                  // Sync status indicator
-                  const SizedBox(height: 8),
-                  SyncStatusIndicator(
-                    syncStatusNotifier: SyncManager().syncStatusNotifier,
-                    lastSyncTime: SyncManager().lastSyncTimeNotifier.value,
-                    onManualSync: () => SyncManager().syncNow(),
-                  ),
-
-                  // Footer links
-                  const SizedBox(height: 16),
-                  ...List.generate(footerDestinations.length, (index) {
-                    final dest = footerDestinations[index];
-                    final bool isLogout = dest['isLogout'] ?? false;
-                    final Color color =
-                        isLogout
-                            ? AppColors.redColor
-                            : AppColors.secondaryColor;
-
-                    return InkWell(
-                      onTap: () => onFooterItemSelected(index),
-                      borderRadius: BorderRadius.circular(8.0),
-                      hoverColor: (isLogout
-                              ? AppColors.redColor
-                              : AppColors.primaryColor)
-                          .withOpacity(0.05),
-                      splashColor: (isLogout
-                              ? AppColors.redColor
-                              : AppColors.primaryColor)
-                          .withOpacity(0.1),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 10.0,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              dest['icon'] as IconData?,
-                              size: 20,
-                              color: color,
-                            ),
-                            const SizedBox(width: 16),
-                            Text(
-                              dest['label'] as String,
-                              style: getbodyStyle(color: color),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }),
-                ],
+      return InkWell(
+        onTap: () => widget.onDestinationSelected(index),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          decoration: BoxDecoration(
+            color:
+                isSelected
+                    ? AppColors.primaryColor.withOpacity(0.1)
+                    : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: isSelected ? AppColors.primaryColor : Colors.transparent,
+                width: 3,
               ),
             ),
-            // Added const
-            const SizedBox(height: 10), // Padding at the very bottom
-          ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                dest['icon'] as IconData?,
+                color:
+                    isSelected
+                        ? AppColors.primaryColor
+                        : AppColors.secondaryColor,
+                size: 22,
+              ),
+              if (_widthAnimation.value > AppSidebar.collapsedWidth * 1.5) ...[
+                const SizedBox(width: 16),
+                Text(
+                  dest['label'] as String,
+                  style: getbodyStyle(
+                    color:
+                        isSelected
+                            ? AppColors.primaryColor
+                            : AppColors.secondaryColor,
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
+      );
+    });
+  }
+
+  // Build footer with device status, sync status, and footer items
+  Widget _buildFooter() {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: _isCollapsed ? 8 : 16,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Show device status indicators only when expanded
+          if (!_isCollapsed) ...[
+            // NFC Status
+            ValueListenableBuilder<DeviceStatus>(
+              valueListenable: _comPortService.nfcReaderStatus,
+              builder: (context, status, _) {
+                final bool isConnected = status == DeviceStatus.connected;
+                final Color statusColor =
+                    isConnected
+                        ? Colors.green
+                        : (status == DeviceStatus.error
+                            ? AppColors.redColor
+                            : (status == DeviceStatus.connecting
+                                ? Colors.orange
+                                : AppColors.secondaryColor));
+
+                final String statusText =
+                    isConnected
+                        ? "NFC Connected"
+                        : (status == DeviceStatus.connecting
+                            ? "Connecting..."
+                            : (status == DeviceStatus.error
+                                ? "Error"
+                                : "Disconnected"));
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: statusColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isConnected ? Icons.nfc_rounded : Icons.signal_wifi_off,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          statusText,
+                          style: getSmallStyle(
+                            color: statusColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 8),
+
+            // QR Reader Status
+            ValueListenableBuilder<DeviceStatus>(
+              valueListenable: _comPortService.qrReaderStatus,
+              builder: (context, status, _) {
+                final bool isConnected = status == DeviceStatus.connected;
+                final Color statusColor =
+                    isConnected
+                        ? Colors.green
+                        : (status == DeviceStatus.error
+                            ? AppColors.redColor
+                            : (status == DeviceStatus.connecting
+                                ? Colors.orange
+                                : AppColors.secondaryColor));
+
+                final String statusText =
+                    isConnected
+                        ? "QR Connected"
+                        : (status == DeviceStatus.connecting
+                            ? "Connecting..."
+                            : (status == DeviceStatus.error
+                                ? "Error"
+                                : "Disconnected"));
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: statusColor.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isConnected
+                            ? Icons.qr_code_scanner
+                            : Icons.signal_wifi_off,
+                        color: statusColor,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          statusText,
+                          style: getSmallStyle(
+                            color: statusColor,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
+            const SizedBox(height: 8),
+
+            // Sync status
+            SyncStatusIndicator(
+              syncStatusNotifier: SyncManager().syncStatusNotifier,
+              lastSyncTime: SyncManager().lastSyncTimeNotifier.value,
+              onManualSync: () => SyncManager().syncNow(),
+              isCollapsed: false,
+            ),
+
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
+          ],
+
+          // Footer items
+          ...List.generate(widget.footerDestinations.length, (index) {
+            final dest = widget.footerDestinations[index];
+            final bool isLogout = dest['isLogout'] ?? false;
+            final Color color =
+                isLogout ? AppColors.redColor : AppColors.secondaryColor;
+
+            return InkWell(
+              onTap: () => widget.onFooterItemSelected(index),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 12,
+                ),
+                margin: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(dest['icon'] as IconData?, size: 20, color: color),
+                    if (_widthAnimation.value >
+                        AppSidebar.collapsedWidth * 1.5) ...[
+                      const SizedBox(width: 16),
+                      Text(
+                        dest['label'] as String,
+                        style: getbodyStyle(color: color),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          }),
+
+          // When collapsed, show only minimal indicators
+          if (_isCollapsed) ...[
+            const SizedBox(height: 12),
+
+            // Mini sync status indicator
+            SyncStatusIndicator(
+              syncStatusNotifier: SyncManager().syncStatusNotifier,
+              lastSyncTime: SyncManager().lastSyncTimeNotifier.value,
+              onManualSync: () => SyncManager().syncNow(),
+              isCollapsed: true,
+            ),
+
+            const SizedBox(height: 6),
+
+            // Mini device status indicators
+            Center(
+              child: Padding(
+                padding: EdgeInsets.zero,
+                child: SizedBox(
+                  width: AppSidebar.collapsedWidth * 0.7,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ValueListenableBuilder<DeviceStatus>(
+                        valueListenable: _comPortService.nfcReaderStatus,
+                        builder: (context, status, _) {
+                          final bool isConnected =
+                              status == DeviceStatus.connected;
+                          final Color statusColor =
+                              isConnected
+                                  ? Colors.green
+                                  : AppColors.secondaryColor;
+
+                          return Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: statusColor,
+                              shape: BoxShape.circle,
+                            ),
+                          );
+                        },
+                      ),
+
+                      const SizedBox(width: 3),
+
+                      ValueListenableBuilder<DeviceStatus>(
+                        valueListenable: _comPortService.qrReaderStatus,
+                        builder: (context, status, _) {
+                          final bool isConnected =
+                              status == DeviceStatus.connected;
+                          final Color statusColor =
+                              isConnected
+                                  ? Colors.green
+                                  : AppColors.secondaryColor;
+
+                          return Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: statusColor,
+                              shape: BoxShape.circle,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

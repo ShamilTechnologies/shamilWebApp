@@ -36,12 +36,15 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final ReservationSyncService _reservationSyncService;
   final CentralizedDataService _centralizedDataService;
 
-  // Stream Subscriptions for real-time updates
+  // Stream subscriptions to prevent memory leaks and duplicate listeners
   StreamSubscription? _reservationsSubscription;
   StreamSubscription? _subscriptionsSubscription;
   StreamSubscription? _centralizedReservationsSub;
   StreamSubscription? _centralizedSubscriptionsSub;
   StreamSubscription? _centralizedAccessLogsSub;
+
+  // State tracking
+  bool _isRefreshing = false;
 
   /// Creates a new DashboardBloc with provided dependencies or defaults.
   DashboardBloc({
@@ -98,10 +101,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   /// Initialize any required services
   Future<void> _initServices() async {
     try {
-      // Initialize the centralized data service first
-      await _centralizedDataService.init();
+      // Check if centralized service is already initialized before initializing
+      if (!_centralizedDataService.isInitializedNotifier.value &&
+          !_centralizedDataService.isLoadingNotifier.value) {
+        print("DashboardBloc: Initializing centralized data service");
+        await _centralizedDataService.init();
+      } else {
+        print(
+          "DashboardBloc: Centralized data service already initialized or initializing",
+        );
+      }
 
-      // Initialize the reservation sync service
+      // Initialize the reservation sync service if needed
       await _reservationSyncService.init();
     } catch (e) {
       print("DashboardBloc: Error initializing services: $e");
@@ -124,8 +135,90 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     print(
       "--- DashboardBloc: _onRefreshDashboardData event handler called ---",
     );
-    // We can reuse the same loading logic here
-    await _loadDashboardData(emit);
+
+    // Show loading state while refreshing
+    emit(DashboardLoading());
+
+    try {
+      // Use the new forceDataRefresh method for a more direct refresh
+      _isRefreshing = true;
+      await _centralizedDataService.forceDataRefresh();
+      _isRefreshing = false;
+
+      // Get fresh data
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        emit(const DashboardLoadFailure('User not authenticated.'));
+        return;
+      }
+
+      // Re-fetch provider info first
+      final providerInfo = await _providerRepository.getProvider(providerId);
+      final governorateId = providerInfo.governorateId;
+
+      if (governorateId == null || governorateId.isEmpty) {
+        emit(
+          DashboardLoadFailure(
+            'Provider governorate is not configured. Please update your settings.',
+          ),
+        );
+        return;
+      }
+
+      // Fetch all data from centralized service
+      final List<dynamic> results = await Future.wait([
+        _centralizedDataService.getReservations(),
+        _centralizedDataService.getSubscriptions(),
+        _fetchStats(providerId, governorateId),
+        _centralizedDataService.getRecentAccessLogs(limit: 10),
+      ]);
+
+      final List<Reservation> reservations = results[0];
+      final List<Subscription> subscriptions = results[1];
+      final DashboardStats stats = results[2];
+      final List<AccessLog> accessLogs = results[3];
+
+      // Convert stats to Map<String, dynamic> for state
+      final Map<String, dynamic> statsMap = {
+        'activeSubscriptions': stats.activeSubscriptions,
+        'upcomingReservations': stats.upcomingReservations,
+        'totalRevenue': stats.totalRevenue,
+        'newMembersMonth': stats.newMembersMonth,
+        'checkInsToday': stats.checkInsToday,
+        'totalBookingsMonth': stats.totalBookingsMonth,
+      };
+
+      // Emit successful state with refreshed data
+      emit(
+        DashboardLoadSuccess(
+          providerInfo: providerInfo,
+          reservations: reservations,
+          subscriptions: subscriptions,
+          stats: statsMap,
+          accessLogs: accessLogs,
+        ),
+      );
+
+      // Make sure the streams are updated too
+      _centralizedDataService.startRealTimeListeners();
+    } catch (e) {
+      print("DashboardBloc: Error refreshing dashboard data - $e");
+
+      // If we have existing data, don't disrupt the UI
+      if (state is DashboardLoadSuccess) {
+        final currentState = state as DashboardLoadSuccess;
+        emit(currentState);
+        emit(
+          DashboardNotificationReceived(
+            message: "Error refreshing data: ${e.toString()}",
+          ),
+        );
+        emit(currentState); // Return to success state
+      } else {
+        // Otherwise show failure
+        emit(DashboardLoadFailure(e.toString()));
+      }
+    }
   }
 
   /// Handler for updating reservation status
@@ -418,10 +511,24 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
 
     try {
-      // Step 1: Fetch Provider Info FIRST
-      final ServiceProviderModel providerInfo = await _providerRepository
-          .getProvider(providerId);
-      final String? governorateId = providerInfo.governorateId;
+      // Make sure centralized data service is initialized
+      if (!_centralizedDataService.isInitializedNotifier.value) {
+        print("DashboardBloc: Initializing centralized data service");
+        await _centralizedDataService.init();
+      } else {
+        // If already initialized, force a data refresh
+        print(
+          "DashboardBloc: Centralized service already initialized, forcing data refresh",
+        );
+        await _centralizedDataService.forceDataRefresh();
+      }
+
+      // Always ensure real-time listeners are started
+      await _centralizedDataService.startRealTimeListeners();
+
+      // Fetch provider info
+      final providerInfo = await _providerRepository.getProvider(providerId);
+      final governorateId = providerInfo.governorateId;
 
       if (governorateId == null || governorateId.isEmpty) {
         emit(
@@ -432,17 +539,15 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         return;
       }
 
-      // Step 2: Fetch all required data in parallel
-      // Use CentralizedDataService for consistent data
-      print(
-        "--- DashboardBloc: Fetching dashboard data for provider $providerId ---",
-      );
-
+      // Fetch fresh data from centralized service
       final List<dynamic> results = await Future.wait([
-        _centralizedDataService.getReservations(),
-        _centralizedDataService.getSubscriptions(),
+        _centralizedDataService.getReservations(forceRefresh: true),
+        _centralizedDataService.getSubscriptions(forceRefresh: true),
         _fetchStats(providerId, governorateId),
-        _centralizedDataService.getRecentAccessLogs(limit: 10),
+        _centralizedDataService.getRecentAccessLogs(
+          limit: 10,
+          forceRefresh: true,
+        ),
       ]);
 
       final List<Reservation> reservations = results[0];
@@ -460,6 +565,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         'totalBookingsMonth': stats.totalBookingsMonth,
       };
 
+      // Emit loaded state
       emit(
         DashboardLoadSuccess(
           providerInfo: providerInfo,
@@ -469,12 +575,75 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           accessLogs: accessLogs,
         ),
       );
-
-      // --- Step 3: Start Real-time Listeners AFTER initial load ---
-      _startListeners(providerId, governorateId);
     } catch (e, stackTrace) {
-      print("!!! DashboardBloc: CATCH - Error loading dashboard data: $e");
-      print(stackTrace);
+      print("DashboardBloc: Error loading dashboard data: $e");
+      print("Stack trace: $stackTrace");
+
+      // Try to load from cache if available
+      try {
+        final providerInfo = await _providerRepository.getProvider(providerId);
+
+        final List<Reservation> reservations =
+            _centralizedDataService.upcomingReservationsNotifier.value;
+        final List<Subscription> subscriptions =
+            _centralizedDataService.activeSubscriptionsNotifier.value;
+        final List<AccessLog> accessLogs =
+            _centralizedDataService.recentAccessLogsNotifier.value;
+
+        // Create basic stats for fallback
+        final DashboardStats stats = DashboardStats(
+          activeSubscriptions: subscriptions.length,
+          upcomingReservations: reservations.length,
+          totalRevenue: 0,
+          newMembersMonth: 0,
+          checkInsToday: 0,
+          totalBookingsMonth: 0,
+        );
+
+        // Convert stats to Map<String, dynamic> for state
+        final Map<String, dynamic> statsMap = {
+          'activeSubscriptions': stats.activeSubscriptions,
+          'upcomingReservations': stats.upcomingReservations,
+          'totalRevenue': stats.totalRevenue,
+          'newMembersMonth': stats.newMembersMonth,
+          'checkInsToday': stats.checkInsToday,
+          'totalBookingsMonth': stats.totalBookingsMonth,
+        };
+
+        if (providerInfo != null &&
+            (reservations.isNotEmpty || subscriptions.isNotEmpty)) {
+          // We have enough data to show something
+          emit(
+            DashboardLoadSuccess(
+              providerInfo: providerInfo,
+              reservations: reservations,
+              subscriptions: subscriptions,
+              stats: statsMap,
+              accessLogs: accessLogs,
+            ),
+          );
+
+          // Also emit a notification about the error
+          emit(
+            DashboardNotificationReceived(
+              message: "Error refreshing data: ${e.toString()}",
+            ),
+          );
+
+          // Retry getting data in the background
+          Future.delayed(Duration(seconds: 2), () {
+            if (!_isRefreshing) {
+              _centralizedDataService.forceDataRefresh();
+            }
+          });
+
+          return;
+        }
+      } catch (fallbackError) {
+        print("DashboardBloc: Fallback also failed: $fallbackError");
+      }
+
+      // If we reach here, even the fallback failed
       emit(DashboardLoadFailure(e.toString()));
     }
   }
@@ -749,6 +918,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     _centralizedAccessLogsSub?.cancel();
 
     try {
+      // Start the real-time listeners in the CentralizedDataService
+      _centralizedDataService.startRealTimeListeners();
+
       // Listen to centralized data service for consistent data
       _centralizedReservationsSub = _centralizedDataService.reservationsStream.listen(
         (reservations) {

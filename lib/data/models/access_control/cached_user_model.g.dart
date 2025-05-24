@@ -17,10 +17,10 @@ class CachedUserModelAdapter extends TypeAdapter<CachedUserModel> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return CachedUserModel(
-      uid: fields[0] as String,
-      name: fields[1] as String,
+      uid: fields[0] as String? ?? '',
+      name: fields[1] as String? ?? 'Unknown User',
       photoUrl: fields[2] as String?,
-      updatedAt: fields[3] as DateTime,
+      updatedAt: fields[3] as DateTime? ?? DateTime.now(),
     );
   }
 

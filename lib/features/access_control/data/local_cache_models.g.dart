@@ -104,13 +104,14 @@ class CachedReservationAdapter extends TypeAdapter<CachedReservation> {
       endTime: fields[4] as DateTime,
       typeString: fields[5] as String,
       groupSize: fields[6] as int,
+      status: fields[7] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, CachedReservation obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.userId)
       ..writeByte(1)
@@ -124,7 +125,9 @@ class CachedReservationAdapter extends TypeAdapter<CachedReservation> {
       ..writeByte(5)
       ..write(obj.typeString)
       ..writeByte(6)
-      ..write(obj.groupSize);
+      ..write(obj.groupSize)
+      ..writeByte(7)
+      ..write(obj.status);
   }
 
   @override

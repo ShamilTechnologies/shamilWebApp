@@ -3,7 +3,6 @@ import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/features/dashboard/helper/app_sidebar.dart';
 import 'package:shamil_web_app/features/dashboard/helper/responsive_layout.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/network_connection_banner.dart';
-import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 
 /// A responsive dashboard layout that handles sidebar and content arrangement
@@ -29,9 +28,6 @@ class DashboardLayout extends StatelessWidget {
   /// Provider information for the sidebar
   final ServiceProviderModel providerInfo;
 
-  /// NFC reader status notifier
-  final ValueNotifier<SerialPortConnectionStatus> nfcStatusNotifier;
-
   /// Whether to show the network banner
   final bool showNetworkBanner;
 
@@ -47,7 +43,6 @@ class DashboardLayout extends StatelessWidget {
     required this.destinations,
     required this.footerDestinations,
     required this.providerInfo,
-    required this.nfcStatusNotifier,
     this.showNetworkBanner = true,
     this.onNetworkRetry,
   });
@@ -88,7 +83,6 @@ class DashboardLayout extends StatelessWidget {
                             onDestinationSelected: onDestinationSelected,
                             onFooterItemSelected: onFooterItemSelected,
                             providerInfo: providerInfo,
-                            nfcStatusNotifier: nfcStatusNotifier,
                           ),
 
                         // Main content area - always fills remaining space
@@ -128,7 +122,8 @@ class DashboardLayout extends StatelessWidget {
                     onFooterItemSelected(index);
                   },
                   providerInfo: providerInfo,
-                  nfcStatusNotifier: nfcStatusNotifier,
+                  // Default to collapsed on mobile
+                  initiallyCollapsed: false,
                 ),
               )
               : null,

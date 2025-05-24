@@ -42,6 +42,7 @@ class UserAccessCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           // Header with status
           Container(
@@ -92,6 +93,7 @@ class UserAccessCard extends StatelessWidget {
             padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
                   children: [
@@ -129,18 +131,25 @@ class UserAccessCard extends StatelessWidget {
                 const SizedBox(height: 16),
 
                 // Access method
-                Row(
-                  children: [
-                    _buildMethodIcon(accessMethod),
-                    const SizedBox(width: 8),
-                    Text(
-                      accessMethod,
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 13,
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildMethodIcon(accessMethod),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          accessMethod,
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
 
                 // Denial reason (if applicable)

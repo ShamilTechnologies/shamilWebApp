@@ -989,86 +989,92 @@ class UnifiedCacheService {
   }
 
   /// Sync access logs to Firestore
-  Future<void> syncAccessLogs() async {
-    if (!localAccessLogsBox.isOpen) {
-      print("UnifiedCacheService: Cannot sync logs - Box not open");
-      return;
-    }
-
-    if (isSyncingNotifier.value) {
-      print("UnifiedCacheService: Sync already in progress");
-      return;
-    }
-
-    final User? user = _auth.currentUser;
-    if (user == null) {
-      print("UnifiedCacheService: Cannot sync logs - User not authenticated");
-      return;
-    }
-
-    isSyncingNotifier.value = true;
-    print("UnifiedCacheService: Starting access log synchronization");
-
+  Future<bool> syncAccessLogs() async {
     try {
       // Find logs that need syncing
-      final logsToSync =
-          localAccessLogsBox.values.where((log) => log.needsSync).toList();
+      final List<LocalAccessLog> logsToSync = [];
 
-      if (logsToSync.isEmpty) {
-        print("UnifiedCacheService: No logs need syncing");
-        return;
+      // Ensure box is open
+      if (_localAccessLogsBox == null || !_localAccessLogsBox!.isOpen) {
+        print("syncAccessLogs: LocalAccessLogs box is not open, cannot sync");
+        return false;
       }
 
-      print("UnifiedCacheService: Found ${logsToSync.length} logs to sync");
+      // Get logs that need syncing
+      try {
+        for (final key in _localAccessLogsBox!.keys) {
+          final log = _localAccessLogsBox!.get(key);
+          if (log != null && log.needsSync) {
+            logsToSync.add(log);
+          }
+        }
+      } catch (e) {
+        print("Error getting logs from box: $e");
+        return false;
+      }
 
-      // Batch upload to Firestore
-      final batch = _firestore.batch();
-      final logsToUpdate = <String, LocalAccessLog>{};
+      if (logsToSync.isEmpty) {
+        print("No access logs need syncing");
+        return true;
+      }
 
-      int count = 0;
-      for (final entry in localAccessLogsBox.toMap().entries) {
-        final log = entry.value;
-        final key = entry.key;
+      print("Found ${logsToSync.length} access logs to sync");
 
-        if (log.needsSync) {
-          final docRef = _firestore.collection("accessLogs").doc();
+      // Get the provider ID
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        print("Cannot sync access logs: No provider ID available");
+        return false;
+      }
 
-          batch.set(docRef, {
+      // Batch write logs to Firestore
+      const batchSize = 500; // Firestore batch limit
+      final batches = <WriteBatch>[];
+
+      for (var i = 0; i < logsToSync.length; i += batchSize) {
+        final batch = _firestore.batch();
+        final batchLogs = logsToSync.sublist(
+          i,
+          i + batchSize < logsToSync.length ? i + batchSize : logsToSync.length,
+        );
+
+        for (final log in batchLogs) {
+          final logRef = _firestore.collection('accessLogs').doc();
+          batch.set(logRef, {
+            'providerId': providerId,
             'userId': log.userId,
             'userName': log.userName,
             'timestamp': Timestamp.fromDate(log.timestamp),
             'status': log.status,
-            'method': log.method,
+            'method': log.method ?? 'unknown',
             'denialReason': log.denialReason,
-            'providerId': user.uid,
+            'synced': true,
+            'syncTimestamp': FieldValue.serverTimestamp(),
           });
+        }
 
-          // Mark as synced
-          logsToUpdate[key.toString()] = log.copyWith(needsSync: false);
+        batches.add(batch);
+      }
 
-          count++;
-          if (count >= 400) {
-            // Firestore batch limit is 500
-            break;
-          }
+      // Execute all batches
+      for (final batch in batches) {
+        await batch.commit();
+      }
+
+      // Mark logs as synced
+      for (final key in _localAccessLogsBox!.keys) {
+        final log = _localAccessLogsBox!.get(key);
+        if (log != null && log.needsSync) {
+          final updatedLog = log.copyWith(needsSync: false);
+          await _localAccessLogsBox!.put(key, updatedLog);
         }
       }
 
-      // Commit the batch
-      await batch.commit();
-
-      // Update synced status in Hive
-      for (final entry in logsToUpdate.entries) {
-        await localAccessLogsBox.put(entry.key, entry.value);
-      }
-
-      print(
-        "UnifiedCacheService: Successfully synced ${logsToUpdate.length} logs",
-      );
+      print("Successfully synced ${logsToSync.length} access logs");
+      return true;
     } catch (e) {
-      print("UnifiedCacheService: Error syncing access logs: $e");
-    } finally {
-      isSyncingNotifier.value = false;
+      print("Error syncing access logs: $e");
+      return false;
     }
   }
 
@@ -1220,8 +1226,9 @@ class UnifiedCacheService {
   /// Find an active reservation for a user
   Future<CachedReservation?> findActiveReservation(
     String userId,
-    DateTime now,
-  ) async {
+    DateTime now, {
+    String? statusFilter,
+  }) async {
     if (!cachedReservationsBox.isOpen) {
       print("UnifiedCacheService: Reservation box not open");
       return null;
@@ -1238,8 +1245,20 @@ class UnifiedCacheService {
         return null;
       }
 
+      // Filter by status if provided
+      final filteredReservations =
+          statusFilter != null
+              ? userReservations
+                  .where((res) => res.status == statusFilter)
+                  .toList()
+              : userReservations;
+
+      if (filteredReservations.isEmpty) {
+        return null;
+      }
+
       // First check for currently active reservations
-      for (final reservation in userReservations) {
+      for (final reservation in filteredReservations) {
         if (_isReservationActive(reservation, now)) {
           return reservation;
         }
@@ -1247,7 +1266,7 @@ class UnifiedCacheService {
 
       // Check for upcoming reservations (early check-in)
       final upcomingReservations =
-          userReservations.where((res) {
+          filteredReservations.where((res) {
             final startWithBuffer = res.startTime.subtract(
               const Duration(minutes: 60),
             );
@@ -1266,71 +1285,84 @@ class UnifiedCacheService {
     }
   }
 
-  /// Sync all data (combined sync method)
+  /// Check if a user has any historical reservations (completed or expired)
+  Future<bool> hasHistoricalReservation(String userId) async {
+    if (!cachedReservationsBox.isOpen) {
+      return false;
+    }
+
+    try {
+      // Get count of any reservations for this user
+      final reservationCount =
+          cachedReservationsBox.values
+              .where((res) => res.userId == userId)
+              .length;
+
+      return reservationCount > 0;
+    } catch (e) {
+      print("UnifiedCacheService: Error checking historical reservations: $e");
+      return false;
+    }
+  }
+
+  /// Check if a user has any historical subscriptions (including expired ones)
+  Future<bool> hasHistoricalSubscription(String userId) async {
+    if (!cachedSubscriptionsBox.isOpen) {
+      return false;
+    }
+
+    try {
+      // Get count of any subscriptions for this user
+      final subscriptionCount =
+          cachedSubscriptionsBox.values
+              .where((sub) => sub.userId == userId)
+              .length;
+
+      return subscriptionCount > 0;
+    } catch (e) {
+      print("UnifiedCacheService: Error checking historical subscriptions: $e");
+      return false;
+    }
+  }
+
+  /// Synchronize all data for offline use
   Future<bool> syncAllData() async {
-    // Prevent rapid successive calls and infinite loops
-    final now = DateTime.now();
-    if (_isInternalSyncing || isSyncingNotifier.value) {
+    if (_isInternalSyncing) {
       print("UnifiedCacheService: Sync already in progress, skipping");
       return false;
     }
 
-    // Check cooldown period
-    if (_lastSyncTime != null &&
-        now.difference(_lastSyncTime!) < _syncCooldown) {
-      print(
-        "UnifiedCacheService: Sync cooldown active, skipping (last sync: ${_lastSyncTime})",
-      );
-      return false;
-    }
-
-    final User? user = _auth.currentUser;
-    if (user == null) {
-      print("UnifiedCacheService: Cannot sync - User not authenticated");
-      return false;
-    }
-
-    // Set sync status immediately to prevent concurrent syncs
-    _isInternalSyncing = true;
-    isSyncingNotifier.value = true;
-    _lastSyncTime = now;
-
-    print("UnifiedCacheService: Starting full data sync");
-
     try {
-      // 1. Sync access logs first (quick operation)
-      try {
-        await syncAccessLogs();
-      } catch (e) {
-        print("UnifiedCacheService: Error syncing access logs: $e");
-        // Continue with other syncs
-      }
+      _isInternalSyncing = true;
+      isSyncingNotifier.value = true;
+      print("UnifiedCacheService: Starting full data sync");
 
-      // 2. Sync reservations
-      try {
-        await syncReservations();
-      } catch (e) {
-        print("UnifiedCacheService: Error syncing reservations: $e");
-        // Continue with other syncs
-      }
+      // Sync reservation data
+      final reservations = await syncReservations();
+      print("Synced ${reservations.length} reservations");
 
-      // 3. Sync subscriptions
-      try {
-        await syncSubscriptions();
-      } catch (e) {
-        print("UnifiedCacheService: Error syncing subscriptions: $e");
-        // Continue with other syncs
-      }
+      // Sync subscription data
+      final subscriptions = await syncSubscriptions();
+      print("Synced ${subscriptions.length} subscriptions");
 
+      // Sync access logs
+      await syncAccessLogs();
+
+      // Update last sync time
+      _lastSyncTime = DateTime.now();
+      await _syncMetadataBox?.put('last_sync_time', {
+        'timestamp': _lastSyncTime!.toIso8601String(),
+      });
+
+      _isInternalSyncing = false;
+      isSyncingNotifier.value = false;
       print("UnifiedCacheService: Full data sync completed successfully");
       return true;
     } catch (e) {
       print("UnifiedCacheService: Error during full data sync: $e");
-      return false;
-    } finally {
-      // Always reset sync status
       _isInternalSyncing = false;
       isSyncingNotifier.value = false;
+      return false;
     }
   }
 

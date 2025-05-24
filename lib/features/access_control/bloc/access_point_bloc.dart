@@ -22,12 +22,16 @@ import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 // Import Dashboard Bloc/State to potentially read provider info
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
 
+// Import our new offline-first service
+import 'package:shamil_web_app/features/access_control/service/offline_first_access_service.dart';
+
 part 'access_point_event.dart';
 part 'access_point_state.dart';
 
 class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
-  // *** Uses updated Sync Service ***
-  final AccessControlSyncService _syncService = AccessControlSyncService();
+  // Use our new offline-first service
+  final OfflineFirstAccessService _offlineAccessService =
+      OfflineFirstAccessService();
   final NfcReaderService _nfcReaderService = NfcReaderService();
   final DashboardBloc dashboardBloc; // To get provider info
 
@@ -235,16 +239,13 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
       ),
     );
     print(
-      "AccessPointBloc: Validating access (Offline - Hive) for User ID: ${event.userId} via ${event.method}",
+      "AccessPointBloc: Validating access (Offline) for User ID: ${event.userId} via ${event.method}",
     );
 
-    String accessStatus = "Denied";
     String? denialReason;
     CachedUser? cachedUser;
-    final now = DateTime.now();
 
     // *** Get Provider Info (including governorateId) from DashboardBloc state ***
-    // This is crucial for future online validation and context, even if offline check doesn't use govId directly.
     PricingModel currentPricingModel = PricingModel.other; // Default
     String? currentGovernorateId; // Default null
     final dashboardState = dashboardBloc.state; // Access injected bloc's state
@@ -273,140 +274,69 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
       return;
     }
 
-    // --- Perform Offline Validation using Sync Service and Cached Data ---
-    // Note: This relies on AccessControlSyncService having synced data correctly
-    // using the governorateId during its `syncAllData` process. The validation
-    // check here uses the cached data relevant to this provider.
     try {
-      // 1. First, ensure user data is in cache or add temporary entry if we have ID
-      await _syncService.ensureUserInCache(event.userId, null);
-
-      // 2. Find User in Cache
-      cachedUser = await _syncService.getCachedUser(event.userId);
-
-      if (cachedUser == null) {
-        denialReason = "User not found in local cache.";
-      } else {
-        print("User found: ${cachedUser.userName}");
-        bool hasValidSubscription = false;
-        bool hasValidReservation = false;
-
-        // 3. Check Subscriptions (Logic remains the same, uses cached data)
-        if (currentPricingModel == PricingModel.subscription ||
-            currentPricingModel == PricingModel.hybrid) {
-          final activeSub = await _syncService.findActiveSubscription(
-            event.userId,
-            now,
-          );
-          hasValidSubscription = activeSub != null;
-          if (!hasValidSubscription) {
-            print("No active subscription found.");
-          } else {
-            print(
-              "Found active subscription expiring on ${activeSub.expiryDate}",
-            );
-          }
-        }
-
-        // 4. Check Reservations (Logic uses updated CachedReservation, but check is same)
-        if (currentPricingModel == PricingModel.reservation ||
-            currentPricingModel == PricingModel.hybrid) {
-          final activeRes = await _syncService.findActiveReservation(
-            event.userId,
-            now,
-          ); // Uses CachedReservation internally
-          hasValidReservation = activeRes != null;
-          if (!hasValidReservation) {
-            print("No active reservation found for this time.");
-          } else {
-            print(
-              "Found active reservation for ${activeRes.serviceName} from ${activeRes.startTime} to ${activeRes.endTime}",
-            );
-          }
-        }
-
-        // 5. Determine Access Status based on provider's model
-        switch (currentPricingModel) {
-          case PricingModel.subscription:
-            if (hasValidSubscription)
-              accessStatus = "Granted";
-            else
-              denialReason = "No active subscription.";
-            break;
-          case PricingModel.reservation:
-            if (hasValidReservation)
-              accessStatus = "Granted";
-            else
-              denialReason = "No valid reservation found for this time.";
-            break;
-          case PricingModel.hybrid:
-            if (hasValidSubscription || hasValidReservation)
-              accessStatus = "Granted";
-            else
-              denialReason = "No active subscription or valid reservation.";
-            break;
-          case PricingModel.other:
-            // Grant if user exists and provider model is 'other'
-            // Add more complex rules if needed for 'other' model
-            accessStatus = "Granted";
-            break;
-        }
+      // Initialize the offline service if needed
+      if (!_offlineAccessService.isInitializedNotifier.value) {
+        await _offlineAccessService.initialize();
       }
 
-      // 6. Log the attempt locally using Sync Service method
-      final String userName = cachedUser?.userName ?? "Unknown User";
-      final logEntry = LocalAccessLog(
-        userId: event.userId,
-        userName: userName,
-        timestamp: DateTime.now(),
-        status: accessStatus,
-        method: event.method,
-        denialReason: denialReason,
-        needsSync: true, // Mark for upload later
-      );
-      await _syncService.saveLocalAccessLog(logEntry); // Use service method
-      print(
-        "Local access log saved via service. Status: $accessStatus, User: $userName",
+      // Check user access with our offline-first service
+      final accessResult = await _offlineAccessService.checkUserAccess(
+        event.userId,
       );
 
-      // 7. Emit the result, preserving current NFC status and ports
+      // Get the result details
+      final bool hasAccess = accessResult['hasAccess'] as bool;
+      final String? accessType = accessResult['accessType'] as String?;
+      final String message =
+          accessResult['message'] as String? ??
+          (hasAccess ? 'Access granted' : 'Access denied');
+
+      if (!hasAccess) {
+        denialReason = accessResult['reason'] as String?;
+      }
+
+      // Use the username provided in the access result or default to 'Unknown User'
+      final String userName = 'Unknown User';
+
+      // Record the access attempt
+      await _offlineAccessService.recordAccessAttemptNamed(
+        userId: event.userId,
+        userName: userName,
+        granted: hasAccess,
+        denialReason: denialReason,
+        method: event.method,
+      );
+
+      // Emit the result
       emit(
         AccessPointResult(
           validationStatus:
-              accessStatus == "Granted"
-                  ? ValidationStatus.granted
-                  : ValidationStatus.denied,
+              hasAccess ? ValidationStatus.granted : ValidationStatus.denied,
           scannedId: event.userId,
           method: event.method,
-          userName: cachedUser?.userName,
-          message:
-              denialReason ??
-              (accessStatus == "Granted" ? "Access Granted" : "Access Denied"),
+          userName: userName,
+          message: message,
           nfcStatus: state.nfcStatus,
           availablePorts: state.availablePorts,
         ),
       );
-
-      // --- Handle potential errors during Hive access or validation ---
     } catch (e, stackTrace) {
-      print(
-        "!!! Error during access validation (Offline - Hive): $e\n$stackTrace",
-      );
-      // Attempt to log the error itself
+      print("!!! Error during access validation (Offline): $e\n$stackTrace");
+
+      // Attempt to log the error
       try {
-        final logEntry = LocalAccessLog(
+        await _offlineAccessService.recordAccessAttemptNamed(
           userId: event.userId,
           userName: 'Unknown',
-          timestamp: DateTime.now(),
-          status: 'Error', // Log status as Error
-          method: event.method,
+          granted: false,
           denialReason: 'Validation Error: ${e.toString()}',
-          needsSync: true,
+          method: event.method,
         );
-        await _syncService.saveLocalAccessLog(logEntry);
       } catch (logError) {
         print("Failed to save error log: $logError");
       }
+
       // Emit error result, preserving current NFC status and ports
       emit(
         AccessPointResult(
@@ -419,13 +349,6 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
         ),
       );
     }
-
-    // --- Placeholder for future online validation call ---
-    // if (onlineCheckNeeded) {
-    //    print("AccessPointBloc: Performing Online Validation (Not Implemented Yet)...");
-    //    // TODO: Call Cloud Function validateAccess(userId: event.userId, providerId: providerId, governorateId: currentGovernorateId)
-    //    // Update state based on Cloud Function response
-    // }
   }
 
   Future<void> _onForceSyncWithMobileApp(
@@ -439,8 +362,8 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     emit(AccessPointSyncing());
 
     try {
-      // Use the repository's dedicated method for mobile app sync
-      final success = await _repository.refreshMobileAppData();
+      // Use our offline-first service for sync
+      final success = await _offlineAccessService.syncNow(forceFull: true);
 
       // Also trigger sync in dashboard bloc if available
       try {
@@ -453,7 +376,12 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
       if (success) {
         emit(AccessPointSyncSuccess());
       } else {
-        emit(AccessPointSyncFailure("Failed to sync with mobile app"));
+        emit(
+          AccessPointSyncFailure(
+            _offlineAccessService.errorMessageNotifier.value ??
+                "Failed to sync with mobile app",
+          ),
+        );
       }
     } catch (e) {
       print("Error syncing with mobile app: $e");

@@ -20,9 +20,10 @@ import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
-import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
+import 'package:shamil_web_app/features/access_control/service/com_port_device_service.dart';
+// Import our enhanced offline service
+import 'package:shamil_web_app/core/services/enhanced_offline_service.dart';
 // Update to use the new smart access control screen
-import 'package:shamil_web_app/features/access_control/views/smart_access_control_screen.dart';
 import 'package:shamil_web_app/features/access_control/views/enterprise_access_control_screen.dart';
 // Import Auth/Provider Model
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
@@ -77,6 +78,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   late AudioPlayer _audioPlayer;
 
+  // Initialize device service
+  final ComPortDeviceService _comPortService = ComPortDeviceService();
+
+  // Initialize enhanced offline service for better offline capabilities
+  final EnhancedOfflineService _offlineService = EnhancedOfflineService();
+
   // Sidebar destinations data... (remains the same)
   final List<Map<String, dynamic>> _allDestinations = [
     {'icon': Icons.dashboard_rounded, 'label': 'Dashboard', 'models': null},
@@ -114,16 +121,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _audioPlayer = AudioPlayer();
     _audioPlayer.setReleaseMode(ReleaseMode.stop);
 
+    // Initialize ComPortDeviceService - only call initialize once
+    // This will internally handle repeated initialization attempts
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _comPortService.initialize();
+
+      // Initialize enhanced offline service asynchronously to prevent blocking UI
+      _initializeOfflineService();
+    });
+
     // Listen for sync errors
     SyncManager().lastErrorNotifier.addListener(_handleSyncError);
 
+    // Load dashboard data after UI is built, waiting briefly to ensure
+    // everything is properly mounted
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         print(
           "--- DashboardScreen initState: Adding LoadDashboardData event ---",
         );
         try {
-          context.read<DashboardBloc>().add(LoadDashboardData());
+          // Add a small delay to prevent everything initializing at once
+          Future.delayed(Duration(milliseconds: 500), () {
+            if (mounted) {
+              context.read<DashboardBloc>().add(LoadDashboardData());
+            }
+          });
         } catch (e) {
           print(
             "--- DashboardScreen initState: Error reading DashboardBloc from context: $e ---",
@@ -137,6 +160,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void dispose() {
     _audioPlayer.dispose();
     SyncManager().lastErrorNotifier.removeListener(_handleSyncError);
+
+    // Clean up any listeners and resources
+    _offlineService.dispose();
+
     super.dispose();
   }
 
@@ -162,6 +189,69 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       );
+    }
+  }
+
+  // Initialize the offline service
+  Future<void> _initializeOfflineService() async {
+    try {
+      await _offlineService.initialize();
+
+      // Listen for offline status changes
+      _offlineService.offlineStatusNotifier.addListener(() {
+        if (mounted) {
+          final status = _offlineService.offlineStatusNotifier.value;
+
+          // Show a snackbar message when offline status changes
+          if (status == OfflineStatus.limited) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.cloud_off, color: Colors.white),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Limited offline data available. Some features may be restricted.',
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.orange,
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          } else if (status == OfflineStatus.ready) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.cloud_done, color: Colors.white),
+                    SizedBox(width: 10),
+                    Expanded(child: Text('App is ready for offline use')),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+      });
+
+      print("Enhanced offline service initialized successfully");
+    } catch (e) {
+      print("Error initializing enhanced offline service: $e");
+
+      // Show error notification
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error enabling offline mode: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -514,13 +604,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onDestinationSelected: _onDestinationSelected,
               onFooterItemSelected: _onFooterItemTapped,
               providerInfo: dataState.providerInfo,
-              nfcStatusNotifier: NfcReaderService().connectionStatusNotifier,
               onNetworkRetry: () {
                 final connectivityService = ConnectivityService();
                 connectivityService.checkConnectivity();
                 if (connectivityService.statusNotifier.value ==
                     NetworkStatus.online) {
-                  SyncManager().syncNow();
+                  // Use our enhanced offline service for a more comprehensive sync
+                  _offlineService.performFullSync();
                 }
               },
               content: _buildMainContent(

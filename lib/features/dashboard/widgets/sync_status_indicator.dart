@@ -12,6 +12,9 @@ class SyncStatusIndicator extends StatelessWidget {
   final bool showLabel;
   final bool compact;
 
+  /// Whether to show in collapsed mode (minimal UI)
+  final bool isCollapsed;
+
   const SyncStatusIndicator({
     Key? key,
     required this.syncStatusNotifier,
@@ -19,6 +22,7 @@ class SyncStatusIndicator extends StatelessWidget {
     this.onManualSync,
     this.showLabel = true,
     this.compact = false,
+    this.isCollapsed = false,
   }) : super(key: key);
 
   void _showOptionsMenu(BuildContext context) {
@@ -111,6 +115,28 @@ class SyncStatusIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // If in collapsed mode, show a simplified version
+    if (isCollapsed) {
+      return ValueListenableBuilder<SyncStatus>(
+        valueListenable: syncStatusNotifier,
+        builder: (context, syncStatus, _) {
+          return GestureDetector(
+            onTap: onManualSync,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: _getBackgroundColor(syncStatus).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Center(child: _buildStatusIcon(syncStatus)),
+            ),
+          );
+        },
+      );
+    }
+
+    // Regular display
     return ValueListenableBuilder<SyncStatus>(
       valueListenable: syncStatusNotifier,
       builder: (context, syncStatus, _) {
@@ -121,8 +147,8 @@ class SyncStatusIndicator extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             child: Container(
               padding: EdgeInsets.symmetric(
-                horizontal: compact ? 8.0 : 12.0,
-                vertical: compact ? 4.0 : 8.0,
+                horizontal: compact ? 6.0 : 8.0,
+                vertical: compact ? 3.0 : 6.0,
               ),
               decoration: BoxDecoration(
                 color: _getBackgroundColor(syncStatus).withOpacity(0.1),
@@ -132,31 +158,37 @@ class SyncStatusIndicator extends StatelessWidget {
                 ),
               ),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 250),
+                constraints: const BoxConstraints(maxWidth: 190),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildStatusIcon(syncStatus),
                     if (showLabel) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 4),
                       Flexible(
                         child: Text(
                           _getStatusText(syncStatus),
                           style: getSmallStyle(
                             color: _getTextColor(syncStatus),
                             fontWeight: FontWeight.w500,
+                            fontSize: 11,
                           ),
                           overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
                       ),
                     ],
                     if (lastSyncTime != null && !compact) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 4),
                       Flexible(
                         child: Text(
                           _formatLastSyncTime(lastSyncTime!),
-                          style: getSmallStyle(color: AppColors.mediumGrey),
+                          style: getSmallStyle(
+                            color: AppColors.mediumGrey,
+                            fontSize: 10,
+                          ),
                           overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                         ),
                       ),
                     ],
@@ -197,8 +229,8 @@ class SyncStatusIndicator extends StatelessWidget {
       case SyncStatus.syncingData:
       case SyncStatus.syncingLogs:
         return SizedBox(
-          width: compact ? 14 : 18,
-          height: compact ? 14 : 18,
+          width: compact || isCollapsed ? 14 : 18,
+          height: compact || isCollapsed ? 14 : 18,
           child: const CircularProgressIndicator(
             strokeWidth: 2,
             valueColor: AlwaysStoppedAnimation<Color>(AppColors.primaryColor),
@@ -207,20 +239,20 @@ class SyncStatusIndicator extends StatelessWidget {
       case SyncStatus.success:
         return Icon(
           Icons.check_circle,
-          size: compact ? 14 : 18,
+          size: compact || isCollapsed ? 14 : 18,
           color: Colors.green,
         );
       case SyncStatus.failed:
         return Icon(
           Icons.error_outline,
-          size: compact ? 14 : 18,
+          size: compact || isCollapsed ? 14 : 18,
           color: Colors.red,
         );
       case SyncStatus.idle:
       default:
         return Icon(
           Icons.sync,
-          size: compact ? 14 : 18,
+          size: compact || isCollapsed ? 14 : 18,
           color: AppColors.mediumGrey,
         );
     }

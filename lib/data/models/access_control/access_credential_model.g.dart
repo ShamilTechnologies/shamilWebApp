@@ -17,15 +17,15 @@ class AccessCredentialModelAdapter extends TypeAdapter<AccessCredentialModel> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return AccessCredentialModel(
-      uid: fields[0] as String,
-      type: fields[1] as AccessType,
-      credentialId: fields[2] as String,
-      serviceName: fields[3] as String,
-      startDate: fields[4] as DateTime,
-      endDate: fields[5] as DateTime,
+      uid: fields[0] as String? ?? '',
+      type: fields[1] as AccessType? ?? AccessType.subscription,
+      credentialId: fields[2] as String? ?? '',
+      serviceName: fields[3] as String? ?? '',
+      startDate: fields[4] as DateTime? ?? DateTime.now(),
+      endDate: fields[5] as DateTime? ?? DateTime.now(),
       details: (fields[6] as Map?)?.cast<String, dynamic>(),
-      isValid: fields[7] as bool,
-      updatedAt: fields[8] as DateTime,
+      isValid: fields[7] as bool? ?? false,
+      updatedAt: fields[8] as DateTime? ?? DateTime.now(),
     );
   }
 

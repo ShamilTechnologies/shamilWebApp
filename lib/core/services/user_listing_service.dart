@@ -277,43 +277,227 @@ class UserListingService {
   /// Fetches all users with either reservations or subscriptions
   Future<List<AppUser>> getAllUsers({int limit = 50}) async {
     try {
-      final reservedUsers = await getReservedUsers(limit: limit ~/ 2);
-      final subscribedUsers = await getSubscribedUsers(limit: limit ~/ 2);
+      print('UserListingService: Fetching all users (limit: $limit)');
+      final String providerId = await _getProviderId();
+      print('UserListingService: Provider ID: $providerId');
 
-      // Merge the two lists, avoiding duplicates by userId
+      // Create a map to deduplicate users
       final Map<String, AppUser> userMap = {};
 
-      // Add reserved users first
-      for (var user in reservedUsers) {
-        userMap[user.userId] = user;
+      // FIRST METHOD: Try searching with collection group queries
+      try {
+        // Get users with RESERVATIONS using a different approach
+        print(
+          'UserListingService: Fetching users with reservations using direct query',
+        );
+
+        // Look for confirmed reservations
+        final confirmedQuery =
+            await _firestore
+                .collection('reservations')
+                .where('providerId', isEqualTo: providerId)
+                .where('status', isEqualTo: 'confirmed')
+                .limit(limit)
+                .get();
+
+        print(
+          'UserListingService: Found ${confirmedQuery.docs.length} confirmed reservations',
+        );
+
+        // Look for pending reservations
+        final pendingQuery =
+            await _firestore
+                .collection('reservations')
+                .where('providerId', isEqualTo: providerId)
+                .where('status', isEqualTo: 'pending')
+                .limit(limit)
+                .get();
+
+        print(
+          'UserListingService: Found ${pendingQuery.docs.length} pending reservations',
+        );
+
+        // Process all reservations
+        for (var doc in [...confirmedQuery.docs, ...pendingQuery.docs]) {
+          final data = doc.data();
+          final String userId = data['userId'] as String? ?? '';
+          final String userName = data['userName'] as String? ?? 'Unknown User';
+
+          if (userId.isNotEmpty) {
+            if (!userMap.containsKey(userId)) {
+              userMap[userId] = AppUser(
+                userId: userId,
+                name: userName,
+                userType: UserType.reserved,
+                relatedRecords: [],
+              );
+            }
+
+            // Add this reservation to user's records
+            final reservation = Reservation.fromMap(doc.id, data);
+            userMap[userId]!.relatedRecords.add(
+              RelatedRecord(
+                id: doc.id,
+                type: RecordType.reservation,
+                name: reservation.serviceName ?? 'Unnamed Service',
+                status: reservation.status,
+                date: reservation.dateTime.toDate(),
+                additionalData: {
+                  'type': reservation.type.name,
+                  'groupSize': reservation.groupSize,
+                },
+              ),
+            );
+          }
+        }
+
+        // Get users with SUBSCRIPTIONS
+        print('UserListingService: Fetching users with subscriptions');
+        final subscriptionsQuery =
+            await _firestore
+                .collection('subscriptions')
+                .where('providerId', isEqualTo: providerId)
+                .where('status', isEqualTo: 'Active')
+                .limit(limit)
+                .get();
+
+        print(
+          'UserListingService: Found ${subscriptionsQuery.docs.length} active subscriptions',
+        );
+
+        // Process all subscriptions
+        for (var doc in subscriptionsQuery.docs) {
+          final data = doc.data();
+          final String userId = data['userId'] as String? ?? '';
+          final String userName = data['userName'] as String? ?? 'Unknown User';
+
+          if (userId.isNotEmpty) {
+            if (!userMap.containsKey(userId)) {
+              userMap[userId] = AppUser(
+                userId: userId,
+                name: userName,
+                userType: UserType.subscribed,
+                relatedRecords: [],
+              );
+            } else {
+              // User already exists with reservations, update the type
+              userMap[userId] = userMap[userId]!.copyWith(
+                userType: UserType.both,
+              );
+            }
+
+            // Add this subscription to user's records
+            final subscription = Subscription.fromMap(doc.id, data);
+            userMap[userId]!.relatedRecords.add(
+              RelatedRecord(
+                id: doc.id,
+                type: RecordType.subscription,
+                name: subscription.planName,
+                status: subscription.status,
+                date: subscription.startDate.toDate(),
+                additionalData: {
+                  if (subscription.expiryDate != null)
+                    'expiryDate':
+                        subscription.expiryDate!.toDate().toIso8601String(),
+                  if (subscription.pricePaid != null)
+                    'pricePaid': subscription.pricePaid,
+                },
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        print('UserListingService: Error in direct query approach: $e');
       }
 
-      // Add or update with subscribed users
-      for (var user in subscribedUsers) {
-        if (userMap.containsKey(user.userId)) {
-          // User exists with reservations, merge the data
-          final existingUser = userMap[user.userId]!;
-          userMap[user.userId] = existingUser.copyWith(
-            userType: UserType.both,
-            // Combine related records from both sources
-            relatedRecords: [
-              ...existingUser.relatedRecords,
-              ...user.relatedRecords,
-            ],
-            email: user.email ?? existingUser.email,
-            phone: user.phone ?? existingUser.phone,
-            profilePicUrl: user.profilePicUrl ?? existingUser.profilePicUrl,
-          );
-        } else {
-          // New user with subscription only
-          userMap[user.userId] = user;
+      // SECOND METHOD: If we didn't find any users, try using the original approach
+      if (userMap.isEmpty) {
+        print(
+          'UserListingService: No users found with direct query, trying original approach',
+        );
+        try {
+          // Try the original method
+          final reservedUsers = await getReservedUsers(limit: limit ~/ 2);
+          final subscribedUsers = await getSubscribedUsers(limit: limit ~/ 2);
+
+          // Add reserved users first
+          for (var user in reservedUsers) {
+            userMap[user.userId] = user;
+          }
+
+          // Add or update with subscribed users
+          for (var user in subscribedUsers) {
+            if (userMap.containsKey(user.userId)) {
+              // User exists with reservations, merge the data
+              final existingUser = userMap[user.userId]!;
+              userMap[user.userId] = existingUser.copyWith(
+                userType: UserType.both,
+                // Combine related records from both sources
+                relatedRecords: [
+                  ...existingUser.relatedRecords,
+                  ...user.relatedRecords,
+                ],
+                email: user.email ?? existingUser.email,
+                phone: user.phone ?? existingUser.phone,
+                profilePicUrl: user.profilePicUrl ?? existingUser.profilePicUrl,
+              );
+            } else {
+              // New user with subscription only
+              userMap[user.userId] = user;
+            }
+          }
+        } catch (e) {
+          print('UserListingService: Error in original approach: $e');
         }
       }
 
-      return userMap.values.toList();
+      // THIRD METHOD: Try querying access logs to find users
+      if (userMap.isEmpty) {
+        print('UserListingService: Still no users found, trying access logs');
+        try {
+          final accessLogsQuery =
+              await _firestore
+                  .collection('accessLogs')
+                  .where('providerId', isEqualTo: providerId)
+                  .orderBy('timestamp', descending: true)
+                  .limit(limit)
+                  .get();
+
+          print(
+            'UserListingService: Found ${accessLogsQuery.docs.length} access logs',
+          );
+
+          for (var doc in accessLogsQuery.docs) {
+            final data = doc.data();
+            final String userId = data['userId'] as String? ?? '';
+            final String userName =
+                data['userName'] as String? ?? 'Unknown User';
+
+            if (userId.isNotEmpty && !userMap.containsKey(userId)) {
+              userMap[userId] = AppUser(
+                userId: userId,
+                name: userName,
+                userType: UserType.accessOnly,
+                relatedRecords: [],
+              );
+            }
+          }
+        } catch (e) {
+          print('UserListingService: Error querying access logs: $e');
+        }
+      }
+
+      // Try to enrich the user data if we found any users
+      if (userMap.isNotEmpty) {
+        await _enrichUserData(userMap);
+      }
+
+      final userList = userMap.values.toList();
+      print('UserListingService: Returning ${userList.length} users');
+      return userList;
     } catch (e) {
-      print('Error fetching all users: $e');
-      throw Exception('Failed to fetch users: $e');
+      print('UserListingService: Error fetching all users: $e');
+      return [];
     }
   }
 

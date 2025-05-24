@@ -147,9 +147,21 @@ Future<void> _initializeHive() async {
 /// Register data sources
 void _registerDataSources() {
   print("DI: Registering data sources");
-  sl.registerLazySingleton<AccessControlLocalDataSource>(
-    () => AccessControlLocalDataSourceImpl(),
-  );
+
+  // Create and initialize the AccessControlLocalDataSource
+  final localDataSource = AccessControlLocalDataSourceImpl();
+  // Initialize immediately to prevent "not initialized" errors
+  localDataSource
+      .initialize()
+      .then((_) {
+        print("DI: AccessControlLocalDataSource initialized successfully");
+      })
+      .catchError((e) {
+        print("DI: Error initializing AccessControlLocalDataSource: $e");
+      });
+
+  sl.registerLazySingleton<AccessControlLocalDataSource>(() => localDataSource);
+
   sl.registerLazySingleton<AccessControlRemoteDataSource>(
     () => AccessControlRemoteDataSource(),
   );
