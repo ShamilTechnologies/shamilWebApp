@@ -58,6 +58,8 @@ class _ReservationManagementState extends State<ReservationManagement> {
   @override
   void initState() {
     super.initState();
+    // Initialize with "All" to ensure filter matches items list
+    _filterStatus = 'All';
     displayedReservations = _filterReservations(widget.reservations);
 
     // Verify that we have the necessary data to operate
@@ -215,12 +217,13 @@ class _ReservationManagementState extends State<ReservationManagement> {
                       await _repository.createReservation(
                         providerId: widget.providerId,
                         governorateId: widget.governorateId!,
-                        userId: formData['userId'],
-                        userName: formData['userName'],
+                        userId: formData['userId'] ?? '',
+                        userName: formData['userName'] ?? '',
                         dateTime: formData['dateTime'],
                         type: _getReservationTypeFromString(formData['type']),
                         serviceId: formData['serviceId'],
-                        serviceName: formData['serviceName'],
+                        serviceName:
+                            formData['serviceName'] ?? 'Unknown Service',
                         groupSize: formData['groupSize'] ?? 1,
                         durationMinutes: formData['durationMinutes'],
                         notes: formData['notes'],
@@ -228,12 +231,13 @@ class _ReservationManagementState extends State<ReservationManagement> {
                     } else {
                       // Update existing reservation
                       await _repository.updateReservation(
-                        reservationId: reservation.id,
+                        reservationId: reservation.id ?? '',
                         providerId: widget.providerId,
                         governorateId: widget.governorateId!,
-                        status: formData['status'],
+                        status: formData['status'] ?? 'Pending',
                         dateTime: formData['dateTime'],
-                        serviceName: formData['serviceName'],
+                        serviceName:
+                            formData['serviceName'] ?? 'Unknown Service',
                         groupSize: formData['groupSize'],
                         durationMinutes: formData['durationMinutes'],
                         notes: formData['notes'],
@@ -293,7 +297,7 @@ class _ReservationManagementState extends State<ReservationManagement> {
       setState(() => _isLoading = true);
       try {
         await _repository.deleteReservation(
-          reservation.id,
+          reservation.id ?? '',
           providerId: widget.providerId,
           governorateId: widget.governorateId!,
         );
@@ -328,7 +332,7 @@ class _ReservationManagementState extends State<ReservationManagement> {
         DetailRow(label: "Duration:", value: "${res.durationMinutes} minutes"),
       if (res.notes != null && res.notes!.isNotEmpty)
         DetailRow(label: "Notes:", value: res.notes!),
-      DetailRow(label: "Provider ID:", value: res.providerId),
+      DetailRow(label: "Provider ID:", value: res.providerId ?? 'Unknown'),
 
       // Additional mobile app fields
       if (res.totalPrice != null)
@@ -406,6 +410,14 @@ class _ReservationManagementState extends State<ReservationManagement> {
 
   @override
   Widget build(BuildContext context) {
+    // Define the status options consistently
+    final statusOptions = ['All', 'Pending', 'Confirmed', 'Cancelled'];
+
+    // Ensure filterStatus is one of the available options
+    if (!statusOptions.contains(_filterStatus)) {
+      _filterStatus = 'All';
+    }
+
     return SectionContainer(
       title: "Upcoming Reservations",
       padding: const EdgeInsets.all(0), // Let content manage padding
@@ -413,7 +425,7 @@ class _ReservationManagementState extends State<ReservationManagement> {
         // Filter dropdown (use our reusable component)
         FilterDropdown<String>(
           value: _filterStatus,
-          items: ['All', 'Pending', 'Confirmed', 'Cancelled'],
+          items: statusOptions,
           onChanged: (String? newValue) {
             if (newValue != null) {
               setState(() {

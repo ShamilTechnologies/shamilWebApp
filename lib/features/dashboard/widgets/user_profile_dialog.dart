@@ -98,22 +98,26 @@ class UserProfileDialog extends StatelessWidget {
 
   /// Builds the profile header with user photo and badge
   Widget _buildHeader() {
-    // Determine badge color based on user type
-    Color badgeColor;
-    String badgeText;
+    // Badge color based on user type
+    Color badgeColor = AppColors.primaryColor;
+    String typeLabel = 'Unknown';
 
     switch (user.userType) {
       case UserType.reserved:
-        badgeColor = Colors.blue;
-        badgeText = 'Reserved';
+        badgeColor = Colors.blue.shade700;
+        typeLabel = 'Reserved';
         break;
       case UserType.subscribed:
-        badgeColor = Colors.green;
-        badgeText = 'Subscribed';
+        badgeColor = Colors.green.shade700;
+        typeLabel = 'Subscribed';
         break;
       case UserType.both:
-        badgeColor = Colors.purple;
-        badgeText = 'Reserved & Subscribed';
+        badgeColor = Colors.purple.shade700;
+        typeLabel = 'Reserved & Subscribed';
+        break;
+      case null:
+        badgeColor = AppColors.mediumGrey;
+        typeLabel = 'Unknown';
         break;
     }
 
@@ -228,7 +232,7 @@ class UserProfileDialog extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  badgeText,
+                                  typeLabel,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w500,

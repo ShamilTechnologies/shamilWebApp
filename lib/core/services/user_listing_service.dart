@@ -63,7 +63,7 @@ class UserListingService {
         if (userId.isNotEmpty && !userMap.containsKey(userId)) {
           userMap[userId] = AppUser(
             userId: userId,
-            userName: userName,
+            name: userName,
             userType: UserType.reserved,
             relatedRecords: [],
           );
@@ -115,7 +115,7 @@ class UserListingService {
 
           userMap[userId]!.relatedRecords.add(
             RelatedRecord(
-              id: doc.id,
+              id: doc.id ?? '',
               type: RecordType.reservation,
               name: reservation.serviceName ?? 'Unnamed Service',
               status: reservation.status,
@@ -135,7 +135,7 @@ class UserListingService {
         if (userId.isNotEmpty && !userMap.containsKey(userId)) {
           userMap[userId] = AppUser(
             userId: userId,
-            userName: userName,
+            name: userName,
             userType: UserType.reserved,
             relatedRecords: [],
           );
@@ -187,7 +187,7 @@ class UserListingService {
 
           userMap[userId]!.relatedRecords.add(
             RelatedRecord(
-              id: doc.id,
+              id: doc.id ?? '',
               type: RecordType.reservation,
               name: reservation.serviceName ?? 'Unnamed Service',
               status: reservation.status,
@@ -236,7 +236,7 @@ class UserListingService {
         if (userId.isNotEmpty && !userMap.containsKey(userId)) {
           userMap[userId] = AppUser(
             userId: userId,
-            userName: userName,
+            name: userName,
             userType: UserType.subscribed,
             relatedRecords: [],
           );
@@ -349,10 +349,10 @@ class UserListingService {
                   data['displayName'] as String? ??
                   data['name'] as String? ??
                   data['userName'] as String? ??
-                  userMap[userId]!.userName;
+                  userMap[userId]!.name;
 
               userMap[userId] = userMap[userId]!.copyWith(
-                userName: userName,
+                name: userName,
                 email: data['email'] as String?,
                 phone: data['phone'] as String?,
                 profilePicUrl:
@@ -379,17 +379,17 @@ class UserListingService {
             final data = doc.data();
 
             if (userMap.containsKey(userId) &&
-                (userMap[userId]!.userName == 'Unknown User' ||
+                (userMap[userId]!.name == 'Unknown User' ||
                     userMap[userId]!.email == null)) {
               // Extract name from various possible fields
               final String userName =
                   data['displayName'] as String? ??
                   data['name'] as String? ??
                   data['userName'] as String? ??
-                  userMap[userId]!.userName;
+                  userMap[userId]!.name;
 
               userMap[userId] = userMap[userId]!.copyWith(
-                userName:
+                name:
                     userName.isEmpty
                         ? 'User ${userId.substring(0, 5)}'
                         : userName,
@@ -420,17 +420,17 @@ class UserListingService {
             final data = doc.data();
 
             if (userMap.containsKey(userId) &&
-                (userMap[userId]!.userName == 'Unknown User' ||
+                (userMap[userId]!.name == 'Unknown User' ||
                     userMap[userId]!.email == null)) {
               // Extract name from various possible fields
               final String userName =
                   data['businessName'] as String? ??
                   data['displayName'] as String? ??
                   data['name'] as String? ??
-                  userMap[userId]!.userName;
+                  userMap[userId]!.name;
 
               userMap[userId] = userMap[userId]!.copyWith(
-                userName:
+                name:
                     userName.isEmpty
                         ? 'Business ${userId.substring(0, 5)}'
                         : userName,
@@ -451,9 +451,9 @@ class UserListingService {
 
       // Final pass - ensure no users are left with 'Unknown User'
       for (var userId in userMap.keys) {
-        if (userMap[userId]!.userName == 'Unknown User') {
+        if (userMap[userId]!.name == 'Unknown User') {
           userMap[userId] = userMap[userId]!.copyWith(
-            userName: 'User ${userId.substring(0, 5)}',
+            name: 'User ${userId.substring(0, 5)}',
           );
         }
       }
@@ -485,7 +485,7 @@ class UserListingService {
       // Create a basic user object
       final user = AppUser(
         userId: userId,
-        userName: userName,
+        name: userName,
         userType: UserType.reserved, // Default type, will be updated if needed
         relatedRecords: [],
       );
@@ -529,7 +529,7 @@ class UserListingService {
 
           relatedRecords.add(
             RelatedRecord(
-              id: res.id,
+              id: res.id ?? '',
               type: RecordType.reservation,
               name: res.serviceName ?? "Reservation",
               status: res.status,

@@ -21,7 +21,9 @@ import 'package:shamil_web_app/core/utils/text_style.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 import 'package:shamil_web_app/features/access_control/service/nfc_reader_service.dart';
-import 'package:shamil_web_app/features/access_control/views/access_control_screen.dart';
+// Update to use the new smart access control screen
+import 'package:shamil_web_app/features/access_control/views/smart_access_control_screen.dart';
+import 'package:shamil_web_app/features/access_control/views/enterprise_access_control_screen.dart';
 // Import Auth/Provider Model
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
 import 'package:shamil_web_app/features/auth/views/page/steps/registration_flow.dart';
@@ -53,6 +55,11 @@ import 'package:shamil_web_app/core/services/connectivity_service.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/dashboard_layout.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/dashboard_content.dart';
 import 'package:shamil_web_app/features/dashboard/helper/responsive_layout.dart';
+
+// Add these imports at the top:
+import '../../../domain/models/access_control/access_log.dart' as domain_models;
+import '../../../domain/models/access_control/access_result.dart';
+import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 
 //----------------------------------------------------------------------------//
 // Dashboard Screen Widget (Stateful with Sidebar)                            //
@@ -417,7 +424,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         BlocListener<DashboardBloc, DashboardState>(
           listener: (context, state) {
             if (state is DashboardLoadFailure) {
-              print("Dashboard Listener: Load Failure - ${state.errorMessage}");
+              print("Dashboard Listener: Load Failure - ${state.message}");
             } else if (state is DashboardNotificationReceived) {
               print(
                 "Dashboard Listener: Notification Received - ${state.message}",
@@ -441,7 +448,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (state is DashboardLoading || state is DashboardInitial) {
             return const AnimatedDashboardLoadingScreen();
           } else if (state is DashboardLoadFailure) {
-            return _buildErrorStateUI(context, state.errorMessage);
+            return _buildErrorStateUI(context, state.message);
           } else if (state is DashboardLoadSuccess ||
               state is DashboardNotificationReceived) {
             final DashboardLoadSuccess dataState;
@@ -535,10 +542,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'Dashboard':
         return DashboardContent(
           providerInfo: state.providerInfo,
-          stats: state.stats,
+          stats: DashboardStats.fromMap(state.stats),
           subscriptions: state.subscriptions,
           reservations: state.reservations,
-          accessLogs: state.accessLogs,
+          accessLogs:
+              state.accessLogs
+                  .map(
+                    (log) => domain_models.AccessLog(
+                      id: log.id ?? '',
+                      uid: log.userId,
+                      userName: log.userName,
+                      timestamp: log.timestamp?.toDate() ?? DateTime.now(),
+                      result:
+                          log.status == 'Granted'
+                              ? AccessResult.granted
+                              : AccessResult.denied,
+                      reason: log.denialReason,
+                      method: log.method ?? 'unknown',
+                      needsSync: false,
+                    ),
+                  )
+                  .toList(),
           onRefresh:
               () => context.read<DashboardBloc>().add(RefreshDashboardData()),
         );
@@ -552,7 +576,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'Classes/Services':
         return const ClassesServicesScreen();
       case 'Access Control':
-        return const AccessControlScreen();
+        return const EnterpriseAccessControlScreen();
       case 'Reports':
         return const ReportsScreen();
       case 'Analytics':

@@ -32,6 +32,7 @@ class Subscription extends Equatable {
   final Timestamp? nextRenewalDate;
   final String? billingCycle;
   final bool? isAutoRenewal;
+  final double? amount;
 
   const Subscription({
     required this.id,
@@ -51,6 +52,7 @@ class Subscription extends Equatable {
     this.nextRenewalDate,
     this.billingCycle,
     this.isAutoRenewal,
+    this.amount,
   });
 
   factory Subscription.fromMap(String id, Map<String, dynamic> data) {
@@ -76,6 +78,9 @@ class Subscription extends Equatable {
       nextRenewalDate: data['nextRenewalDate'] as Timestamp?,
       billingCycle: data['billingCycle'] as String?,
       isAutoRenewal: data['autoRenew'] as bool?,
+      amount:
+          (data['amount'] as num?)?.toDouble() ??
+          (data['pricePaid'] as num?)?.toDouble(),
     );
   }
   factory Subscription.fromSnapshot(DocumentSnapshot doc) {
@@ -102,6 +107,7 @@ class Subscription extends Equatable {
       if (nextRenewalDate != null) 'nextRenewalDate': nextRenewalDate,
       if (billingCycle != null) 'billingCycle': billingCycle,
       if (isAutoRenewal != null) 'autoRenew': isAutoRenewal,
+      if (amount != null) 'amount': amount,
     };
   }
 
@@ -123,6 +129,7 @@ class Subscription extends Equatable {
     Timestamp? nextRenewalDate,
     String? billingCycle,
     bool? isAutoRenewal,
+    double? amount,
   }) {
     return Subscription(
       id: id ?? this.id,
@@ -142,6 +149,7 @@ class Subscription extends Equatable {
       nextRenewalDate: nextRenewalDate ?? this.nextRenewalDate,
       billingCycle: billingCycle ?? this.billingCycle,
       isAutoRenewal: isAutoRenewal ?? this.isAutoRenewal,
+      amount: amount ?? this.amount,
     );
   }
 
@@ -164,15 +172,16 @@ class Subscription extends Equatable {
     nextRenewalDate,
     billingCycle,
     isAutoRenewal,
+    amount,
   ];
 }
 
 /// Improved Reservation model that aligns with the mobile app implementation
 class Reservation extends Equatable {
-  final String id;
-  final String userId;
+  final String? id;
+  final String? userId;
   final String userName;
-  final String providerId;
+  final String? providerId;
   final String? serviceId;
   final String? serviceName;
   final Timestamp dateTime;
@@ -193,12 +202,15 @@ class Reservation extends Equatable {
   final String? cancellationReason;
   final Timestamp? checkInTime;
   final Timestamp? checkOutTime;
+  final double? amount;
+  final Timestamp? createdAt;
+  final Timestamp? lastUpdated;
 
   const Reservation({
-    required this.id,
-    required this.userId,
+    this.id,
+    this.userId,
     required this.userName,
-    required this.providerId,
+    this.providerId,
     required this.dateTime,
     required this.status,
     required this.type,
@@ -219,6 +231,9 @@ class Reservation extends Equatable {
     this.cancellationReason,
     this.checkInTime,
     this.checkOutTime,
+    this.amount,
+    this.createdAt,
+    this.lastUpdated,
   });
 
   // Getter for startTime that returns dateTime as a DateTime
@@ -317,6 +332,9 @@ class Reservation extends Equatable {
       cancellationReason: map['cancellationReason'] as String?,
       checkInTime: map['checkInTime'] as Timestamp?,
       checkOutTime: map['checkOutTime'] as Timestamp?,
+      amount: (map['amount'] as num?)?.toDouble(),
+      createdAt: map['createdAt'] as Timestamp?,
+      lastUpdated: map['lastUpdated'] as Timestamp?,
     );
   }
 
@@ -351,6 +369,9 @@ class Reservation extends Equatable {
     String? cancellationReason,
     Timestamp? checkInTime,
     Timestamp? checkOutTime,
+    double? amount,
+    Timestamp? createdAt,
+    Timestamp? lastUpdated,
   }) {
     return Reservation(
       id: id ?? this.id,
@@ -378,6 +399,9 @@ class Reservation extends Equatable {
       cancellationReason: cancellationReason ?? this.cancellationReason,
       checkInTime: checkInTime ?? this.checkInTime,
       checkOutTime: checkOutTime ?? this.checkOutTime,
+      amount: amount ?? this.amount,
+      createdAt: createdAt ?? this.createdAt,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
     );
   }
 
@@ -407,7 +431,52 @@ class Reservation extends Equatable {
     cancellationReason,
     checkInTime,
     checkOutTime,
+    amount,
+    createdAt,
+    lastUpdated,
   ];
+
+  // Add toMap method for consistency
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'userId': userId,
+      'userName': userName,
+      'providerId': providerId,
+      'dateTime': dateTime,
+      'status': status,
+      'reservationType': type.toString().split('.').last,
+      if (serviceId != null) 'serviceId': serviceId,
+      if (serviceName != null) 'serviceName': serviceName,
+      'groupSize': groupSize,
+      if (durationMinutes != null) 'durationMinutes': durationMinutes,
+      if (notes != null) 'notes': notes,
+      if (typeSpecificData != null) 'typeSpecificData': typeSpecificData,
+      if (attendees != null) 'attendees': attendees,
+      if (totalPrice != null) 'totalPrice': totalPrice,
+      'isFullVenueReservation': isFullVenueReservation,
+      'isCommunityVisible': isCommunityVisible,
+      'isQueueBased': isQueueBased,
+      if (paymentStatus != null) 'paymentStatus': paymentStatus,
+      if (queueStatus != null)
+        'queueStatus': {
+          'id': queueStatus!.id,
+          'position': queueStatus!.position,
+          'status': queueStatus!.status,
+          'estimatedEntryTime': Timestamp.fromDate(
+            queueStatus!.estimatedEntryTime,
+          ),
+          'peopleAhead': queueStatus!.peopleAhead,
+        },
+      if (paymentMethod != null) 'paymentMethod': paymentMethod,
+      if (cancellationReason != null) 'cancellationReason': cancellationReason,
+      if (checkInTime != null) 'checkInTime': checkInTime,
+      if (checkOutTime != null) 'checkOutTime': checkOutTime,
+      if (amount != null) 'amount': amount,
+      if (createdAt != null) 'createdAt': createdAt,
+      if (lastUpdated != null) 'lastUpdated': lastUpdated,
+    };
+  }
 }
 
 /// Queue status for real-time queue updates
@@ -538,6 +607,11 @@ class AccessLog extends Equatable {
     method,
     denialReason,
   ];
+
+  /// Convert to a JSON-friendly Map
+  Map<String, dynamic> toJson() {
+    return toMap();
+  }
 }
 
 // --- DashboardStats Model (Keep as is) ---

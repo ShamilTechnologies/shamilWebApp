@@ -184,10 +184,11 @@ class _SplashScreenState extends State<SplashScreen>
       print("Splash: AppLocalStorage initialized.");
 
       // 2. Initialize Firebase
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      print("Splash: Firebase initialized.");
+      // Firebase is now initialized in main.dart
+      // await Firebase.initializeApp(
+      //   options: DefaultFirebaseOptions.currentPlatform,
+      // );
+      print("Splash: Firebase already initialized in main.dart.");
 
       // 3. Initialize timezone database
       tz.initializeTimeZones();

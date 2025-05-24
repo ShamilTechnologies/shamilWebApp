@@ -82,7 +82,7 @@ class ClassesServicesScreen extends StatelessWidget {
         }
         if (state is DashboardLoadFailure) {
           return Center(
-            child: Text("Error loading provider data: ${state.errorMessage}"),
+            child: Text("Error loading provider data: ${state.message}"),
           );
         }
         // Only build content if data is successfully loaded

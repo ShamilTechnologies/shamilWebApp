@@ -200,10 +200,10 @@ class StatsSection extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
 
           // Value and title
-          Flexible(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -224,7 +224,7 @@ class StatsSection extends StatelessWidget {
                     fontSize: 12,
                     color: AppColors.secondaryColor,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 if (subtext != null) ...[

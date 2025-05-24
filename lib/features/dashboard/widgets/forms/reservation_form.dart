@@ -59,7 +59,7 @@ class _ReservationFormState extends State<ReservationForm> {
     // Initialize controllers if editing
     if (widget.initialReservation != null) {
       final res = widget.initialReservation!;
-      _userIdController.text = res.userId;
+      _userIdController.text = res.userId ?? '';
       _userNameController.text = res.userName;
 
       final DateTime dateTime = res.dateTime.toDate();
@@ -269,7 +269,8 @@ class _ReservationFormState extends State<ReservationForm> {
         'type': reservationTypeString,
         'groupSize': int.tryParse(_groupSizeController.text) ?? 1,
         if (_selectedService != null) 'serviceId': _selectedService!.id,
-        if (_selectedService != null) 'serviceName': _selectedService!.name,
+        if (_selectedService != null)
+          'serviceName': _selectedService!.name ?? 'Unknown Service',
         if (_durationController.text.isNotEmpty)
           'durationMinutes': int.tryParse(_durationController.text),
         if (_notesController.text.isNotEmpty)

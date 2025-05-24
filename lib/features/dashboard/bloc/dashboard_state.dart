@@ -9,7 +9,7 @@ part of 'dashboard_bloc.dart'; // Use part of directive for BLoC file
 // Dashboard States                                                           //
 //----------------------------------------------------------------------------//
 
-/// Base class for all states related to the Dashboard feature.
+/// Base class for all dashboard UI states
 abstract class DashboardState extends Equatable {
   const DashboardState();
 
@@ -17,52 +17,53 @@ abstract class DashboardState extends Equatable {
   List<Object?> get props => [];
 }
 
-/// Initial state, dashboard data is not yet loaded.
+/// Initial state before any data is loaded
 class DashboardInitial extends DashboardState {}
 
-/// State indicating data is being loaded. UI should show a loading indicator.
+/// Loading state while dashboard data is being fetched
 class DashboardLoading extends DashboardState {}
 
-/// State indicating data was successfully loaded. UI can display the data.
+/// Success state with all dashboard data loaded
 class DashboardLoadSuccess extends DashboardState {
   final ServiceProviderModel providerInfo;
-  final List<Subscription> subscriptions;
   final List<Reservation> reservations;
+  final List<Subscription> subscriptions;
+  final Map<String, dynamic> stats;
   final List<AccessLog> accessLogs;
-  final DashboardStats stats;
 
   const DashboardLoadSuccess({
     required this.providerInfo,
-    required this.subscriptions,
     required this.reservations,
-    required this.accessLogs,
+    required this.subscriptions,
     required this.stats,
+    required this.accessLogs,
   });
 
+  /// Create a copy of this state with optional new values
   DashboardLoadSuccess copyWith({
     ServiceProviderModel? providerInfo,
-    List<Subscription>? subscriptions,
     List<Reservation>? reservations,
+    List<Subscription>? subscriptions,
+    Map<String, dynamic>? stats,
     List<AccessLog>? accessLogs,
-    DashboardStats? stats,
   }) {
     return DashboardLoadSuccess(
       providerInfo: providerInfo ?? this.providerInfo,
-      subscriptions: subscriptions ?? this.subscriptions,
       reservations: reservations ?? this.reservations,
-      accessLogs: accessLogs ?? this.accessLogs,
+      subscriptions: subscriptions ?? this.subscriptions,
       stats: stats ?? this.stats,
+      accessLogs: accessLogs ?? this.accessLogs,
     );
   }
 
   @override
   List<Object?> get props => [
-        providerInfo,
-        subscriptions,
-        reservations,
-        accessLogs,
-        stats
-      ];
+    providerInfo,
+    reservations,
+    subscriptions,
+    stats,
+    accessLogs,
+  ];
 
   @override
   String toString() {
@@ -70,30 +71,29 @@ class DashboardLoadSuccess extends DashboardState {
   }
 }
 
-/// State indicating an error occurred during data loading. UI should show an error message.
+/// Failure state when loading dashboard data fails
 class DashboardLoadFailure extends DashboardState {
-  final String errorMessage;
+  final String message;
 
-  const DashboardLoadFailure(this.errorMessage);
-
-  @override
-  List<Object?> get props => [errorMessage];
+  const DashboardLoadFailure(this.message);
 
   @override
-  String toString() => 'DashboardLoadFailure(errorMessage: $errorMessage)';
+  List<Object> get props => [message];
+
+  @override
+  String toString() => 'DashboardLoadFailure(errorMessage: $message)';
 }
 
-/// State indicating a new notification (reservation/subscription) has been received.
-/// The UI listener will react to this state to show feedback.
+/// Temporary notification state that's emitted for notifications.
+/// This should be handled by the UI to show snackbars/toasts, then return to previous state
 class DashboardNotificationReceived extends DashboardState {
-  final String message; // Message to display (e.g., "New reservation from John Doe")
-  final dynamic data; // Optional: The actual Reservation or Subscription object
+  final String message;
 
-  const DashboardNotificationReceived({required this.message, this.data});
+  const DashboardNotificationReceived({required this.message});
 
   @override
-  List<Object?> get props => [message, data];
+  List<Object> get props => [message];
 
-   @override
+  @override
   String toString() => 'DashboardNotificationReceived(message: $message)';
 }

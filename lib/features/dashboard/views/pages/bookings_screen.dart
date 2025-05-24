@@ -58,7 +58,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
             content: SingleChildScrollView(
               child: ListBody(
                 children: <Widget>[
-                  _buildDetailRow("Booking ID:", reservation.id),
+                  _buildDetailRow("Booking ID:", reservation.id ?? 'Unknown'),
                   _buildDetailRow("User Name:", reservation.userName),
                   _buildDetailRow(
                     "Date & Time:",
@@ -114,7 +114,7 @@ class _BookingsScreenState extends State<BookingsScreen> {
         }
         if (state is DashboardLoadFailure) {
           return Center(
-            child: Text("Error loading bookings data: ${state.errorMessage}"),
+            child: Text("Error loading bookings data: ${state.message}"),
           );
         }
         if (state is DashboardLoadSuccess) {
@@ -259,7 +259,8 @@ class ReservationDataSource extends CalendarDataSource {
           final Duration duration = Duration(
             minutes: reservation.durationMinutes ?? 60,
           ); // Default duration
-          final DateTime endTime = reservation.startTime.add(duration);
+          final DateTime startTime = reservation.dateTime.toDate();
+          final DateTime endTime = startTime.add(duration);
 
           // Determine color based on status
           Color color = AppColors.primaryColor; // Default/Confirmed
@@ -271,12 +272,15 @@ class ReservationDataSource extends CalendarDataSource {
             color = Colors.green.shade600;
           }
 
+          // Create a safe subject string that is never null
+          final String subject =
+              reservation.serviceName ??
+              "Reservation for ${reservation.userName}";
+
           return Appointment(
-            startTime: reservation.startTime,
+            startTime: startTime,
             endTime: endTime,
-            subject:
-                reservation.serviceName ??
-                reservation.userName, // Show service or user name
+            subject: subject,
             notes:
                 'User: ${reservation.userName}\nStatus: ${reservation.status}', // Include user/status in notes for agenda view
             color: color,

@@ -1,144 +1,368 @@
 /// File: lib/features/dashboard/widgets/access_log_section.dart
 /// --- Section for displaying recent access logs ---
-/// --- UPDATED: Now uses centralized data service ---
+/// --- UPDATED: Now uses clean architecture with domain models ---
 library;
 
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:shimmer/shimmer.dart';
 
-// Import Models and Utils needed
-import 'package:shamil_web_app/core/services/centralized_data_service.dart';
+// Import Utils needed
 import 'package:shamil_web_app/core/utils/colors.dart';
 import 'package:shamil_web_app/core/utils/text_style.dart';
-import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
-// Import common helper widgets/functions
-import '../helper/dashboard_widgets.dart'; // For SectionContainer, ListHeaderWithViewAll, DashboardListTile, buildEmptyState
-import 'package:shamil_web_app/features/access_control/widgets/access_validation_form.dart';
 
+// Import domain models and BLoC with alias for AccessLog
+import '../../../domain/models/access_control/access_log.dart' as domain;
+import '../../../domain/models/access_control/access_result.dart';
+import '../../../presentation/bloc/access_control/access_control_bloc.dart';
+import '../../../presentation/bloc/access_control/access_control_event.dart';
+import '../../../presentation/bloc/access_control/access_control_state.dart';
+
+/// Enhanced widget for displaying recent access logs in the dashboard
 class AccessLogSection extends StatefulWidget {
-  final String providerId;
-  final List<AccessLog> initialLogs;
-
-  const AccessLogSection({
-    Key? key,
-    required this.providerId,
-    required this.initialLogs,
-  }) : super(key: key);
+  const AccessLogSection({Key? key}) : super(key: key);
 
   @override
   State<AccessLogSection> createState() => _AccessLogSectionState();
 }
 
 class _AccessLogSectionState extends State<AccessLogSection> {
-  late List<AccessLog> accessLogs;
-  bool _isLoading = false;
-  final CentralizedDataService _dataService = CentralizedDataService();
-  StreamSubscription? _logsSubscription;
-
   @override
   void initState() {
     super.initState();
-    accessLogs = List.from(widget.initialLogs);
-
-    // Initialize data service if needed
-    _initializeDataService();
-
-    // Subscribe to log updates
-    _subscribeToLogUpdates();
-
-    // Load more logs
-    _loadMoreLogs();
+    // Load logs when widget is initialized
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AccessControlBloc>().add(LoadAccessLogsEvent(limit: 5));
+    });
   }
 
   @override
-  void dispose() {
-    _logsSubscription?.cancel();
-    super.dispose();
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 350),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Column(
+          children: [
+            _buildHeader(),
+            Expanded(
+              child: BlocBuilder<AccessControlBloc, AccessControlState>(
+                builder: (context, state) {
+                  if (state is AccessLogsLoaded) {
+                    return _buildLogsList(state.logs);
+                  } else if (state is AccessControlLoading) {
+                    return _buildLoadingState();
+                  } else if (state is AccessControlError) {
+                    return _buildErrorState(state.message);
+                  } else {
+                    return _buildEmptyState();
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Future<void> _initializeDataService() async {
-    // Make sure data service is initialized
-    try {
-      await _dataService.init();
-    } catch (e) {
-      print("AccessLogSection: Error initializing data service: $e");
-      // Continue, we'll try to load logs directly
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: const BoxDecoration(
+        color: AppColors.primaryColor,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Recent Access Activity',
+            style: getTitleStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white, size: 20),
+            tooltip: 'Refresh logs',
+            onPressed: () {
+              context.read<AccessControlBloc>().add(
+                LoadAccessLogsEvent(limit: 5),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: ListView.builder(
+        itemCount: 4,
+        padding: const EdgeInsets.all(0),
+        itemBuilder: (context, index) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        height: 14,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(height: 6),
+                      Container(width: 100, height: 10, color: Colors.white),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLogsList(List<domain.AccessLog> logs) {
+    if (logs.isEmpty) {
+      return _buildEmptyState();
     }
-  }
 
-  void _subscribeToLogUpdates() {
-    _logsSubscription = _dataService.accessLogsStream.listen(
-      (logs) {
-        if (mounted) {
-          setState(() {
-            accessLogs = logs;
-            _isLoading = false;
-          });
-        }
-      },
-      onError: (e) {
-        print("AccessLogSection: Error in log stream: $e");
+    return ListView.builder(
+      itemCount: logs.length,
+      padding: EdgeInsets.zero,
+      itemBuilder: (context, index) {
+        final log = logs[index];
+        return _buildLogItem(log);
       },
     );
   }
 
-  Future<void> _loadMoreLogs() async {
-    if (_isLoading) return;
+  Widget _buildLogItem(domain.AccessLog log) {
+    final String formattedTime = DateFormat('h:mm a').format(log.timestamp);
+    final String formattedDate = DateFormat(
+      'MMM d, yyyy',
+    ).format(log.timestamp);
+    final userName = log.userName ?? 'Unknown User';
+    final isSuccess = log.result == AccessResult.granted;
 
-    setState(() {
-      _isLoading = true;
-    });
+    return InkWell(
+      onTap: () => _showLogDetails(log),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color:
+                    isSuccess
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.red.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isSuccess ? Icons.check : Icons.close,
+                color: isSuccess ? Colors.green : Colors.red,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          userName,
+                          style: getbodyStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Text(
+                        formattedTime,
+                        style: getSmallStyle(color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Text(
+                        isSuccess ? 'Access granted' : 'Access denied',
+                        style: getSmallStyle(
+                          color: isSuccess ? Colors.green : Colors.red,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _methodColor(log.method).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          log.method,
+                          style: getSmallStyle(
+                            color: _methodColor(log.method),
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                      if (log.needsSync) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.sync, color: Colors.orange, size: 12),
+                      ],
+                    ],
+                  ),
+                  Text(
+                    formattedDate,
+                    style: getSmallStyle(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-    try {
-      // Use the centralized data service to get logs
-      final logs = await _dataService.getRecentAccessLogs(forceRefresh: true);
-
-      // No need to manually ensure user data is loaded, the centralized service handles this
-
-      setState(() {
-        accessLogs = logs;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading access logs: ${e.toString()}'),
-            backgroundColor: Colors.red,
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.history, size: 48, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            'No recent access logs',
+            style: getTitleStyle(color: Colors.grey[700]),
           ),
-        );
-      }
+          const SizedBox(height: 8),
+          Text(
+            'Access activity will appear here',
+            style: getSmallStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 48, color: Colors.orange[400]),
+          const SizedBox(height: 16),
+          Text(
+            'Error loading logs',
+            style: getTitleStyle(color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              message,
+              style: getSmallStyle(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: () {
+              context.read<AccessControlBloc>().add(
+                LoadAccessLogsEvent(limit: 5),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryColor,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Try Again'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _methodColor(String method) {
+    switch (method.toLowerCase()) {
+      case 'nfc':
+        return Colors.blue;
+      case 'qr':
+        return Colors.purple;
+      case 'manual':
+        return Colors.teal;
+      default:
+        return Colors.grey;
     }
   }
 
-  Future<void> _showAccessValidationForm() async {
-    await showDialog(
+  void _showLogDetails(domain.AccessLog log) {
+    final dateFormat = DateFormat('MMMM d, yyyy • h:mm:ss a');
+    final formattedDate = dateFormat.format(log.timestamp);
+
+    showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
             title: Text(
-              'Validate User Access',
-              style: getTitleStyle(fontSize: 20, fontWeight: FontWeight.w600),
-            ),
-            content: SizedBox(
-              width: 500,
-              child: AccessValidationForm(
-                dataService: _dataService, // Pass the centralized data service
-                onAccessResult: (result) async {
-                  // Automatically close the dialog after successful validation
-                  if (result['hasAccess'] == true) {
-                    Navigator.of(context).pop();
-
-                    // Refresh logs
-                    await _loadMoreLogs();
-                  }
-                },
+              log.result == AccessResult.granted
+                  ? 'Access Granted'
+                  : 'Access Denied',
+              style: TextStyle(
+                color:
+                    log.result == AccessResult.granted
+                        ? Colors.green
+                        : Colors.red,
               ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildDetailRow('User ID:', log.uid),
+                _buildDetailRow('Name:', log.userName ?? 'Unknown'),
+                _buildDetailRow('Time:', formattedDate),
+                _buildDetailRow('Method:', log.method),
+                if (log.reason != null) _buildDetailRow('Reason:', log.reason!),
+                _buildDetailRow('Synced:', !log.needsSync ? 'Yes' : 'No'),
+              ],
             ),
             actions: [
               TextButton(
@@ -150,161 +374,21 @@ class _AccessLogSectionState extends State<AccessLogSection> {
     );
   }
 
-  Widget _buildAccessLogItem(AccessLog log) {
-    final DateTime logTime = log.timestamp.toDate();
-    final String formattedTime = DateFormat('MMM d, h:mm a').format(logTime);
-
-    // Ensure user name is properly displayed
-    final String userName =
-        log.userName == 'Unknown' || log.userName == 'Unknown User'
-            ? 'User ${log.userId.length > 6 ? log.userId.substring(0, 6) + '...' : log.userId}'
-            : log.userName;
-
-    // Determine status color
-    Color statusColor;
-    IconData statusIcon;
-
-    if (log.status.toLowerCase() == 'granted') {
-      statusColor = Colors.green;
-      statusIcon = Icons.check_circle_outline;
-    } else {
-      statusColor = Colors.red;
-      statusIcon = Icons.cancel_outlined;
-    }
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      elevation: 0,
-      color: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8.0),
-        side: BorderSide(color: AppColors.lightGrey.withOpacity(0.5)),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: CircleAvatar(
-          backgroundColor: statusColor.withOpacity(0.1),
-          child: Icon(statusIcon, color: statusColor),
-        ),
-        title: Text(userName, style: getTitleStyle(fontSize: 14)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Text(formattedTime, style: getSmallStyle()),
-            if (log.method != null && log.method!.isNotEmpty)
-              Text('Method: ${log.method}', style: getSmallStyle()),
-            if (log.status.toLowerCase() == 'denied' &&
-                log.denialReason != null)
-              Text(
-                'Reason: ${log.denialReason}',
-                style: getSmallStyle(color: Colors.red.shade700),
-              ),
-          ],
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: statusColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            log.status,
-            style: getSmallStyle(
-              color: statusColor,
-              fontWeight: FontWeight.w500,
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              label,
+              style: getbodyStyle(fontWeight: FontWeight.bold),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SectionContainer(
-      title: "Recent Access Activity",
-      padding: const EdgeInsets.all(0), // Let content manage padding
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 400), // Limit max height
-        child: Column(
-          children: [
-            // Header with actions
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  // Manual validation button
-                  IconButton(
-                    icon: const Icon(Icons.person_search),
-                    tooltip: 'Validate User Access',
-                    onPressed: _showAccessValidationForm,
-                  ),
-                  // Refresh button
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    tooltip: 'Refresh Logs',
-                    onPressed: _loadMoreLogs,
-                  ),
-                ],
-              ),
-            ),
-
-            // Content - Now in Expanded to fill available space
-            Expanded(
-              child:
-                  _isLoading && accessLogs.isEmpty
-                      ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(20.0),
-                          child: CircularProgressIndicator(),
-                        ),
-                      )
-                      : Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child:
-                            accessLogs.isEmpty
-                                ? buildEmptyState(
-                                  "No access logs found.",
-                                  icon: Icons.history_outlined,
-                                )
-                                : ListView(
-                                  shrinkWrap: true,
-                                  physics: const ClampingScrollPhysics(),
-                                  children: [
-                                    ...accessLogs
-                                        .take(5)
-                                        .map(_buildAccessLogItem)
-                                        .toList(),
-                                    if (_isLoading)
-                                      const Padding(
-                                        padding: EdgeInsets.all(8.0),
-                                        child: Center(
-                                          child: SizedBox(
-                                            height: 20,
-                                            width: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 8.0,
-                                      ),
-                                      child: TextButton(
-                                        onPressed: _loadMoreLogs,
-                                        child: const Text('Load More'),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                      ),
-            ),
-          ],
-        ),
+          Expanded(child: Text(value, style: getbodyStyle())),
+        ],
       ),
     );
   }

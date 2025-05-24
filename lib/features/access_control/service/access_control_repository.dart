@@ -1,34 +1,42 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shamil_web_app/core/services/unified_cache_service.dart';
 import 'package:shamil_web_app/features/access_control/data/local_cache_models.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 import 'package:shamil_web_app/features/dashboard/services/reservation_sync_service.dart';
 import 'dart:async';
 
+/// Simple validation result class
+class ValidationResult {
+  final bool granted;
+  final String? reason;
+
+  ValidationResult({required this.granted, this.reason});
+}
+
 /// Repository for access control operations in the web app.
-/// Interfaces with AccessControlSyncService for local caching and sync operations.
+/// Interfaces with UnifiedCacheService for local caching and sync operations.
 class AccessControlRepository {
   final FirebaseFirestore _firestore;
   final FirebaseAuth _auth;
-  final AccessControlSyncService _syncService;
+  final UnifiedCacheService _cacheService;
 
   AccessControlRepository({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
-    AccessControlSyncService? syncService,
+    UnifiedCacheService? cacheService,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = auth ?? FirebaseAuth.instance,
-       _syncService = syncService ?? AccessControlSyncService();
+       _cacheService = cacheService ?? UnifiedCacheService();
 
-  /// Initialize the repository by ensuring the sync service is ready
+  /// Initialize the repository by ensuring the cache service is ready
   Future<void> initialize() async {
-    await _syncService.init();
+    await _cacheService.init();
   }
 
-  /// Force a full refresh from mobile app data
-  /// This method is more aggressive in searching for data in the mobile app structure
+  /// Force a full refresh of data
   Future<bool> refreshMobileAppData() async {
     try {
       final providerId = _auth.currentUser?.uid;
@@ -38,195 +46,24 @@ class AccessControlRepository {
       }
 
       // Set syncing status
-      _syncService.isSyncingNotifier.value = true;
+      _cacheService.isSyncingNotifier.value = true;
 
       try {
-        print("Starting full refresh from mobile app data structure...");
+        print("Starting full refresh of data...");
 
-        // STEP 1: First get all potential user IDs from various sources
-        final Set<String> allUserIds = await _collectAllUserIdsToFetch(
-          providerId,
-        );
+        // Use the unified sync method
+        final success = await _cacheService.syncAllData();
 
-        if (allUserIds.isEmpty) {
-          print("No users found to refresh data for");
-          return false;
-        }
-
-        print("Found ${allUserIds.length} unique users to process");
-
-        // STEP 2: Process users in batches for better performance
-        List<String> userIdsList = allUserIds.toList();
-        final batchResults = await batchFetchUsersData(userIdsList);
-
-        // STEP 3: Report results
-        final successCount =
-            batchResults.values.where((success) => success).length;
-        print(
-          "Successfully refreshed data for $successCount out of ${userIdsList.length} users",
-        );
-
-        // STEP 4: Trigger a sync of all data to ensure the cache is coherent
-        await _syncService.syncAllData();
-
-        print("Mobile app data refresh completed successfully");
-        return successCount > 0;
+        print("Data refresh completed with result: $success");
+        return success;
       } finally {
         // Ensure syncing status is reset
-        _syncService.isSyncingNotifier.value = false;
+        _cacheService.isSyncingNotifier.value = false;
       }
     } catch (e) {
-      print("Error refreshing mobile app data: $e");
-      _syncService.isSyncingNotifier.value = false;
+      print("Error refreshing data: $e");
+      _cacheService.isSyncingNotifier.value = false;
       return false;
-    }
-  }
-
-  /// Collect all user IDs that potentially have data with this provider
-  Future<Set<String>> _collectAllUserIdsToFetch(String providerId) async {
-    final Set<String> uniqueUserIds = {};
-
-    try {
-      // First get reservations using ReservationSyncService
-      print("Collecting users from ReservationSyncService...");
-      final reservationSyncService = ReservationSyncService();
-      await reservationSyncService.init();
-
-      // Get reservations
-      final reservations = await reservationSyncService.syncReservations();
-      print(
-        "Found ${reservations.length} reservations from ReservationSyncService",
-      );
-
-      // Extract user IDs
-      for (final reservation in reservations) {
-        if (reservation.userId.isNotEmpty) {
-          uniqueUserIds.add(reservation.userId);
-        }
-      }
-
-      // Get subscriptions
-      final subscriptions = await reservationSyncService.syncSubscriptions();
-      print(
-        "Found ${subscriptions.length} subscriptions from ReservationSyncService",
-      );
-
-      // Extract user IDs
-      for (final subscription in subscriptions) {
-        if (subscription.userId.isNotEmpty) {
-          uniqueUserIds.add(subscription.userId);
-        }
-      }
-
-      // Find all end users who have reservations with this provider using collection group query
-      try {
-        print(
-          "Querying collectionGroup 'reservations' for providerId: $providerId",
-        );
-        final endUsersWithReservations =
-            await _firestore
-                .collectionGroup('reservations')
-                .where('providerId', isEqualTo: providerId)
-                .get();
-
-        print(
-          "Found ${endUsersWithReservations.docs.length} reservations across all endUsers",
-        );
-
-        // Process reservation docs to extract user IDs
-        for (final doc in endUsersWithReservations.docs) {
-          try {
-            final String? userId = doc.data()['userId'] as String?;
-            if (userId != null && userId.isNotEmpty) {
-              uniqueUserIds.add(userId);
-            }
-          } catch (e) {
-            print("Error extracting userId from reservation doc: $e");
-          }
-        }
-      } catch (e) {
-        print("Warning: Error querying collectionGroup 'reservations': $e");
-      }
-
-      // Find all end users who have subscriptions with this provider using collection group query
-      try {
-        print(
-          "Querying collectionGroup 'subscriptions' for providerId: $providerId",
-        );
-        final endUsersWithSubscriptions =
-            await _firestore
-                .collectionGroup('subscriptions')
-                .where('providerId', isEqualTo: providerId)
-                .get();
-
-        print(
-          "Found ${endUsersWithSubscriptions.docs.length} subscriptions across all endUsers",
-        );
-
-        // Process subscription docs to extract user IDs
-        for (final doc in endUsersWithSubscriptions.docs) {
-          try {
-            final String? userId = doc.data()['userId'] as String?;
-            if (userId != null && userId.isNotEmpty) {
-              uniqueUserIds.add(userId);
-            }
-          } catch (e) {
-            print("Error extracting userId from subscription doc: $e");
-          }
-        }
-      } catch (e) {
-        print("Warning: Error querying collectionGroup 'subscriptions': $e");
-      }
-
-      // Check alternative collection paths like memberships, packages, etc.
-      for (final path in [
-        'memberships',
-        'packages',
-        'plans',
-        'appointments',
-        'bookings',
-      ]) {
-        try {
-          print("Querying collectionGroup '$path' for providerId: $providerId");
-          final query =
-              await _firestore
-                  .collectionGroup(path)
-                  .where('providerId', isEqualTo: providerId)
-                  .get();
-
-          print("Found ${query.docs.length} documents in $path collection");
-
-          // Extract user IDs
-          for (final doc in query.docs) {
-            try {
-              // Try to determine which user this document belongs to by analyzing the path
-              final String fullPath = doc.reference.path;
-              final pathSegments = fullPath.split('/');
-
-              // Find the endUsers segment and the userId that follows it
-              for (int i = 0; i < pathSegments.length - 1; i++) {
-                if (pathSegments[i] == 'endUsers' &&
-                    i + 1 < pathSegments.length) {
-                  uniqueUserIds.add(pathSegments[i + 1]);
-                  break;
-                }
-              }
-            } catch (e) {
-              print("Error extracting userId from $path doc: $e");
-            }
-          }
-        } catch (e) {
-          print("Warning: Error querying collectionGroup '$path': $e");
-        }
-      }
-
-      print(
-        "Collected ${uniqueUserIds.length} unique user IDs from all sources",
-      );
-      return uniqueUserIds;
-    } catch (e) {
-      print("Error collecting user IDs: $e");
-      return uniqueUserIds;
     }
   }
 
@@ -245,6 +82,9 @@ class AccessControlRepository {
         return {'success': false, 'error': 'Provider not authenticated'};
       }
 
+      // Ensure cache service is initialized
+      await _cacheService.init();
+
       // Create the access log
       final accessLog = LocalAccessLog(
         userId: userId,
@@ -257,10 +97,10 @@ class AccessControlRepository {
       );
 
       // Save locally first
-      await _syncService.saveLocalAccessLog(accessLog);
+      await _cacheService.saveAccessLog(accessLog);
 
       // Trigger sync if possible
-      _syncService.syncAccessLogs().catchError((e) {
+      _cacheService.syncAccessLogs().catchError((e) {
         // Just log the error, the log is already saved locally
         print("Error during access log sync: $e");
       });
@@ -275,11 +115,11 @@ class AccessControlRepository {
   /// Get recent access logs from Firebase (not local cache)
   Future<List<AccessLog>> getRecentAccessLogs({int limit = 50}) async {
     try {
-      // Ensure the sync service is initialized
+      // Ensure the cache service is initialized
       try {
         await initialize();
       } catch (e) {
-        print("Warning: Failed to initialize sync service: $e");
+        print("Warning: Failed to initialize cache service: $e");
         // Continue anyway to attempt to get logs from Firestore
       }
 
@@ -380,6 +220,9 @@ class AccessControlRepository {
           final userData = userDoc.data()!;
           userName =
               userData['displayName'] ?? userData['name'] ?? 'Unknown User';
+
+          // Cache this user info for future use
+          await _cacheService.ensureUserInCache(userId, userName as String);
         }
       } catch (e) {
         print("DIRECT ACCESS CHECK: Error fetching user data: $e");
@@ -412,6 +255,19 @@ class AccessControlRepository {
               print(
                 "DIRECT ACCESS CHECK: Found valid subscription with expiry date: $expiryDateTime",
               );
+
+              // Cache this subscription
+              final subscription = CachedSubscription(
+                userId: userId,
+                subscriptionId: subQuery.docs.first.id,
+                planName: subData['planName'] as String? ?? 'Subscription',
+                expiryDate: expiryDateTime,
+              );
+              await _cacheService.cachedSubscriptionsBox.put(
+                subQuery.docs.first.id,
+                subscription,
+              );
+
               return {
                 'hasAccess': true,
                 'accessType': 'subscription',
@@ -485,6 +341,24 @@ class AccessControlRepository {
                 print(
                   "DIRECT ACCESS CHECK: Found active reservation: Start: $reservationTime, End: $endTime",
                 );
+
+                // Cache this reservation
+                final reservation = CachedReservation(
+                  userId: userId,
+                  reservationId: doc.id,
+                  serviceName:
+                      resData['serviceName'] as String? ?? 'Reservation',
+                  startTime: reservationTime,
+                  endTime: endTime,
+                  typeString: resData['type'] as String? ?? 'standard',
+                  groupSize: (resData['groupSize'] as num?)?.toInt() ?? 1,
+                  status: resData['status'] as String? ?? 'Unknown',
+                );
+                await _cacheService.cachedReservationsBox.put(
+                  doc.id,
+                  reservation,
+                );
+
                 return {
                   'hasAccess': true,
                   'accessType': 'reservation',
@@ -526,19 +400,18 @@ class AccessControlRepository {
     try {
       print("ACCESS CHECK: Starting validation for user ID: $userId");
 
-      // First check if we have this user in cache already
-      final cachedUser = await _syncService.getCachedUser(userId);
-
       // Get current time for all comparisons
       final now = DateTime.now();
       print("ACCESS CHECK: Current validation time: $now");
 
-      // STEP 1: First check the local cache for fast response
+      // STEP 1: First check the unified cache for fast response
+      final cachedUser = await _cacheService.getCachedUser(userId);
+
       if (cachedUser != null) {
         print("ACCESS CHECK: Found user in cache: ${cachedUser.userName}");
 
         // Check for active subscription in cache
-        final activeSubscription = await _syncService.findActiveSubscription(
+        final activeSubscription = await _cacheService.findActiveSubscription(
           userId,
           now,
         );
@@ -557,7 +430,7 @@ class AccessControlRepository {
         }
 
         // Check for active reservation in cache
-        final activeReservation = await _syncService.findActiveReservation(
+        final activeReservation = await _cacheService.findActiveReservation(
           userId,
           now,
         );
@@ -583,21 +456,11 @@ class AccessControlRepository {
         print("ACCESS CHECK: User not found in cache, proceeding to fetch");
       }
 
-      // STEP 2: If not found in cache, refresh user data from Firestore
-      // This uses a more efficient approach to fetch the user and their data
-      print("ACCESS CHECK: Performing focused data refresh for user $userId");
-
-      final refreshResult = await refreshUserData(userId);
-      if (!refreshResult) {
-        print(
-          "ACCESS CHECK: Failed to refresh user data, attempting full refresh",
-        );
-        // If the focused refresh failed, try a full refresh as fallback
-        await refreshMobileAppData();
-      }
+      // STEP 2: Refresh user data from unified cache service
+      await _cacheService.syncAllData();
 
       // STEP 3: Check the cache again after refresh
-      final refreshedUser = await _syncService.getCachedUser(userId);
+      final refreshedUser = await _cacheService.getCachedUser(userId);
       if (refreshedUser == null) {
         print("ACCESS CHECK: User still not found after refresh");
         return {
@@ -608,7 +471,7 @@ class AccessControlRepository {
       }
 
       // Check for active subscription after refresh
-      final refreshedSubscription = await _syncService.findActiveSubscription(
+      final refreshedSubscription = await _cacheService.findActiveSubscription(
         userId,
         now,
       );
@@ -627,7 +490,7 @@ class AccessControlRepository {
       }
 
       // Check for active reservation after refresh
-      final refreshedReservation = await _syncService.findActiveReservation(
+      final refreshedReservation = await _cacheService.findActiveReservation(
         userId,
         now,
       );
@@ -672,417 +535,10 @@ class AccessControlRepository {
     }
   }
 
-  /// Refresh data for a specific user efficiently
-  /// This method focuses on getting only the necessary data for one user
-  Future<bool> refreshUserData(String userId) async {
-    try {
-      final providerId = _auth.currentUser?.uid;
-      if (providerId == null) {
-        print("Cannot refresh user data: Provider not authenticated");
-        return false;
-      }
-
-      print("Focused refresh: Starting for user $userId");
-
-      // STEP 1: Get basic user info first
-      String? userName;
-      try {
-        final userDoc =
-            await _firestore.collection('endUsers').doc(userId).get();
-        if (userDoc.exists && userDoc.data() != null) {
-          final userData = userDoc.data()!;
-          userName =
-              userData['displayName'] as String? ??
-              userData['name'] as String? ??
-              userData['fullName'] as String? ??
-              'Unknown User';
-
-          // Cache the user with the found name
-          await _syncService.ensureUserInCache(userId, userName);
-          print("Focused refresh: Cached user info for $userId: $userName");
-        } else {
-          print(
-            "Focused refresh: User document not found in endUsers collection",
-          );
-        }
-      } catch (e) {
-        print("Focused refresh: Error getting user info: $e");
-        // Continue with the process even if basic info fails
-      }
-
-      // STEP 2: Get data window parameters for queries
-      final now = DateTime.now();
-      final pastDate = now.subtract(const Duration(days: 7));
-      final futureDate = now.add(const Duration(days: 60));
-
-      // STEP 3: Parallel fetching of subscriptions and reservations for efficiency
-      final results = await Future.wait([
-        // Fetch subscriptions with all possible paths
-        _fetchUserSubscriptionsAllPaths(userId, providerId),
-
-        // Fetch reservations with all possible paths
-        _fetchUserReservationsAllPaths(
-          userId,
-          providerId,
-          pastDate,
-          futureDate,
-        ),
-      ], eagerError: true);
-
-      final int subscribtionsCount = results[0] as int;
-      final int reservationsCount = results[1] as int;
-
-      print(
-        "Focused refresh: Completed for user $userId - Found $subscribtionsCount subscriptions and $reservationsCount reservations",
-      );
-
-      return subscribtionsCount > 0 || reservationsCount > 0;
-    } catch (e) {
-      print("Focused refresh: Error refreshing user data: $e");
-      return false;
-    }
-  }
-
-  /// Fetch all subscriptions for a user across all possible collection paths
-  Future<int> _fetchUserSubscriptionsAllPaths(
-    String userId,
-    String providerId,
-  ) async {
-    int count = 0;
-
-    try {
-      // Define all possible collection paths to check
-      final subscriptionPaths = [
-        'subscriptions',
-        'memberships',
-        'packages',
-        'plans',
-      ];
-
-      // Process each collection path in parallel
-      final results = await Future.wait(
-        subscriptionPaths.map(
-          (path) => _processSubscriptionPath(userId, providerId, path),
-        ),
-      );
-
-      // Sum up the results
-      count = results.fold(0, (sum, pathCount) => sum + pathCount);
-
-      print(
-        "Fetched $count total subscriptions across all paths for user $userId",
-      );
-      return count;
-    } catch (e) {
-      print("Error fetching subscriptions across paths: $e");
-      return count;
-    }
-  }
-
-  /// Process a specific subscription collection path
-  Future<int> _processSubscriptionPath(
-    String userId,
-    String providerId,
-    String collectionPath,
-  ) async {
-    try {
-      final query =
-          await _firestore
-              .collection('endUsers')
-              .doc(userId)
-              .collection(collectionPath)
-              .where('providerId', isEqualTo: providerId)
-              .get();
-
-      if (query.docs.isEmpty) {
-        return 0;
-      }
-
-      print(
-        "Found ${query.docs.length} items in $collectionPath path for user $userId",
-      );
-
-      int count = 0;
-      for (final doc in query.docs) {
-        try {
-          final data = doc.data();
-          final expiryDate =
-              data['expiryDate'] as Timestamp? ??
-              data['endDate'] as Timestamp? ??
-              data['validUntil'] as Timestamp?;
-          final userName =
-              data['userName'] as String? ?? data['customerName'] as String?;
-
-          if (expiryDate != null) {
-            // Cache this subscription in Hive
-            await _syncService.cachedSubscriptionsBox.put(
-              doc.id,
-              CachedSubscription(
-                userId: userId,
-                subscriptionId: doc.id,
-                planName:
-                    data['planName'] as String? ??
-                    data['membershipName'] as String? ??
-                    data['packageName'] as String? ??
-                    data['planName'] as String? ??
-                    collectionPath.substring(
-                      0,
-                      collectionPath.length - 1,
-                    ), // Use the collection name as fallback
-                expiryDate: expiryDate.toDate(),
-              ),
-            );
-            count++;
-          }
-
-          // Ensure user is properly cached with name if available
-          if (userName != null && userName.isNotEmpty) {
-            await _syncService.ensureUserInCache(userId, userName);
-          }
-        } catch (e) {
-          print("Error processing $collectionPath data: $e");
-        }
-      }
-
-      return count;
-    } catch (e) {
-      print("Error querying $collectionPath collection: $e");
-      return 0;
-    }
-  }
-
-  /// Fetch all reservations for a user across all possible collection paths
-  Future<int> _fetchUserReservationsAllPaths(
-    String userId,
-    String providerId,
-    DateTime pastDate,
-    DateTime futureDate,
-  ) async {
-    int count = 0;
-
-    try {
-      // Define all possible collection paths to check
-      final reservationPaths = ['reservations', 'appointments', 'bookings'];
-
-      // Process each collection path in parallel
-      final results = await Future.wait(
-        reservationPaths.map(
-          (path) => _processReservationPath(
-            userId,
-            providerId,
-            path,
-            pastDate,
-            futureDate,
-          ),
-        ),
-      );
-
-      // Sum up the results
-      count = results.fold(0, (sum, pathCount) => sum + pathCount);
-
-      print(
-        "Fetched $count total reservations across all paths for user $userId",
-      );
-      return count;
-    } catch (e) {
-      print("Error fetching reservations across paths: $e");
-      return count;
-    }
-  }
-
-  /// Process a specific reservation collection path
-  Future<int> _processReservationPath(
-    String userId,
-    String providerId,
-    String collectionPath,
-    DateTime pastDate,
-    DateTime futureDate,
-  ) async {
-    try {
-      // Build the query based on the collection path
-      var query = _firestore
-          .collection('endUsers')
-          .doc(userId)
-          .collection(collectionPath)
-          .where('providerId', isEqualTo: providerId);
-
-      // Add date filters if the collection is likely to support them
-      if (collectionPath == 'reservations' ||
-          collectionPath == 'appointments') {
-        query = query
-            .where('dateTime', isGreaterThan: Timestamp.fromDate(pastDate))
-            .where('dateTime', isLessThan: Timestamp.fromDate(futureDate));
-      }
-
-      final queryResult = await query.get();
-
-      if (queryResult.docs.isEmpty) {
-        return 0;
-      }
-
-      print(
-        "Found ${queryResult.docs.length} items in $collectionPath path for user $userId",
-      );
-
-      int count = 0;
-      for (final doc in queryResult.docs) {
-        try {
-          final data = doc.data();
-          final dateTime =
-              data['dateTime'] as Timestamp? ??
-              data['startTime'] as Timestamp? ??
-              data['date'] as Timestamp?;
-
-          // Skip if we can't determine the date
-          if (dateTime == null) continue;
-
-          final endTime =
-              data['endTime'] as Timestamp? ??
-              (dateTime != null
-                  ? Timestamp.fromDate(
-                    dateTime.toDate().add(Duration(hours: 1)),
-                  )
-                  : null);
-
-          final userName =
-              data['userName'] as String? ?? data['customerName'] as String?;
-
-          if (dateTime != null && endTime != null) {
-            // Cache this reservation in Hive
-            await _syncService.cachedReservationsBox.put(
-              doc.id,
-              CachedReservation(
-                userId: userId,
-                reservationId: doc.id,
-                serviceName:
-                    data['serviceName'] as String? ??
-                    data['service'] as String? ??
-                    'Booking',
-                startTime: dateTime.toDate(),
-                endTime: endTime.toDate(),
-                typeString: data['type'] as String? ?? 'standard',
-                groupSize:
-                    (data['groupSize'] as num?)?.toInt() ??
-                    (data['persons'] as num?)?.toInt() ??
-                    1,
-              ),
-            );
-            count++;
-          }
-
-          // Ensure user is properly cached with name if available
-          if (userName != null && userName.isNotEmpty) {
-            await _syncService.ensureUserInCache(userId, userName);
-          }
-        } catch (e) {
-          print("Error processing $collectionPath data: $e");
-        }
-      }
-
-      return count;
-    } catch (e) {
-      print("Error querying $collectionPath collection: $e");
-      return 0;
-    }
-  }
-
-  /// Batch fetch users' data
-  /// Fetches multiple users and their data in a single operation
-  Future<Map<String, bool>> batchFetchUsersData(List<String> userIds) async {
-    final results = <String, bool>{};
-    if (userIds.isEmpty) return results;
-
-    print("Starting batch fetch for ${userIds.length} users");
-    final providerId = _auth.currentUser?.uid;
-    if (providerId == null) {
-      print("Cannot perform batch fetch: Provider not authenticated");
-      for (final userId in userIds) {
-        results[userId] = false;
-      }
-      return results;
-    }
-
-    // Set syncing status
-    _syncService.isSyncingNotifier.value = true;
-
-    try {
-      // STEP 1: Batch get users info from Firestore
-      print("Batch fetching user info for ${userIds.length} users");
-      final List<Future<void>> userFetches = [];
-
-      // Split into batches of 10 for better performance
-      for (int i = 0; i < userIds.length; i += 10) {
-        final batchEnd = (i + 10 < userIds.length) ? i + 10 : userIds.length;
-        final batch = userIds.sublist(i, batchEnd);
-
-        userFetches.add(_batchProcessUsers(batch, providerId));
-      }
-
-      // Wait for all user batches to complete
-      await Future.wait(userFetches);
-
-      // STEP 2: For each user, check if data was successfully fetched
-      for (final userId in userIds) {
-        final hasSubscriptions = _syncService.cachedSubscriptionsBox.values.any(
-          (sub) => sub.userId == userId,
-        );
-
-        final hasReservations = _syncService.cachedReservationsBox.values.any(
-          (res) => res.userId == userId,
-        );
-
-        results[userId] = hasSubscriptions || hasReservations;
-      }
-
-      print(
-        "Batch fetch completed - successfully fetched data for ${results.values.where((v) => v).length} out of ${results.length} users",
-      );
-      return results;
-    } catch (e) {
-      print("Error in batch fetch: $e");
-      // If error occurs, mark all as false
-      for (final userId in userIds) {
-        results[userId] = false;
-      }
-      return results;
-    } finally {
-      _syncService.isSyncingNotifier.value = false;
-    }
-  }
-
-  /// Process a batch of users in parallel
-  Future<void> _batchProcessUsers(List<String> batch, String providerId) async {
-    // Create a list of futures for parallel processing
-    final futures = <Future>[];
-
-    // Get time window for queries
-    final now = DateTime.now();
-    final pastDate = now.subtract(const Duration(days: 7));
-    final futureDate = now.add(const Duration(days: 60));
-
-    // For each user, fetch their info, subscriptions and reservations
-    for (final userId in batch) {
-      futures.add(_syncService.ensureUserInCache(userId, null));
-      futures.add(_fetchUserSubscriptionsAllPaths(userId, providerId));
-      futures.add(
-        _fetchUserReservationsAllPaths(
-          userId,
-          providerId,
-          pastDate,
-          futureDate,
-        ),
-      );
-    }
-
-    // Wait for all operations to complete
-    await Future.wait(futures);
-  }
-
-  /// Force refresh data from Firestore to local cache
+  /// Force refresh data from unified cache service
   Future<bool> refreshData() async {
     try {
-      await _syncService.syncAllData();
-      return true;
+      return await _cacheService.syncAllData();
     } catch (e) {
       print("Error refreshing data: $e");
       return false;
@@ -1090,16 +546,16 @@ class AccessControlRepository {
   }
 
   /// Check if data is currently being synced
-  bool get isSyncing => _syncService.isSyncingNotifier.value;
+  bool get isSyncing => _cacheService.isSyncingNotifier.value;
 
   /// Get a ValueNotifier that indicates sync status
-  ValueNotifier<bool> get syncStatusNotifier => _syncService.isSyncingNotifier;
+  ValueNotifier<bool> get syncStatusNotifier => _cacheService.isSyncingNotifier;
 
   /// Get a user's name from cache
   Future<String> getUserName(String userId) async {
     try {
-      await _syncService.ensureUserInCache(userId, null);
-      final cachedUser = await _syncService.getCachedUser(userId);
+      await _cacheService.ensureUserInCache(userId, null);
+      final cachedUser = await _cacheService.getCachedUser(userId);
       return cachedUser?.userName ?? "Unknown User";
     } catch (e) {
       print("Error getting user name: $e");
@@ -1117,13 +573,13 @@ class AccessControlRepository {
       }
 
       // Ensure user is in cache
-      await _syncService.ensureUserInCache(userId, userName);
+      await _cacheService.ensureUserInCache(userId, userName);
 
       // Add a test subscription directly to Hive
       final subscriptionId = "test-${DateTime.now().millisecondsSinceEpoch}";
       final oneYearFromNow = DateTime.now().add(const Duration(days: 365));
 
-      await _syncService.cachedSubscriptionsBox.put(
+      await _cacheService.cachedSubscriptionsBox.put(
         subscriptionId,
         CachedSubscription(
           userId: userId,
@@ -1153,7 +609,7 @@ class AccessControlRepository {
       }
 
       // Ensure user is in cache
-      await _syncService.ensureUserInCache(userId, userName);
+      await _cacheService.ensureUserInCache(userId, userName);
 
       // Add a test reservation directly to Hive
       final reservationId = "test-${DateTime.now().millisecondsSinceEpoch}";
@@ -1163,7 +619,7 @@ class AccessControlRepository {
       ); // Started 30 minutes ago
       final endTime = now.add(const Duration(hours: 2)); // Ends in 2 hours
 
-      await _syncService.cachedReservationsBox.put(
+      await _cacheService.cachedReservationsBox.put(
         reservationId,
         CachedReservation(
           userId: userId,
@@ -1173,6 +629,7 @@ class AccessControlRepository {
           endTime: endTime,
           typeString: 'standard',
           groupSize: 1,
+          status: 'Confirmed', // Set a default status
         ),
       );
 
@@ -1236,7 +693,7 @@ class AccessControlRepository {
           // Try basic sync as final fallback
           try {
             print("Attempting basic sync as fallback");
-            await _syncService.syncAllData();
+            await _cacheService.syncAllData();
             print("Basic sync completed");
           } catch (e) {
             print("Even basic sync failed: $e");
@@ -1283,7 +740,7 @@ class AccessControlRepository {
               // Try basic sync as fallback
               try {
                 print("Periodic sync: Trying fallback basic sync");
-                await _syncService.syncAllData();
+                await _cacheService.syncAllData();
                 print("Periodic basic sync completed");
               } catch (e) {
                 print("Even periodic basic sync failed: $e");
@@ -1315,12 +772,26 @@ class AccessControlRepository {
         return null;
       }
 
-      // First try to get from cache
-      final cachedReservation = await _syncService.getReservationFromCache(
-        reservationId,
-      );
+      // Check if we have this in cache
+      final cachedReservation = _cacheService.cachedReservationsBox.values
+          .firstWhere(
+            (res) => res.reservationId == reservationId,
+            orElse: () => null as CachedReservation,
+          );
+
       if (cachedReservation != null) {
-        return cachedReservation;
+        return {
+          'serviceName': cachedReservation.serviceName,
+          'serviceDetails': cachedReservation.typeString,
+          'startTime': cachedReservation.startTime,
+          'endTime': cachedReservation.endTime,
+          'status': cachedReservation.status,
+          'paymentStatus': 'Unknown', // Default values for cached items
+          'paymentMethod': 'Unknown',
+          'totalAmount': 0.0,
+          'location': 'Unknown',
+          'notes': '',
+        };
       }
 
       // If not in cache, try Firestore
@@ -1369,6 +840,38 @@ class AccessControlRepository {
               data['title'] as String? ??
               'Unnamed Service';
 
+          // Cache this reservation for future use
+          try {
+            final dateTime = data['dateTime'] as Timestamp?;
+            final endTime = data['endTime'] as Timestamp?;
+
+            if (dateTime != null) {
+              final startTime = dateTime.toDate();
+              final endDateTime =
+                  endTime != null
+                      ? endTime.toDate()
+                      : startTime.add(const Duration(hours: 1));
+
+              final cachedReservation = CachedReservation(
+                userId: data['userId'] as String? ?? '',
+                reservationId: reservationId,
+                serviceName: serviceName,
+                startTime: startTime,
+                endTime: endDateTime,
+                typeString: data['type'] as String? ?? 'standard',
+                groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+                status: data['status'] as String? ?? 'Unknown',
+              );
+
+              await _cacheService.cachedReservationsBox.put(
+                reservationId,
+                cachedReservation,
+              );
+            }
+          } catch (e) {
+            print("Error caching reservation: $e");
+          }
+
           return {
             'serviceName': serviceName,
             'serviceDetails': data['serviceDescription'] ?? data['description'],
@@ -1401,6 +904,38 @@ class AccessControlRepository {
             data['title'] as String? ??
             'Unnamed Service';
 
+        // Cache this reservation for future use
+        try {
+          final dateTime = data['dateTime'] as Timestamp?;
+          final endTime = data['endTime'] as Timestamp?;
+
+          if (dateTime != null) {
+            final startTime = dateTime.toDate();
+            final endDateTime =
+                endTime != null
+                    ? endTime.toDate()
+                    : startTime.add(const Duration(hours: 1));
+
+            final cachedReservation = CachedReservation(
+              userId: data['userId'] as String? ?? '',
+              reservationId: reservationId,
+              serviceName: serviceName,
+              startTime: startTime,
+              endTime: endDateTime,
+              typeString: data['type'] as String? ?? 'standard',
+              groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+              status: data['status'] as String? ?? 'Unknown',
+            );
+
+            await _cacheService.cachedReservationsBox.put(
+              reservationId,
+              cachedReservation,
+            );
+          }
+        } catch (e) {
+          print("Error caching reservation from collection group: $e");
+        }
+
         return {
           'serviceName': serviceName,
           'serviceDetails': data['serviceDescription'] ?? data['description'],
@@ -1431,12 +966,27 @@ class AccessControlRepository {
         return null;
       }
 
-      // First try to get from cache
-      final cachedSubscription = await _syncService.getSubscriptionFromCache(
-        subscriptionId,
-      );
+      // Check if we have this in cache
+      final cachedSubscription = _cacheService.cachedSubscriptionsBox.values
+          .firstWhere(
+            (sub) => sub.subscriptionId == subscriptionId,
+            orElse: () => null as CachedSubscription,
+          );
+
       if (cachedSubscription != null) {
-        return cachedSubscription;
+        return {
+          'planName': cachedSubscription.planName,
+          'planDetails': 'Subscription plan', // Default for cached items
+          'paymentStatus': 'Unknown',
+          'paymentMethod': 'Unknown',
+          'amount': 0,
+          'startDate': DateTime.now().subtract(const Duration(days: 30)),
+          'endDate': cachedSubscription.expiryDate,
+          'autoRenew': false,
+          'status': 'active',
+          'interval': 'monthly',
+          'features': [],
+        };
       }
 
       // If not in cache, try Firestore
@@ -1460,6 +1010,28 @@ class AccessControlRepository {
             data['planName'] as String? ??
             data['name'] as String? ??
             'Unnamed Plan';
+
+        // Cache this subscription for future use
+        try {
+          final expiryDate =
+              data['endDate'] as Timestamp? ?? data['expiryDate'] as Timestamp?;
+
+          if (expiryDate != null) {
+            final cachedSubscription = CachedSubscription(
+              userId: data['userId'] as String? ?? '',
+              subscriptionId: subscriptionId,
+              planName: planName,
+              expiryDate: expiryDate.toDate(),
+            );
+
+            await _cacheService.cachedSubscriptionsBox.put(
+              subscriptionId,
+              cachedSubscription,
+            );
+          }
+        } catch (e) {
+          print("Error caching subscription: $e");
+        }
 
         return {
           'planName': planName,
@@ -1492,6 +1064,28 @@ class AccessControlRepository {
             data['name'] as String? ??
             'Unnamed Plan';
 
+        // Cache this subscription for future use
+        try {
+          final expiryDate =
+              data['endDate'] as Timestamp? ?? data['expiryDate'] as Timestamp?;
+
+          if (expiryDate != null) {
+            final cachedSubscription = CachedSubscription(
+              userId: data['userId'] as String? ?? '',
+              subscriptionId: subscriptionId,
+              planName: planName,
+              expiryDate: expiryDate.toDate(),
+            );
+
+            await _cacheService.cachedSubscriptionsBox.put(
+              subscriptionId,
+              cachedSubscription,
+            );
+          }
+        } catch (e) {
+          print("Error caching expired subscription: $e");
+        }
+
         return {
           'planName': planName,
           'planDetails': data['planDescription'] ?? data['description'],
@@ -1522,6 +1116,28 @@ class AccessControlRepository {
             data['planName'] as String? ??
             data['name'] as String? ??
             'Unnamed Plan';
+
+        // Cache this subscription for future use
+        try {
+          final expiryDate =
+              data['endDate'] as Timestamp? ?? data['expiryDate'] as Timestamp?;
+
+          if (expiryDate != null) {
+            final cachedSubscription = CachedSubscription(
+              userId: data['userId'] as String? ?? '',
+              subscriptionId: subscriptionId,
+              planName: planName,
+              expiryDate: expiryDate.toDate(),
+            );
+
+            await _cacheService.cachedSubscriptionsBox.put(
+              subscriptionId,
+              cachedSubscription,
+            );
+          }
+        } catch (e) {
+          print("Error caching subscription from collection group: $e");
+        }
 
         return {
           'planName': planName,
@@ -1554,6 +1170,28 @@ class AccessControlRepository {
             data['name'] as String? ??
             'Unnamed Membership';
 
+        // Cache this subscription for future use
+        try {
+          final expiryDate =
+              data['endDate'] as Timestamp? ?? data['expiryDate'] as Timestamp?;
+
+          if (expiryDate != null) {
+            final cachedSubscription = CachedSubscription(
+              userId: data['userId'] as String? ?? '',
+              subscriptionId: subscriptionId,
+              planName: planName,
+              expiryDate: expiryDate.toDate(),
+            );
+
+            await _cacheService.cachedSubscriptionsBox.put(
+              subscriptionId,
+              cachedSubscription,
+            );
+          }
+        } catch (e) {
+          print("Error caching membership: $e");
+        }
+
         return {
           'planName': planName,
           'planDetails': data['planDescription'] ?? data['description'],
@@ -1573,6 +1211,441 @@ class AccessControlRepository {
     } catch (e) {
       print("Error fetching subscription details: $e");
       return null;
+    }
+  }
+
+  /// Diagnose user access - simplify to work with existing methods
+  Future<void> diagnoseAccess(String userId) async {
+    try {
+      print('===== ACCESS DIAGNOSIS FOR USER $userId =====');
+
+      // Check for user in Firebase and cache
+      final userDoc = await _firestore.collection('endUsers').doc(userId).get();
+      if (userDoc.exists) {
+        print('✓ USER FOUND IN FIRESTORE');
+      } else {
+        print('✗ USER NOT FOUND IN FIRESTORE endUsers collection');
+      }
+
+      // Check cache
+      final cachedUser = await _cacheService.getCachedUser(userId);
+      if (cachedUser != null) {
+        print('✓ USER FOUND IN CACHE: ${cachedUser.userName}');
+      } else {
+        print('✗ USER NOT FOUND IN CACHE');
+      }
+
+      // Check for user reservations in provider's collections
+      final providerId = _auth.currentUser?.uid;
+      if (providerId != null) {
+        // Check pending reservations
+        final pendingQuery =
+            await _firestore
+                .collection('serviceProviders')
+                .doc(providerId)
+                .collection('pendingReservations')
+                .where('userId', isEqualTo: userId)
+                .get();
+
+        if (pendingQuery.docs.isNotEmpty) {
+          print('✓ FOUND ${pendingQuery.docs.length} PENDING RESERVATIONS:');
+          for (final doc in pendingQuery.docs) {
+            final data = doc.data();
+            final dateTime = data['dateTime'] as Timestamp?;
+            final serviceName = data['className'] as String?;
+            print('  - ID: ${doc.id}');
+            print('    Service: ${serviceName ?? 'Unknown'}');
+            print('    Time: ${dateTime?.toDate() ?? 'Unknown'}');
+          }
+        } else {
+          print('✗ NO PENDING RESERVATIONS FOUND');
+        }
+
+        // Check confirmed reservations
+        final confirmedQuery =
+            await _firestore
+                .collection('serviceProviders')
+                .doc(providerId)
+                .collection('confirmedReservations')
+                .where('userId', isEqualTo: userId)
+                .get();
+
+        if (confirmedQuery.docs.isNotEmpty) {
+          print(
+            '✓ FOUND ${confirmedQuery.docs.length} CONFIRMED RESERVATIONS:',
+          );
+          for (final doc in confirmedQuery.docs) {
+            final data = doc.data();
+            final dateTime = data['dateTime'] as Timestamp?;
+            final serviceName = data['className'] as String?;
+            print('  - ID: ${doc.id}');
+            print('    Service: ${serviceName ?? 'Unknown'}');
+            print('    Time: ${dateTime?.toDate() ?? 'Unknown'}');
+          }
+        } else {
+          print('✗ NO CONFIRMED RESERVATIONS FOUND');
+        }
+      }
+
+      // Check for user reservations in endUsers collection
+      final userReservationsQuery =
+          await _firestore
+              .collection('endUsers')
+              .doc(userId)
+              .collection('reservations')
+              .get();
+
+      if (userReservationsQuery.docs.isNotEmpty) {
+        print(
+          '✓ FOUND ${userReservationsQuery.docs.length} RESERVATIONS IN endUsers COLLECTION:',
+        );
+        for (final doc in userReservationsQuery.docs) {
+          final data = doc.data();
+          final dateTime = data['dateTime'] as Timestamp?;
+          final serviceName = data['className'] as String?;
+          final status = data['status'] as String?;
+          print('  - ID: ${doc.id}');
+          print('    Service: ${serviceName ?? 'Unknown'}');
+          print('    Status: ${status ?? 'Unknown'}');
+          print('    Time: ${dateTime?.toDate() ?? 'Unknown'}');
+        }
+      } else {
+        print('✗ NO RESERVATIONS FOUND IN endUsers COLLECTION');
+      }
+
+      // Check cache for reservations
+      final cachedReservations =
+          _cacheService.cachedReservationsBox.values
+              .where((res) => res.userId == userId)
+              .toList();
+
+      if (cachedReservations.isNotEmpty) {
+        print('✓ FOUND ${cachedReservations.length} RESERVATIONS IN CACHE:');
+        for (final res in cachedReservations) {
+          print('  - ID: ${res.reservationId}');
+          print('    Service: ${res.serviceName}');
+          print('    Status: ${res.status}');
+          print('    Start: ${res.startTime}');
+          print('    End: ${res.endTime}');
+
+          // Check if this reservation is active now
+          final now = DateTime.now();
+          final bufferedStart = res.startTime.subtract(
+            const Duration(minutes: 15),
+          );
+          final bufferedEnd = res.endTime.add(const Duration(minutes: 15));
+          final isInTimeWindow =
+              now.isAfter(bufferedStart) && now.isBefore(bufferedEnd);
+          final hasValidStatus = res.isStatusValidForAccess;
+          final isActive = isInTimeWindow && hasValidStatus;
+
+          print('    Is Active Now: $isActive');
+        }
+      } else {
+        print('✗ NO RESERVATIONS FOUND IN CACHE');
+      }
+
+      print('===== END OF DIAGNOSIS =====');
+    } catch (e) {
+      print('ERROR DURING DIAGNOSIS: $e');
+    }
+  }
+
+  /// TEMPORARY FUNCTION: Allow pending reservations
+  /// Call this function instead of regular validation for testing purposes
+  Future<ValidationResult> validateWithPendingAllowed(String uid) async {
+    try {
+      // Get current date (start of day)
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final providerId = _auth.currentUser?.uid;
+
+      if (providerId == null) {
+        return ValidationResult(
+          granted: false,
+          reason: "Provider not authenticated",
+        );
+      }
+
+      // Check for any pending reservation for today in provider collection
+      final pendingQuery =
+          await _firestore
+              .collection('serviceProviders')
+              .doc(providerId)
+              .collection('pendingReservations')
+              .where('userId', isEqualTo: uid)
+              .get();
+
+      for (final doc in pendingQuery.docs) {
+        final data = doc.data();
+        final dateTime = data['dateTime'] as Timestamp?;
+
+        if (dateTime != null) {
+          final resDate = dateTime.toDate();
+          final resDay = DateTime(resDate.year, resDate.month, resDate.day);
+
+          if (resDay.isAtSameMomentAs(today)) {
+            print(
+              'OVERRIDE: Allowing access for user $uid with pending reservation for today',
+            );
+
+            // Cache this pending reservation
+            try {
+              final reservation = CachedReservation(
+                userId: uid,
+                reservationId: doc.id,
+                serviceName:
+                    data['serviceName'] as String? ??
+                    data['className'] as String? ??
+                    'Reservation',
+                startTime: resDate,
+                endTime:
+                    data['endTime'] != null
+                        ? (data['endTime'] as Timestamp).toDate()
+                        : resDate.add(const Duration(hours: 1)),
+                typeString: data['type'] as String? ?? 'standard',
+                groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+                status: 'Pending',
+              );
+
+              await _cacheService.cachedReservationsBox.put(
+                doc.id,
+                reservation,
+              );
+            } catch (e) {
+              print('Error caching pending reservation: $e');
+            }
+
+            return ValidationResult(
+              granted: true,
+              reason: "Access granted with pending reservation",
+            );
+          }
+        }
+      }
+
+      // Check for confirmed reservations as usual
+      final confirmedQuery =
+          await _firestore
+              .collection('serviceProviders')
+              .doc(providerId)
+              .collection('confirmedReservations')
+              .where('userId', isEqualTo: uid)
+              .get();
+
+      if (confirmedQuery.docs.isNotEmpty) {
+        print('Allowing access for user $uid with confirmed reservation');
+
+        // Cache this confirmed reservation
+        try {
+          final doc = confirmedQuery.docs.first;
+          final data = doc.data();
+          final dateTime = data['dateTime'] as Timestamp?;
+
+          if (dateTime != null) {
+            final resDate = dateTime.toDate();
+            final reservation = CachedReservation(
+              userId: uid,
+              reservationId: doc.id,
+              serviceName:
+                  data['serviceName'] as String? ??
+                  data['className'] as String? ??
+                  'Reservation',
+              startTime: resDate,
+              endTime:
+                  data['endTime'] != null
+                      ? (data['endTime'] as Timestamp).toDate()
+                      : resDate.add(const Duration(hours: 1)),
+              typeString: data['type'] as String? ?? 'standard',
+              groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+              status: 'Confirmed',
+            );
+
+            await _cacheService.cachedReservationsBox.put(doc.id, reservation);
+          }
+        } catch (e) {
+          print('Error caching confirmed reservation: $e');
+        }
+
+        return ValidationResult(
+          granted: true,
+          reason: "Access granted with confirmed reservation",
+        );
+      }
+
+      return ValidationResult(
+        granted: false,
+        reason: "No valid reservations found",
+      );
+    } catch (e) {
+      print('Error in validation override: $e');
+      return ValidationResult(
+        granted: false,
+        reason: "Error during validation: $e",
+      );
+    }
+  }
+
+  /// PRODUCTION FIX: Override the normal validation to allow pending reservations
+  /// This will be called by the actual validation code
+  Future<Map<String, dynamic>> validateAccessAllowPending(String uid) async {
+    try {
+      // First check our unified cache for fast response
+      final now = DateTime.now();
+      final cachedUser = await _cacheService.getCachedUser(uid);
+
+      if (cachedUser != null) {
+        // Check for active reservation in cache
+        final activeReservation = await _cacheService.findActiveReservation(
+          uid,
+          now,
+        );
+        if (activeReservation != null) {
+          if (activeReservation.status.toLowerCase() == 'pending' ||
+              activeReservation.status.toLowerCase() == 'confirmed') {
+            print(
+              'VALIDATION: User $uid has active ${activeReservation.status} reservation in cache',
+            );
+            return {
+              'granted': true,
+              'reason': 'Access granted from cached reservation',
+            };
+          }
+        }
+      }
+
+      // If not found in cache, run the direct validation that allows pending
+      final diagResult = await validateWithPendingAllowed(uid);
+
+      // Return a structured result with guaranteed fields
+      return {'granted': diagResult.granted, 'reason': diagResult.reason};
+    } catch (e) {
+      print('Error in validateAccessAllowPending: $e');
+      return {'granted': false, 'reason': 'Error: $e'};
+    }
+  }
+
+  /// Refresh data for a specific user
+  Future<bool> refreshUserData(String userId) async {
+    try {
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        print("Cannot refresh user data: Provider not authenticated");
+        return false;
+      }
+
+      print("Refreshing data for user $userId");
+
+      // Ensure the cache service is initialized
+      await _cacheService.init();
+
+      // First ensure the user is in cache (this will fetch from Firestore if needed)
+      await _cacheService.ensureUserInCache(userId, null);
+
+      // Query endUsers collection for reservations
+      final now = DateTime.now();
+      final pastDate = now.subtract(const Duration(days: 7));
+      final futureDate = now.add(const Duration(days: 60));
+
+      // Fetch active reservations for this user
+      try {
+        final resQuery =
+            await _firestore
+                .collection('endUsers')
+                .doc(userId)
+                .collection('reservations')
+                .where('providerId', isEqualTo: providerId)
+                .where('dateTime', isGreaterThan: Timestamp.fromDate(pastDate))
+                .where('dateTime', isLessThan: Timestamp.fromDate(futureDate))
+                .get();
+
+        print("Found ${resQuery.docs.length} reservations for user $userId");
+
+        // Cache these reservations
+        for (final doc in resQuery.docs) {
+          try {
+            final data = doc.data();
+            final dateTime = data['dateTime'] as Timestamp?;
+            final endTime = data['endTime'] as Timestamp?;
+
+            if (dateTime != null) {
+              final startDateTime = dateTime.toDate();
+              final endDateTime =
+                  endTime != null
+                      ? endTime.toDate()
+                      : startDateTime.add(const Duration(hours: 1));
+
+              final reservation = CachedReservation(
+                userId: userId,
+                reservationId: doc.id,
+                serviceName:
+                    data['serviceName'] as String? ??
+                    data['className'] as String? ??
+                    'Reservation',
+                startTime: startDateTime,
+                endTime: endDateTime,
+                typeString: data['type'] as String? ?? 'standard',
+                groupSize: (data['groupSize'] as num?)?.toInt() ?? 1,
+                status: data['status'] as String? ?? 'Unknown',
+              );
+
+              await _cacheService.cachedReservationsBox.put(
+                doc.id,
+                reservation,
+              );
+            }
+          } catch (e) {
+            print("Error caching reservation ${doc.id}: $e");
+          }
+        }
+      } catch (e) {
+        print("Error fetching reservations for user $userId: $e");
+      }
+
+      // Fetch active subscriptions for this user
+      try {
+        final subQuery =
+            await _firestore
+                .collection('endUsers')
+                .doc(userId)
+                .collection('subscriptions')
+                .where('providerId', isEqualTo: providerId)
+                .where('status', isEqualTo: 'Active')
+                .get();
+
+        print("Found ${subQuery.docs.length} subscriptions for user $userId");
+
+        // Cache these subscriptions
+        for (final doc in subQuery.docs) {
+          try {
+            final data = doc.data();
+            final expiryDate = data['expiryDate'] as Timestamp?;
+
+            if (expiryDate != null) {
+              final subscription = CachedSubscription(
+                userId: userId,
+                subscriptionId: doc.id,
+                planName: data['planName'] as String? ?? 'Subscription',
+                expiryDate: expiryDate.toDate(),
+              );
+
+              await _cacheService.cachedSubscriptionsBox.put(
+                doc.id,
+                subscription,
+              );
+            }
+          } catch (e) {
+            print("Error caching subscription ${doc.id}: $e");
+          }
+        }
+      } catch (e) {
+        print("Error fetching subscriptions for user $userId: $e");
+      }
+
+      return true;
+    } catch (e) {
+      print("Error in refreshUserData: $e");
+      return false;
     }
   }
 }

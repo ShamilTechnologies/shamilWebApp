@@ -528,7 +528,7 @@ class UserReservationsRepository {
       for (final reservation in reservations) {
         records.add(
           RelatedRecord(
-            id: reservation.id,
+            id: reservation.id ?? '',
             type: RecordType.reservation,
             name: reservation.serviceName ?? 'Reservation',
             status: reservation.status,

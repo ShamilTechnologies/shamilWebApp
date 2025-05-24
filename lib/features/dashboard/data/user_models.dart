@@ -26,59 +26,82 @@ enum RecordType {
   subscription,
 }
 
-/// Model representing a user with reservations or subscriptions
+/// Data transfer object for users
 class AppUser extends Equatable {
-  /// Unique identifier of the user
   final String userId;
-
-  /// Name of the user
-  final String userName;
-
-  /// Type of user (reserved, subscribed, both)
-  final UserType userType;
-
-  /// User's email address (optional)
+  final String name; // User's full name
   final String? email;
-
-  /// User's phone number (optional)
   final String? phone;
-
-  /// URL to the user's profile picture (optional)
   final String? profilePicUrl;
-
-  /// Type of access (reservation, subscription, etc.)
+  final UserType? userType;
   final String? accessType;
-
-  /// Additional access details
   final Map<String, dynamic>? accessDetails;
-
-  /// Last time access was checked
   final DateTime? lastCheck;
-
-  /// List of records (reservations or subscriptions) associated with the user
   final List<RelatedRecord> relatedRecords;
 
   const AppUser({
     required this.userId,
-    required this.userName,
-    required this.userType,
+    required this.name,
     this.email,
     this.phone,
     this.profilePicUrl,
+    this.userType,
     this.accessType,
     this.accessDetails,
     this.lastCheck,
-    required this.relatedRecords,
+    this.relatedRecords = const [],
   });
 
-  /// Creates a copy of this user with the given fields replaced with new values
+  /// Factory method to create an AppUser from Firestore data
+  factory AppUser.fromMap(Map<String, dynamic> map, {String? id}) {
+    return AppUser(
+      userId: id ?? map['userId'] ?? map['id'] ?? '',
+      name: map['name'] ?? map['userName'] ?? map['fullName'] ?? 'Unknown User',
+      email: map['email'] as String?,
+      phone: map['phone'] as String?,
+      profilePicUrl: map['profilePicUrl'] ?? map['profileImage'] as String?,
+      userType: _getUserTypeFromString(map['userType'] as String?),
+      accessType: map['accessType'] as String?,
+      accessDetails: map['accessDetails'] as Map<String, dynamic>?,
+      lastCheck:
+          map['lastCheck'] != null
+              ? (map['lastCheck'] is Timestamp
+                  ? (map['lastCheck'] as Timestamp).toDate()
+                  : DateTime.parse(map['lastCheck'].toString()))
+              : null,
+      relatedRecords: const [],
+    );
+  }
+
+  /// Factory method to create an AppUser from Firestore DocumentSnapshot
+  factory AppUser.fromSnapshot(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    return AppUser.fromMap(data, id: doc.id);
+  }
+
+  /// Convert AppUser to Map for Firestore
+  Map<String, dynamic> toMap() {
+    return {
+      'userId': userId,
+      'name': name,
+      if (email != null) 'email': email,
+      if (phone != null) 'phone': phone,
+      if (profilePicUrl != null) 'profilePicUrl': profilePicUrl,
+      if (userType != null) 'userType': userType.toString().split('.').last,
+      if (accessType != null) 'accessType': accessType,
+      if (accessDetails != null) 'accessDetails': accessDetails,
+      if (lastCheck != null) 'lastCheck': Timestamp.fromDate(lastCheck!),
+    };
+  }
+
+  /// Create a copy of this AppUser with the specified fields replaced with new values
   AppUser copyWith({
     String? userId,
-    String? userName,
-    UserType? userType,
+    String? name,
     String? email,
     String? phone,
     String? profilePicUrl,
+    UserType? userType,
     String? accessType,
     Map<String, dynamic>? accessDetails,
     DateTime? lastCheck,
@@ -86,11 +109,11 @@ class AppUser extends Equatable {
   }) {
     return AppUser(
       userId: userId ?? this.userId,
-      userName: userName ?? this.userName,
-      userType: userType ?? this.userType,
+      name: name ?? this.name,
       email: email ?? this.email,
       phone: phone ?? this.phone,
       profilePicUrl: profilePicUrl ?? this.profilePicUrl,
+      userType: userType ?? this.userType,
       accessType: accessType ?? this.accessType,
       accessDetails: accessDetails ?? this.accessDetails,
       lastCheck: lastCheck ?? this.lastCheck,
@@ -98,77 +121,38 @@ class AppUser extends Equatable {
     );
   }
 
-  /// Creates an AppUser from Firestore document data
-  factory AppUser.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-
-    // Extract user name from available fields
-    final String userName =
-        data['displayName'] as String? ??
-        data['name'] as String? ??
-        data['userName'] as String? ??
-        'User ${doc.id.substring(0, 5)}'; // Use ID substring as fallback
-
-    return AppUser(
-      userId: doc.id,
-      userName: userName,
-      userType:
-          UserType.reserved, // Default type, should be updated based on records
-      email: data['email'] as String?,
-      phone: data['phone'] as String?,
-      profilePicUrl:
-          data['profilePicUrl'] as String? ?? data['image'] as String?,
-      relatedRecords: [],
-    );
-  }
-
-  /// Factory method to merge user data from endUsers collection with custom data
-  factory AppUser.mergeWithEndUserData(
-    String userId,
-    String defaultName,
-    Map<String, dynamic>? userData,
-    UserType userType,
-    List<RelatedRecord> records,
-  ) {
-    if (userData == null) {
-      return AppUser(
-        userId: userId,
-        userName: defaultName,
-        userType: userType,
-        relatedRecords: records,
-      );
-    }
-
-    final String userName =
-        userData['displayName'] as String? ??
-        userData['name'] as String? ??
-        defaultName;
-
-    return AppUser(
-      userId: userId,
-      userName: userName,
-      userType: userType,
-      email: userData['email'] as String?,
-      phone: userData['phone'] as String?,
-      profilePicUrl:
-          userData['profilePicUrl'] as String? ?? userData['image'] as String?,
-      relatedRecords: records,
-    );
-  }
-
   @override
   List<Object?> get props => [
     userId,
-    userName,
-    userType,
+    name,
     email,
     phone,
     profilePicUrl,
+    userType,
     accessType,
     accessDetails,
     lastCheck,
     relatedRecords,
   ];
+
+  /// Helper to convert string to UserType
+  static UserType? _getUserTypeFromString(String? typeString) {
+    if (typeString == null) return null;
+
+    switch (typeString.toLowerCase()) {
+      case 'reserved':
+        return UserType.reserved;
+      case 'subscribed':
+        return UserType.subscribed;
+      case 'both':
+        return UserType.both;
+      default:
+        return null;
+    }
+  }
+
+  /// Getter for userName (alias for name for backward compatibility)
+  String get userName => name;
 }
 
 /// Model representing a record associated with a user (reservation or subscription)

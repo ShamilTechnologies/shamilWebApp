@@ -131,50 +131,59 @@ class SyncStatusIndicator extends StatelessWidget {
                   color: _getBackgroundColor(syncStatus).withOpacity(0.3),
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildStatusIcon(syncStatus),
-                  if (showLabel) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      _getStatusText(syncStatus),
-                      style: getSmallStyle(
-                        color: _getTextColor(syncStatus),
-                        fontWeight: FontWeight.w500,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 250),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildStatusIcon(syncStatus),
+                    if (showLabel) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _getStatusText(syncStatus),
+                          style: getSmallStyle(
+                            color: _getTextColor(syncStatus),
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                  ],
-                  if (lastSyncTime != null && !compact) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      _formatLastSyncTime(lastSyncTime!),
-                      style: getSmallStyle(color: AppColors.mediumGrey),
-                    ),
-                  ],
-                  if (onManualSync != null &&
-                      syncStatus != SyncStatus.syncingData &&
-                      syncStatus != SyncStatus.syncingLogs) ...[
-                    const SizedBox(width: 4),
-                    Icon(
-                      Icons.refresh,
-                      size: compact ? 14 : 16,
-                      color: AppColors.mediumGrey,
-                    ),
-                  ],
-                  if (syncStatus != SyncStatus.syncingData &&
-                      syncStatus != SyncStatus.syncingLogs) ...[
-                    const SizedBox(width: 4),
-                    Tooltip(
-                      message: 'More options',
-                      child: Icon(
-                        Icons.more_horiz,
+                    ],
+                    if (lastSyncTime != null && !compact) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _formatLastSyncTime(lastSyncTime!),
+                          style: getSmallStyle(color: AppColors.mediumGrey),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                    if (onManualSync != null &&
+                        syncStatus != SyncStatus.syncingData &&
+                        syncStatus != SyncStatus.syncingLogs) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.refresh,
                         size: compact ? 14 : 16,
-                        color: AppColors.mediumGrey.withOpacity(0.6),
+                        color: AppColors.mediumGrey,
                       ),
-                    ),
+                    ],
+                    if (syncStatus != SyncStatus.syncingData &&
+                        syncStatus != SyncStatus.syncingLogs) ...[
+                      const SizedBox(width: 4),
+                      Tooltip(
+                        message: 'More options',
+                        child: Icon(
+                          Icons.more_horiz,
+                          size: compact ? 14 : 16,
+                          color: AppColors.mediumGrey.withOpacity(0.6),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -278,4 +287,3 @@ class SyncStatusIndicator extends StatelessWidget {
     }
   }
 }
- 

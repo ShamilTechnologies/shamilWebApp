@@ -357,8 +357,8 @@ class ReservationSyncService {
             ...pendingReservations,
             ...confirmedReservations,
           ]) {
-            if (reservation.userId.isNotEmpty) {
-              uniqueUserIds.add(reservation.userId);
+            if (reservation.userId?.isNotEmpty == true) {
+              uniqueUserIds.add(reservation.userId!);
             }
           }
 
@@ -441,7 +441,9 @@ class ReservationSyncService {
                   }
 
                   // Update last seen timestamp
-                  knownReservationTimestamps[reservation.id] = now;
+                  if (reservation.id != null) {
+                    knownReservationTimestamps[reservation.id!] = now;
+                  }
                 }
               } catch (e) {
                 print(

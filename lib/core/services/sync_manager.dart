@@ -1,5 +1,5 @@
 /// File: lib/core/services/sync_manager.dart
-/// --- Manages synchronization logic and triggers ---
+/// --- Central manager for tracking sync operations across the app ---
 library;
 
 import 'dart:async';
@@ -8,41 +8,50 @@ import 'package:flutter/foundation.dart'; // For ValueNotifier
 import 'package:flutter/material.dart';
 
 // Import dependent services
-import 'package:shamil_web_app/features/access_control/service/access_control_sync_service.dart';
-import 'package:shamil_web_app/features/dashboard/services/reservation_sync_service.dart';
+import 'package:shamil_web_app/core/services/unified_cache_service.dart';
 import 'package:shamil_web_app/core/services/connectivity_service.dart';
 
-/// SyncStatus represents the current synchronization state
+/// Enum representing different sync states
 enum SyncStatus {
-  idle, // Not currently syncing
-  syncingLogs, // Uploading local logs to server
-  syncingData, // Downloading remote data to local cache
-  success, // Last sync operation completed successfully
-  failed, // Last sync operation failed
+  /// No sync operation is active
+  idle,
+
+  /// Currently syncing data from remote
+  syncingData,
+
+  /// Currently syncing logs to remote
+  syncingLogs,
+
+  /// Sync operation completed successfully
+  success,
+
+  /// Sync operation failed
+  failed,
 }
 
 /// SyncManager handles data synchronization between local cache and remote server.
 /// It coordinates with ConnectivityService to sync when online.
 class SyncManager {
-  // Singleton pattern
+  // Singleton instance
   static final SyncManager _instance = SyncManager._internal();
   factory SyncManager() => _instance;
   SyncManager._internal();
 
   // Dependencies
   final ConnectivityService _connectivityService = ConnectivityService();
-  final AccessControlSyncService _accessControlSyncService =
-      AccessControlSyncService();
-  final ReservationSyncService _reservationSyncService =
-      ReservationSyncService();
+  final UnifiedCacheService _unifiedCacheService = UnifiedCacheService();
 
-  // Status notifiers
+  // Notifiers for UI to observe
   final ValueNotifier<SyncStatus> syncStatusNotifier = ValueNotifier(
     SyncStatus.idle,
   );
   final ValueNotifier<DateTime?> lastSyncTimeNotifier = ValueNotifier(null);
   final ValueNotifier<String?> lastErrorNotifier = ValueNotifier(null);
   final ValueNotifier<bool> hasDataToSyncNotifier = ValueNotifier(false);
+
+  // Debounce timer for quick status changes
+  Timer? _statusDebounceTimer;
+  Timer? _successResetTimer;
 
   // Periodic sync timer
   Timer? _syncTimer;
@@ -63,17 +72,12 @@ class SyncManager {
     // Listen for connectivity changes
     _connectivityService.statusNotifier.addListener(_onConnectivityChanged);
 
-    // Initialize required services
+    // Initialize unified cache service
     try {
-      await _accessControlSyncService.init();
-      await _reservationSyncService.init();
-
-      // Start real-time reservation listener
-      await _reservationSyncService.startReservationListener();
-
-      print("SyncManager: Services initialized successfully");
+      await _unifiedCacheService.init();
+      print("SyncManager: UnifiedCacheService initialized successfully");
     } catch (e) {
-      print("SyncManager: Error initializing services: $e");
+      print("SyncManager: Error initializing UnifiedCacheService: $e");
       lastErrorNotifier.value = "Error initializing services: $e";
       // Continue with initialization despite errors
     }
@@ -115,7 +119,7 @@ class SyncManager {
     try {
       // Compute if there are unsynced logs
       final unsyncedCount =
-          _accessControlSyncService.localAccessLogsBox.values
+          _unifiedCacheService.localAccessLogsBox.values
               .where((log) => log.needsSync)
               .length;
 
@@ -156,7 +160,7 @@ class SyncManager {
       if (timeSinceLastSync < _minSyncInterval) {
         print("SyncManager: Throttling sync request (too soon)");
         return false;
-  }
+      }
     }
 
     // Check connectivity
@@ -172,79 +176,50 @@ class SyncManager {
 
   /// Performs the actual data download and log upload sequence.
   Future<bool> _performSynchronization() async {
-    bool logSyncSuccess = false;
-    bool dataSyncSuccess = false;
-    bool reservationSyncSuccess = false;
+    bool success = false;
     String? errorMessage;
 
-    // 1. Sync Logs Up first
-    if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
-      try {
-        print("SyncManager: Starting log synchronization...");
-        syncStatusNotifier.value = SyncStatus.syncingLogs;
-        await _accessControlSyncService.syncAccessLogs();
-        logSyncSuccess = true;
-        print("SyncManager: Log sync successfully completed");
-      } catch (e, stackTrace) {
-        print("!!! SyncManager: Error during log sync: $e");
-        print(stackTrace);
-        logSyncSuccess = false;
-        errorMessage =
-            "Failed to upload logs: ${e.toString().split('\n').first}";
-      }
-    } else {
-      print("SyncManager: Skipping log sync (offline).");
-      errorMessage = "Device is offline";
-    }
+    try {
+      print("SyncManager: Starting full data synchronization");
+      syncStatusNotifier.value = SyncStatus.syncingData;
 
-    // 2. Sync Data Down next
-    if (_connectivityService.statusNotifier.value == NetworkStatus.online) {
-      try {
-        print("SyncManager: Starting data synchronization...");
-        syncStatusNotifier.value = SyncStatus.syncingData;
+      // Use the unified sync method
+      success = await _unifiedCacheService.syncAllData();
 
-        // First sync access control data (Hive)
-        await _accessControlSyncService.syncAllData();
-        dataSyncSuccess = true;
-        print("SyncManager: Access control data sync completed");
-
-        // Then sync reservations (Firestore)
-        print("SyncManager: Starting reservation synchronization...");
-        final reservations = await _reservationSyncService.syncReservations();
-        reservationSyncSuccess = true;
-        print(
-          "SyncManager: Retrieved ${reservations.length} reservations during sync",
-        );
-
-        // Update last sync time
+      if (success) {
         lastSyncTimeNotifier.value = DateTime.now();
-      } catch (e, stackTrace) {
-        print("!!! SyncManager: Error during data sync: $e");
-        print(stackTrace);
-        dataSyncSuccess = false;
-        errorMessage =
-            "Failed to download data: ${e.toString().split('\n').first}";
-      }
-    } else {
-      print("SyncManager: Skipping data sync (offline).");
-      errorMessage = "Device is offline";
-    }
-
-    // Update sync status
-    if (dataSyncSuccess && logSyncSuccess && reservationSyncSuccess) {
         syncStatusNotifier.value = SyncStatus.success;
-      lastErrorNotifier.value = null;
-      lastSyncTimeNotifier.value = DateTime.now();
-      print("SyncManager: All sync operations completed successfully");
-      _resetRetryCounter(); // Reset retry counter on success
-      return true;
-    } else {
-      syncStatusNotifier.value = SyncStatus.failed;
-      lastErrorNotifier.value = errorMessage ?? "Unknown sync error";
-      print("SyncManager: Sync failed with error: $errorMessage");
+        print("SyncManager: Sync completed successfully");
 
-      // Schedule retry with exponential backoff
+        // Reset retry count on success
+        _retryCount = 0;
+
+        // Schedule success status to reset after a delay
+        _successResetTimer?.cancel();
+        _successResetTimer = Timer(const Duration(seconds: 3), () {
+          if (syncStatusNotifier.value == SyncStatus.success) {
+            syncStatusNotifier.value = SyncStatus.idle;
+          }
+        });
+      } else {
+        syncStatusNotifier.value = SyncStatus.failed;
+        lastErrorNotifier.value = "Sync failed";
+        print("SyncManager: Sync failed");
+
+        // Implement retry with exponential backoff
+        _scheduleRetry();
+      }
+
+      return success;
+    } catch (e) {
+      errorMessage = "Error during sync: $e";
+      lastErrorNotifier.value = errorMessage;
+      syncStatusNotifier.value = SyncStatus.failed;
+      print("SyncManager: $errorMessage");
+
+      // Implement retry with exponential backoff
       _scheduleRetry();
+
       return false;
     }
   }
@@ -281,20 +256,66 @@ class SyncManager {
     }
   }
 
-  /// Resets the retry counter, useful when sync succeeds
-  void _resetRetryCounter() {
-    _retryCount = 0;
-    _retryTimer?.cancel();
-    _retryTimer = null;
+  /// Set the current sync status
+  void setSyncStatus(SyncStatus status) {
+    // Cancel any pending timers
+    _statusDebounceTimer?.cancel();
+
+    // Update the status immediately
+    syncStatusNotifier.value = status;
+
+    // If successful, update the last sync time
+    if (status == SyncStatus.success) {
+      lastSyncTimeNotifier.value = DateTime.now();
+
+      // Auto-reset to idle after showing success briefly
+      _successResetTimer?.cancel();
+      _successResetTimer = Timer(const Duration(seconds: 3), () {
+        if (syncStatusNotifier.value == SyncStatus.success) {
+          syncStatusNotifier.value = SyncStatus.idle;
+        }
+      });
+    }
+  }
+
+  /// Start a data sync operation
+  void startDataSync() {
+    // Only change if we're not already syncing data
+    if (syncStatusNotifier.value != SyncStatus.syncingData) {
+      setSyncStatus(SyncStatus.syncingData);
+    }
+  }
+
+  /// Start a log sync operation
+  void startLogSync() {
+    // Only change if we're not already syncing logs and not syncing data
+    if (syncStatusNotifier.value != SyncStatus.syncingLogs &&
+        syncStatusNotifier.value != SyncStatus.syncingData) {
+      setSyncStatus(SyncStatus.syncingLogs);
+    }
+  }
+
+  /// Mark sync as completed successfully
+  void markSyncSuccess() {
+    setSyncStatus(SyncStatus.success);
+  }
+
+  /// Mark sync as failed
+  void markSyncFailed() {
+    setSyncStatus(SyncStatus.failed);
+  }
+
+  /// Reset to idle state manually
+  void resetToIdle() {
+    setSyncStatus(SyncStatus.idle);
   }
 
   /// Clean up resources
-  Future<void> dispose() async {
-    print("SyncManager: disposing...");
-    _syncTimer?.cancel();
+  void dispose() {
     _connectivityService.statusNotifier.removeListener(_onConnectivityChanged);
-    await _reservationSyncService.dispose();
-    await _accessControlSyncService.close();
-    print("SyncManager: disposed successfully");
+    _statusDebounceTimer?.cancel();
+    _successResetTimer?.cancel();
+    _syncTimer?.cancel();
+    _retryTimer?.cancel();
   }
 }

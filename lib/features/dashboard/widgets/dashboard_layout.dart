@@ -56,34 +56,56 @@ class DashboardLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.lightGrey,
-      body: Column(
-        children: [
-          // Network status banner
-          if (showNetworkBanner) NetworkAwareBanner(onRetry: onNetworkRetry),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Ensure we have concrete height constraints
+            final availableHeight = constraints.maxHeight;
 
-          // Main content with sidebar
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            return Column(
               children: [
-                // Sidebar - always visible on tablets and above
-                if (!ResponsiveLayout.isMobile(context))
-                  AppSidebar(
-                    selectedIndex: selectedIndex,
-                    destinations: destinations,
-                    footerDestinations: footerDestinations,
-                    onDestinationSelected: onDestinationSelected,
-                    onFooterItemSelected: onFooterItemSelected,
-                    providerInfo: providerInfo,
-                    nfcStatusNotifier: nfcStatusNotifier,
-                  ),
+                // Network status banner
+                if (showNetworkBanner)
+                  NetworkAwareBanner(onRetry: onNetworkRetry),
 
-                // Main content area - always fills remaining space
-                Expanded(child: content),
+                // Main content with sidebar - with constrained height
+                Expanded(
+                  child: SizedBox(
+                    height:
+                        availableHeight -
+                        (showNetworkBanner
+                            ? 36
+                            : 0), // Subtract banner height if shown
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Sidebar - always visible on tablets and above
+                        if (!ResponsiveLayout.isMobile(context))
+                          AppSidebar(
+                            selectedIndex: selectedIndex,
+                            destinations: destinations,
+                            footerDestinations: footerDestinations,
+                            onDestinationSelected: onDestinationSelected,
+                            onFooterItemSelected: onFooterItemSelected,
+                            providerInfo: providerInfo,
+                            nfcStatusNotifier: nfcStatusNotifier,
+                          ),
+
+                        // Main content area - always fills remaining space
+                        Expanded(
+                          child: Container(
+                            height: double.infinity,
+                            child: content,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
-            ),
-          ),
-        ],
+            );
+          },
+        ),
       ),
       // Bottom navigation for mobile only
       bottomNavigationBar: _buildMobileNavBar(context),

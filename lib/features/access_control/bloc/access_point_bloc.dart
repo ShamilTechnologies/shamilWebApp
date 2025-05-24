@@ -60,6 +60,9 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
     // REMOVED: QrCodeScanned, StartScanner, StopScanner handlers (assuming QR UI removed)
     on<NfcTagRead>(_onNfcTagRead); // Triggered by service listener
     on<ValidateAccess>(_onValidateAccess);
+    on<ValidateUserAccess>(
+      _onValidateUserAccess,
+    ); // Add handler for direct user validation
     on<ResetAccessPoint>(_onResetAccessPoint);
     on<ListAvailablePorts>(_onListAvailablePorts);
     on<ConnectNfcReader>(_onConnectNfcReader);
@@ -462,6 +465,79 @@ class AccessPointBloc extends Bloc<AccessPointEvent, AccessPointState> {
           add(ResetAccessPoint());
         }
       });
+    }
+  }
+
+  // Handler for validating user access by user ID (from dropdown/selection)
+  Future<void> _onValidateUserAccess(
+    ValidateUserAccess event,
+    Emitter<AccessPointState> emit,
+  ) async {
+    // Prevent processing if closed
+    if (isClosed) return;
+
+    print("AccessPointBloc: Validating user access for ID: ${event.uid}");
+
+    // Show validating state first
+    emit(
+      AccessPointValidating(
+        nfcStatus: state.nfcStatus,
+        availablePorts: state.availablePorts,
+      ),
+    );
+
+    try {
+      // Initialize the repository if needed
+      await _repository.initialize();
+
+      // Check if user has access
+      final accessResult = await _repository.checkUserAccess(event.uid);
+
+      // Extract results
+      final bool hasAccess = accessResult['hasAccess'] as bool;
+      final String? userName = accessResult['userName'] as String?;
+      final String? reason = accessResult['reason'] as String?;
+      final String? accessType = accessResult['accessType'] as String?;
+
+      // Record the access attempt (creates log entry)
+      await _repository.recordAccess(
+        userId: event.uid,
+        userName: userName ?? 'Unknown User',
+        status: hasAccess ? 'Granted' : 'Denied',
+        method: event.method,
+        denialReason: hasAccess ? null : reason,
+      );
+
+      // Emit appropriate result state
+      emit(
+        AccessPointResult(
+          scannedId: event.uid,
+          validationStatus:
+              hasAccess ? ValidationStatus.granted : ValidationStatus.denied,
+          userName: userName,
+          message:
+              hasAccess
+                  ? accessType == 'subscription'
+                      ? 'Access granted (Active subscription)'
+                      : 'Access granted (Valid reservation)'
+                  : reason ?? 'Access denied',
+          method: event.method,
+          nfcStatus: state.nfcStatus,
+          availablePorts: state.availablePorts,
+        ),
+      );
+    } catch (e) {
+      print("AccessPointBloc: Error validating user access: $e");
+      emit(
+        AccessPointResult(
+          scannedId: event.uid,
+          validationStatus: ValidationStatus.error,
+          message: "Error validating access: $e",
+          method: event.method,
+          nfcStatus: state.nfcStatus,
+          availablePorts: state.availablePorts,
+        ),
+      );
     }
   }
 }

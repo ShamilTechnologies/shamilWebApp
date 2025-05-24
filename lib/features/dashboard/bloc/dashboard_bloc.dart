@@ -1,8 +1,8 @@
 // lib/features/dashboard/bloc/dashboard_bloc.dart
-// MODIFIED FILE
+// Updated to work with CentralizedDataService
 
 /// File: lib/features/dashboard/bloc/dashboard_bloc.dart
-/// --- UPDATED: Added real-time listeners for notifications ---
+/// --- UPDATED: Integrated with CentralizedDataService for smarter sync ---
 library;
 
 import 'dart:async'; // Required for Future & StreamSubscription
@@ -13,18 +13,19 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 // Import Models
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
-import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart'; // Ensure this import is present
+import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 import 'package:shamil_web_app/features/dashboard/services/reservation_sync_service.dart';
 import 'package:shamil_web_app/features/access_control/service/access_control_repository.dart';
 import 'package:shamil_web_app/features/auth/data/provider_repository.dart';
 import 'package:shamil_web_app/features/dashboard/data/reservation_repository.dart';
 import 'package:shamil_web_app/features/dashboard/data/subscription_repository.dart';
+import 'package:shamil_web_app/core/services/centralized_data_service.dart'; // Import the centralized service
 
 // Use part directives to link event and state files
 part 'dashboard_event.dart';
 part 'dashboard_state.dart';
 
-/// Bloc that handles dashboard data loading and updates.
+/// Bloc that handles dashboard data loading and updates with centralized data integration.
 class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
@@ -33,10 +34,14 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   final ReservationRepository _reservationRepository;
   final AccessControlRepository _accessControlRepository;
   final ReservationSyncService _reservationSyncService;
+  final CentralizedDataService _centralizedDataService;
 
   // Stream Subscriptions for real-time updates
   StreamSubscription? _reservationsSubscription;
   StreamSubscription? _subscriptionsSubscription;
+  StreamSubscription? _centralizedReservationsSub;
+  StreamSubscription? _centralizedSubscriptionsSub;
+  StreamSubscription? _centralizedAccessLogsSub;
 
   /// Creates a new DashboardBloc with provided dependencies or defaults.
   DashboardBloc({
@@ -47,6 +52,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     ReservationRepository? reservationRepository,
     AccessControlRepository? accessControlRepository,
     ReservationSyncService? reservationSyncService,
+    CentralizedDataService? centralizedDataService,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _firestore = firestore ?? FirebaseFirestore.instance,
        _providerRepository = providerRepository ?? ProviderRepository(),
@@ -58,6 +64,8 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
            accessControlRepository ?? AccessControlRepository(),
        _reservationSyncService =
            reservationSyncService ?? ReservationSyncService(),
+       _centralizedDataService =
+           centralizedDataService ?? CentralizedDataService(),
        super(DashboardInitial()) {
     print("--- DashboardBloc INSTANCE CREATED ---");
     on<LoadDashboardData>(_onLoadDashboardData);
@@ -65,7 +73,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     on<SyncMobileAppData>(_onSyncMobileAppData);
     on<_DashboardReservationReceived>(_onReservationReceived);
     on<_DashboardSubscriptionReceived>(_onSubscriptionReceived);
+    on<_DashboardDataUpdated>(_onDashboardDataUpdated);
     on<_DashboardListenerError>(_onListenerError);
+    on<UpdateReservationStatus>(_onUpdateReservationStatus);
 
     // Initialize services if needed
     _initServices();
@@ -88,6 +98,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   /// Initialize any required services
   Future<void> _initServices() async {
     try {
+      // Initialize the centralized data service first
+      await _centralizedDataService.init();
+
       // Initialize the reservation sync service
       await _reservationSyncService.init();
     } catch (e) {
@@ -115,6 +128,192 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     await _loadDashboardData(emit);
   }
 
+  /// Handler for updating reservation status
+  Future<void> _onUpdateReservationStatus(
+    UpdateReservationStatus event,
+    Emitter<DashboardState> emit,
+  ) async {
+    print(
+      "DashboardBloc: Updating reservation status for ${event.reservationId}",
+    );
+
+    if (state is! DashboardLoadSuccess) {
+      print("DashboardBloc: Not in success state, can't update");
+      return;
+    }
+
+    final currentState = state as DashboardLoadSuccess;
+
+    try {
+      // Update reservation status in centralized service
+      final success = await _updateReservationStatus(
+        event.reservationId,
+        event.userId,
+        event.newStatus,
+      );
+
+      if (success) {
+        // Get the updated list from centralized service for consistency
+        final updatedReservations = await _centralizedDataService
+            .getReservations(forceRefresh: true);
+
+        // Create updated state
+        final updatedState = DashboardLoadSuccess(
+          providerInfo: currentState.providerInfo,
+          reservations: updatedReservations,
+          subscriptions: currentState.subscriptions,
+          stats: currentState.stats,
+          accessLogs: currentState.accessLogs,
+        );
+
+        emit(updatedState);
+        emit(
+          DashboardNotificationReceived(
+            message:
+                "Reservation ${event.reservationId} updated to ${event.newStatus}",
+          ),
+        );
+        emit(updatedState); // Return to success state
+      } else {
+        emit(currentState);
+        emit(
+          const DashboardNotificationReceived(
+            message: "Failed to update reservation status",
+          ),
+        );
+        emit(currentState); // Return to success state
+      }
+    } catch (e) {
+      print("DashboardBloc: Error updating reservation status - $e");
+      // Maintain current state if error
+      emit(currentState);
+      emit(
+        DashboardNotificationReceived(
+          message: "Error updating status: ${e.toString()}",
+        ),
+      );
+      emit(currentState); // Return to success state
+    }
+  }
+
+  /// Helper method to update reservation status
+  Future<bool> _updateReservationStatus(
+    String reservationId,
+    String userId,
+    String newStatus,
+  ) async {
+    try {
+      final User? user = _auth.currentUser;
+      final String providerId = user?.uid ?? '';
+
+      if (user == null) {
+        throw Exception('User not authenticated');
+      }
+
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Update in main reservations collection
+      final mainRef = FirebaseFirestore.instance
+          .collection('reservations')
+          .doc(reservationId);
+
+      batch.update(mainRef, {'status': newStatus});
+
+      // Update in user's collection
+      final userRef = FirebaseFirestore.instance
+          .collection('endUsers')
+          .doc(userId)
+          .collection('reservations')
+          .doc(reservationId);
+
+      batch.update(userRef, {'status': newStatus});
+
+      // Update provider reference collections based on status
+
+      // First get current reservation to determine current status
+      final reservationDoc = await mainRef.get();
+      if (!reservationDoc.exists) {
+        throw Exception('Reservation not found');
+      }
+
+      final currentStatus = reservationDoc.data()?['status'] as String?;
+
+      if (currentStatus != null && currentStatus != newStatus) {
+        // Remove from old status collection
+        String oldCollection = '';
+        switch (currentStatus) {
+          case 'Pending':
+            oldCollection = 'pendingReservations';
+            break;
+          case 'Confirmed':
+            oldCollection = 'confirmedReservations';
+            break;
+          case 'Cancelled':
+            oldCollection = 'cancelledReservations';
+            break;
+          case 'Completed':
+          case 'Used':
+            oldCollection = 'completedReservations';
+            break;
+        }
+
+        if (oldCollection.isNotEmpty) {
+          final oldRef = FirebaseFirestore.instance
+              .collection('serviceProviders')
+              .doc(providerId)
+              .collection(oldCollection)
+              .doc(reservationId);
+
+          batch.delete(oldRef);
+        }
+
+        // Add to new status collection
+        String newCollection = '';
+        switch (newStatus) {
+          case 'Pending':
+            newCollection = 'pendingReservations';
+            break;
+          case 'Confirmed':
+            newCollection = 'confirmedReservations';
+            break;
+          case 'Cancelled':
+            newCollection = 'cancelledReservations';
+            break;
+          case 'Completed':
+          case 'Used':
+            newCollection = 'completedReservations';
+            break;
+        }
+
+        if (newCollection.isNotEmpty) {
+          final newRef = FirebaseFirestore.instance
+              .collection('serviceProviders')
+              .doc(providerId)
+              .collection(newCollection)
+              .doc(reservationId);
+
+          batch.set(newRef, {
+            'reservationId': reservationId,
+            'userId': userId,
+            'status': newStatus,
+            'dateTime': reservationDoc.data()?['dateTime'],
+          });
+        }
+      }
+
+      // Commit batch
+      await batch.commit();
+
+      // Force refresh of centralized data
+      await _centralizedDataService.refreshAllData();
+
+      return true;
+    } catch (e) {
+      print("DashboardBloc: Error in _updateReservationStatus - $e");
+      return false;
+    }
+  }
+
   /// Handler for the SyncMobileAppData event
   Future<void> _onSyncMobileAppData(
     SyncMobileAppData event,
@@ -139,22 +338,28 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         return;
       }
 
-      // First sync reservations
-      print("DashboardBloc: Syncing reservations from mobile app structure...");
-      final reservations = await _reservationSyncService.syncReservations();
-
-      // Then sync subscriptions
+      // Use centralized service for syncing mobile app data
       print(
-        "DashboardBloc: Syncing subscriptions from mobile app structure...",
+        "DashboardBloc: Refreshing mobile app data via centralized service",
       );
-      final subscriptions = await _reservationSyncService.syncSubscriptions();
+      // Use refreshAllData which is available in CentralizedDataService
+      await _centralizedDataService.refreshAllData();
+
+      // Get fresh data
+      final reservations = await _centralizedDataService.getReservations(
+        forceRefresh: true,
+      );
+      final subscriptions = await _centralizedDataService.getSubscriptions(
+        forceRefresh: true,
+      );
+      final accessLogs = await _centralizedDataService.getRecentAccessLogs(
+        limit: 10,
+        forceRefresh: true,
+      );
 
       print(
         "DashboardBloc: Mobile app sync completed with ${reservations.length} reservations and ${subscriptions.length} subscriptions",
       );
-
-      // Also perform access control sync to ensure consistency
-      await _accessControlRepository.refreshMobileAppData();
 
       // If we're in a loaded state, update the state with new data
       if (state is DashboardLoadSuccess) {
@@ -163,16 +368,10 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         // Create updated state with new data
         final updatedState = DashboardLoadSuccess(
           providerInfo: currentState.providerInfo,
-          reservations:
-              reservations.isNotEmpty
-                  ? reservations
-                  : currentState.reservations,
-          subscriptions:
-              subscriptions.isNotEmpty
-                  ? subscriptions
-                  : currentState.subscriptions,
-          stats: currentState.stats,
-          accessLogs: currentState.accessLogs,
+          reservations: reservations,
+          subscriptions: subscriptions,
+          stats: currentState.stats, // Keep stats for now
+          accessLogs: accessLogs,
         );
 
         emit(updatedState);
@@ -234,15 +433,16 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       }
 
       // Step 2: Fetch all required data in parallel
+      // Use CentralizedDataService for consistent data
       print(
         "--- DashboardBloc: Fetching dashboard data for provider $providerId ---",
       );
 
       final List<dynamic> results = await Future.wait([
-        _fetchReservations(providerId, governorateId),
-        _fetchSubscriptions(providerId),
+        _centralizedDataService.getReservations(),
+        _centralizedDataService.getSubscriptions(),
         _fetchStats(providerId, governorateId),
-        _fetchAccessLogs(providerId),
+        _centralizedDataService.getRecentAccessLogs(limit: 10),
       ]);
 
       final List<Reservation> reservations = results[0];
@@ -250,22 +450,28 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final DashboardStats stats = results[2];
       final List<AccessLog> accessLogs = results[3];
 
+      // Convert stats to Map<String, dynamic> for state
+      final Map<String, dynamic> statsMap = {
+        'activeSubscriptions': stats.activeSubscriptions,
+        'upcomingReservations': stats.upcomingReservations,
+        'totalRevenue': stats.totalRevenue,
+        'newMembersMonth': stats.newMembersMonth,
+        'checkInsToday': stats.checkInsToday,
+        'totalBookingsMonth': stats.totalBookingsMonth,
+      };
+
       emit(
         DashboardLoadSuccess(
           providerInfo: providerInfo,
           reservations: reservations,
           subscriptions: subscriptions,
-          stats: stats,
+          stats: statsMap,
           accessLogs: accessLogs,
         ),
       );
 
       // --- Step 3: Start Real-time Listeners AFTER initial load ---
       _startListeners(providerId, governorateId);
-
-      // Trigger mobile app integration sync
-      _reservationSyncService.syncReservations();
-      _reservationSyncService.syncSubscriptions();
     } catch (e, stackTrace) {
       print("!!! DashboardBloc: CATCH - Error loading dashboard data: $e");
       print(stackTrace);
@@ -389,86 +595,43 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
   }
 
+  Future<void> _onDashboardDataUpdated(
+    _DashboardDataUpdated event,
+    Emitter<DashboardState> emit,
+  ) async {
+    print("DashboardBloc: Updating dashboard data from streams");
+
+    if (state is DashboardLoadSuccess) {
+      final currentState = state as DashboardLoadSuccess;
+
+      // Create updated state with new data where provided
+      final updatedState = DashboardLoadSuccess(
+        providerInfo: currentState.providerInfo,
+        reservations: event.reservations ?? currentState.reservations,
+        subscriptions: event.subscriptions ?? currentState.subscriptions,
+        stats: currentState.stats,
+        accessLogs: event.accessLogs ?? currentState.accessLogs,
+      );
+
+      emit(updatedState);
+    }
+  }
+
   Future<void> _onListenerError(
     _DashboardListenerError event,
     Emitter<DashboardState> emit,
   ) async {
-    print("!!! DashboardBloc: Listener Error: ${event.error}");
+    print("!!! DashboardBloc: Listener Error: ${event.errorMessage}");
     if (state is DashboardLoadSuccess) {
       // Don't break the UI if we already have data, just log the error
       // Optionally consider emitting a "background error" state or similar
     } else {
       // Only emit failure if we don't already have data
-      emit(DashboardLoadFailure(event.error));
+      emit(DashboardLoadFailure(event.errorMessage));
     }
   }
 
   // --- Private Helper Methods ---
-
-  Future<List<Reservation>> _fetchReservations(
-    String providerId,
-    String governorateId,
-  ) async {
-    try {
-      print("DashboardBloc: Fetching reservations for provider $providerId");
-
-      // First try to get reservations using the updated sync service
-      final syncedReservations =
-          await _reservationSyncService.syncReservations();
-
-      // If we got reservations from the sync service, use those
-      if (syncedReservations.isNotEmpty) {
-        print(
-          "DashboardBloc: Got ${syncedReservations.length} reservations from sync service",
-        );
-        return syncedReservations;
-      }
-
-      // Fallback to direct Firestore query if sync service returned no results
-      print(
-        "DashboardBloc: Sync service returned no reservations, falling back to direct query",
-      );
-      return await _reservationRepository.fetchReservations(
-        providerId: providerId,
-        governorateId: governorateId,
-      );
-    } catch (e) {
-      print("DashboardBloc: Error fetching reservations: $e");
-      return [];
-    }
-  }
-
-  Future<List<Subscription>> _fetchSubscriptions(String providerId) async {
-    print("DashboardBloc: Fetching subscriptions for $providerId");
-    try {
-      // First try to get subscriptions using the updated sync service
-      final syncedSubscriptions =
-          await _reservationSyncService.syncSubscriptions();
-
-      // If we got subscriptions from the sync service, use those
-      if (syncedSubscriptions.isNotEmpty) {
-        print(
-          "DashboardBloc: Got ${syncedSubscriptions.length} subscriptions from sync service",
-        );
-        return syncedSubscriptions;
-      }
-
-      // Fallback to direct repository query if sync service returned no results
-      print(
-        "DashboardBloc: Sync service returned no subscriptions, falling back to direct query",
-      );
-      // Use repository to fetch subscriptions
-      final subscriptions = await _subscriptionRepository.fetchSubscriptions(
-        providerId: providerId,
-      );
-
-      print("DashboardBloc: Fetched ${subscriptions.length} subscriptions");
-      return subscriptions;
-    } catch (e) {
-      print("DashboardBloc: Error fetching subscriptions: $e");
-      return [];
-    }
-  }
 
   Future<DashboardStats> _fetchStats(
     String providerId,
@@ -476,15 +639,92 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
   ) async {
     print("DashboardBloc: Calculating dashboard stats for $providerId");
     try {
-      // Create a placeholder stats object - in a real implementation
-      // we would fetch actual data from various sources
-      return DashboardStats.empty().copyWith(
-        activeSubscriptions: 12,
-        upcomingReservations: 8,
-        totalRevenue: 1250.0,
-        newMembersMonth: 5,
-        checkInsToday: 23,
-        totalBookingsMonth: 34,
+      // Get current date info for filtering
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final startOfMonth = DateTime(now.year, now.month, 1);
+
+      // Get data from centralized service for consistency
+      final reservations = await _centralizedDataService.getReservations();
+      final subscriptions = await _centralizedDataService.getSubscriptions();
+      final accessLogs = await _centralizedDataService.getRecentAccessLogs(
+        limit: 100,
+      );
+
+      // Count active subscriptions
+      final activeSubscriptions = subscriptions.length;
+
+      // Count upcoming reservations (next 7 days)
+      final upcomingReservations =
+          reservations.where((res) {
+            final resDate = DateTime(
+              res.dateTime.toDate().year,
+              res.dateTime.toDate().month,
+              res.dateTime.toDate().day,
+            );
+
+            return resDate.isAtSameMomentAs(today) ||
+                (resDate.isAfter(today) &&
+                    resDate.isBefore(today.add(const Duration(days: 7))));
+          }).length;
+
+      // Count today's check-ins
+      final checkInsToday =
+          accessLogs.where((log) {
+            final logDate = DateTime(
+              log.timestamp.toDate().year,
+              log.timestamp.toDate().month,
+              log.timestamp.toDate().day,
+            );
+
+            return logDate.isAtSameMomentAs(today) && log.status == 'Granted';
+          }).length;
+
+      // Count new subscriptions this month
+      final newMembersMonth =
+          subscriptions.where((sub) {
+            final startDate = sub.startDate.toDate();
+            return startDate.isAfter(startOfMonth) ||
+                startDate.isAtSameMomentAs(startOfMonth);
+          }).length;
+
+      // Count total bookings this month
+      final totalBookingsMonth =
+          reservations.where((res) {
+            final createDate = res.createdAt?.toDate() ?? DateTime(1970);
+            return createDate.isAfter(startOfMonth) ||
+                createDate.isAtSameMomentAs(startOfMonth);
+          }).length;
+
+      // Calculate revenue
+      var totalRevenue = 0.0;
+
+      // Sum reservation amounts for this month
+      for (var res in reservations) {
+        final createDate = res.createdAt?.toDate();
+        if (createDate != null &&
+            (createDate.isAfter(startOfMonth) ||
+                createDate.isAtSameMomentAs(startOfMonth))) {
+          totalRevenue += res.amount ?? 0.0;
+        }
+      }
+
+      // Sum subscription amounts for this month
+      for (var sub in subscriptions) {
+        final startDate = sub.startDate.toDate();
+        if (startDate.isAfter(startOfMonth) ||
+            startDate.isAtSameMomentAs(startOfMonth)) {
+          totalRevenue += sub.amount ?? 0.0;
+        }
+      }
+
+      return DashboardStats(
+        activeSubscriptions: activeSubscriptions,
+        upcomingReservations: upcomingReservations,
+        totalRevenue: totalRevenue,
+        newMembersMonth: newMembersMonth,
+        checkInsToday: checkInsToday,
+        totalBookingsMonth: totalBookingsMonth,
       );
     } catch (e) {
       print("DashboardBloc: Error calculating stats: $e");
@@ -493,29 +733,113 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     }
   }
 
-  Future<List<AccessLog>> _fetchAccessLogs(String providerId) async {
-    print("DashboardBloc: Fetching recent access logs for $providerId");
-    try {
-      // Use repository to fetch access logs
-      final accessLogs = await _accessControlRepository.getRecentAccessLogs(
-        limit: 10, // Only need a small number for dashboard
-      );
-
-      print("DashboardBloc: Fetched ${accessLogs.length} access logs");
-      return accessLogs;
-    } catch (e) {
-      print("DashboardBloc: Error fetching access logs: $e");
-      return [];
-    }
-  }
-
   void _startListeners(String providerId, String governorateId) {
+    // Prevent setting up duplicate listeners
+    if (_centralizedReservationsSub != null ||
+        _centralizedSubscriptionsSub != null) {
+      print("DashboardBloc: Listeners already active, skipping setup");
+      return;
+    }
+
     // Clean up any existing listeners
     _reservationsSubscription?.cancel();
     _subscriptionsSubscription?.cancel();
+    _centralizedReservationsSub?.cancel();
+    _centralizedSubscriptionsSub?.cancel();
+    _centralizedAccessLogsSub?.cancel();
 
     try {
-      // Listen to the real-time stream for new reservations from sync service
+      // Listen to centralized data service for consistent data
+      _centralizedReservationsSub = _centralizedDataService.reservationsStream.listen(
+        (reservations) {
+          print(
+            "DashboardBloc: Received ${reservations.length} reservations from centralized service",
+          );
+
+          // DIRECTLY UPDATE STATE instead of triggering RefreshDashboardData
+          if (state is DashboardLoadSuccess) {
+            final currentState = state as DashboardLoadSuccess;
+
+            // Create updated state
+            final updatedState = DashboardLoadSuccess(
+              providerInfo: currentState.providerInfo,
+              reservations: reservations,
+              subscriptions: currentState.subscriptions,
+              stats: currentState.stats,
+              accessLogs: currentState.accessLogs,
+            );
+
+            // Use emit directly (but need to ensure we're in an event handler)
+            // Instead, add a different event that just updates the data
+            add(
+              _DashboardDataUpdated(
+                reservations: reservations,
+                subscriptions: null,
+                accessLogs: null,
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          print(
+            "DashboardBloc: Error in centralized reservations stream: $error",
+          );
+          add(_DashboardListenerError(error.toString()));
+        },
+      );
+
+      _centralizedSubscriptionsSub = _centralizedDataService.subscriptionsStream.listen(
+        (subscriptions) {
+          print(
+            "DashboardBloc: Received ${subscriptions.length} subscriptions from centralized service",
+          );
+
+          // DIRECTLY UPDATE STATE instead of triggering RefreshDashboardData
+          if (state is DashboardLoadSuccess) {
+            add(
+              _DashboardDataUpdated(
+                reservations: null,
+                subscriptions: subscriptions,
+                accessLogs: null,
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          print(
+            "DashboardBloc: Error in centralized subscriptions stream: $error",
+          );
+          add(_DashboardListenerError(error.toString()));
+        },
+      );
+
+      _centralizedAccessLogsSub = _centralizedDataService.accessLogsStream.listen(
+        (accessLogs) {
+          print(
+            "DashboardBloc: Received ${accessLogs.length} access logs from centralized service",
+          );
+
+          // DIRECTLY UPDATE STATE instead of triggering RefreshDashboardData
+          if (state is DashboardLoadSuccess) {
+            add(
+              _DashboardDataUpdated(
+                reservations: null,
+                subscriptions: null,
+                accessLogs:
+                    accessLogs.take(10).toList(), // Take only 10 for dashboard
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          print(
+            "DashboardBloc: Error in centralized access logs stream: $error",
+          );
+          add(_DashboardListenerError(error.toString()));
+        },
+      );
+
+      // Also listen to the reservation sync service for backwards compatibility
       _reservationsSubscription = _reservationSyncService.onNewReservation.listen(
         (reservation) {
           print(
@@ -523,7 +847,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
           );
           add(_DashboardReservationReceived(reservation));
         },
-        onError: (error) {
+        onError: (dynamic error) {
           print("DashboardBloc: Error in reservation stream: $error");
           add(_DashboardListenerError(error.toString()));
         },
@@ -543,6 +867,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
     print("--- DashboardBloc Closing: Cancelling listeners ---");
     _reservationsSubscription?.cancel();
     _subscriptionsSubscription?.cancel();
+    _centralizedReservationsSub?.cancel();
+    _centralizedSubscriptionsSub?.cancel();
+    _centralizedAccessLogsSub?.cancel();
     return super.close();
   }
 } // End DashboardBloc class

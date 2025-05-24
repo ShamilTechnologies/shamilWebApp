@@ -55,6 +55,15 @@ class ValidateAccess extends AccessPointEvent {
   List<Object?> get props => [userId, userName, method];
 }
 
+/// Event for validating access by user ID (from dropdown/selection)
+class ValidateUserAccess extends AccessPointEvent {
+  final String uid;
+  final String method; // typically 'manual' or 'calendar'
+  const ValidateUserAccess({required this.uid, required this.method});
+  @override
+  List<Object?> get props => [uid, method];
+}
+
 class ResetAccessPoint extends AccessPointEvent {}
 
 // --- Internal Event for Service Status Change ---

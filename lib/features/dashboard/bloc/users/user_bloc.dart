@@ -44,11 +44,28 @@ class UserBloc extends Bloc<UserEvent, UserState> {
   void _subscribeToUserUpdates() {
     _usersSubscription = _dataService.usersStream.listen(
       (users) {
-        add(UsersUpdated(users));
+        // Check if the bloc is closed before adding an event
+        try {
+          add(UsersUpdated(users));
+        } catch (e) {
+          // If the bloc is closed, this will catch the exception
+          print("UserBloc: Cannot add event - bloc may be closed. Error: $e");
+          // Automatically cancel the subscription if the bloc is closed
+          _usersSubscription?.cancel();
+          _usersSubscription = null;
+        }
       },
       onError: (e) {
         print("UserBloc: Error in users stream: $e");
-        add(UsersUpdated([])); // Add empty users instead of directly emitting
+        try {
+          add(UsersUpdated([])); // Add empty users instead of directly emitting
+        } catch (e) {
+          // If the bloc is closed, this will catch the exception
+          print("UserBloc: Cannot add event - bloc may be closed. Error: $e");
+          // Automatically cancel the subscription if the bloc is closed
+          _usersSubscription?.cancel();
+          _usersSubscription = null;
+        }
       },
     );
   }
@@ -250,7 +267,9 @@ class UserBloc extends Bloc<UserEvent, UserState> {
         } else if (hasSubscriptions) {
           userType = UserType.subscribed;
         } else {
-          userType = user.userType; // Keep existing type if no related records
+          userType =
+              user.userType ??
+              UserType.reserved; // Keep existing type if no related records
         }
 
         // Return updated user with new records and possibly updated type

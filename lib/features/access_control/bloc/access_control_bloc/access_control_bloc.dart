@@ -177,4 +177,43 @@ class AccessControlBloc extends Bloc<AccessControlEvent, AccessControlState> {
       );
     }
   }
+
+  /// Fetch users with reservations (for the smart access control screen)
+  Future<List<AccessLog>> fetchUsersWithReservations() async {
+    try {
+      // Get the repository
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) {
+        return [];
+      }
+
+      // Get users with reservations from Firestore
+      final querySnapshot =
+          await _firestore
+              .collection('accessLogs')
+              .where('providerId', isEqualTo: providerId)
+              .orderBy('timestamp', descending: true)
+              .limit(50)
+              .get();
+
+      final logs =
+          querySnapshot.docs.map((doc) => AccessLog.fromSnapshot(doc)).toList();
+
+      // Get unique users from logs
+      final uniqueUserIds = <String>{};
+      final uniqueUsers = <AccessLog>[];
+
+      for (final log in logs) {
+        if (!uniqueUserIds.contains(log.userId)) {
+          uniqueUserIds.add(log.userId);
+          uniqueUsers.add(log);
+        }
+      }
+
+      return uniqueUsers;
+    } catch (e) {
+      print('Error fetching users with reservations: $e');
+      return [];
+    }
+  }
 }

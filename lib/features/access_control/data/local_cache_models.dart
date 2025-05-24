@@ -119,10 +119,18 @@ class CachedReservation extends HiveObject implements EquatableMixin {
   @HiveField(6)
   final int groupSize;
 
+  // New status field to track Confirmed/Pending status
+  @HiveField(7)
+  final String status;
+
   // Add other fields if needed for offline validation (e.g., status, specific seat info)
 
   // Getter to convert stored type string back to enum
   ReservationType get type => reservationTypeFromString(typeString);
+
+  // Helper to check if status is valid for access (either Confirmed or Pending)
+  bool get isStatusValidForAccess =>
+      status.toLowerCase() == 'confirmed' || status.toLowerCase() == 'pending';
 
   CachedReservation({
     required this.userId,
@@ -132,12 +140,13 @@ class CachedReservation extends HiveObject implements EquatableMixin {
     required this.endTime,
     required this.typeString, // ** NEW **
     required this.groupSize, // ** NEW **
+    this.status = 'Unknown', // Default if not provided
   });
 
   @override
   List<Object?> get props => [
     userId, reservationId, serviceName, startTime, endTime,
-    typeString, groupSize, // ** NEW **
+    typeString, groupSize, status, // Added status
   ];
 
   @override

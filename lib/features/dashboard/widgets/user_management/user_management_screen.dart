@@ -414,81 +414,98 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }) {
     final isRefreshing = state is UserLoaded && state.isRefreshing;
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Left sidebar with filters
-        SidebarFilter(
-          viewType: _viewType,
-          onViewTypeChanged: _onViewTypeChanged,
-          searchQuery: _searchQuery,
-          onSearchChanged: _onSearchChanged,
-          filterType: _filterType,
-          onFilterChanged: _onFilterChanged,
-          fromDate: _fromDate,
-          toDate: _toDate,
-          onDateRangeChanged: _onDateRangeChanged,
-          selectedServiceTypes: _selectedServiceTypes,
-          onServiceTypesChanged: _onServiceTypesChanged,
-          showExpiredSubscriptions: _showExpiredSubscriptions,
-          onShowExpiredChanged: _onShowExpiredChanged,
-          onClearFilters: _clearFilters,
-          onRefreshPressed: () => _userBloc.add(const RefreshUsers()),
-          isRefreshing: isRefreshing,
-          isActive: isActive,
-          // We'll provide these service types from the full dataset
-          availableServiceTypes: _getAvailableServiceTypes(state),
-        ),
-
-        // Vertical divider
-        const VerticalDivider(width: 1, thickness: 1),
-
-        // Main content area with data table
-        Expanded(
-          flex:
-              _selectedUser != null
-                  ? 2
-                  : 3, // Adjust flex based on detail panel
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SizedBox(
+          height: constraints.maxHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header bar with view title and actions
-              _buildHeaderBar(users.length, isActive),
-
-              // Data table with users
-              Expanded(
-                child: UserTable(
-                  users: users,
-                  selectedUser: _selectedUser,
-                  onUserSelected: _onUserSelected,
-                  onViewProfile: _viewUserProfile,
-                  onLoadDetails: _loadUserDetails,
-                  sortField: _sortField,
-                  sortAscending: _sortAscending,
-                  onSort: _onSort,
-                  isLoading: isRefreshing,
+              // Left sidebar with filters
+              SizedBox(
+                width: 250, // Fixed width for sidebar
+                height: constraints.maxHeight,
+                child: SidebarFilter(
+                  viewType: _viewType,
+                  onViewTypeChanged: _onViewTypeChanged,
+                  searchQuery: _searchQuery,
+                  onSearchChanged: _onSearchChanged,
+                  filterType: _filterType,
+                  onFilterChanged: _onFilterChanged,
+                  fromDate: _fromDate,
+                  toDate: _toDate,
+                  onDateRangeChanged: _onDateRangeChanged,
+                  selectedServiceTypes: _selectedServiceTypes,
+                  onServiceTypesChanged: _onServiceTypesChanged,
+                  showExpiredSubscriptions: _showExpiredSubscriptions,
+                  onShowExpiredChanged: _onShowExpiredChanged,
+                  onClearFilters: _clearFilters,
+                  onRefreshPressed: () => _userBloc.add(const RefreshUsers()),
+                  isRefreshing: isRefreshing,
+                  isActive: isActive,
+                  // We'll provide these service types from the full dataset
+                  availableServiceTypes: _getAvailableServiceTypes(state),
                 ),
               ),
+
+              // Vertical divider
+              const VerticalDivider(width: 1, thickness: 1),
+
+              // Main content area with data table
+              Expanded(
+                flex:
+                    _selectedUser != null
+                        ? 2
+                        : 3, // Adjust flex based on detail panel
+                child: SizedBox(
+                  height: constraints.maxHeight,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header bar with view title and actions
+                      _buildHeaderBar(users.length, isActive),
+
+                      // Data table with users
+                      Expanded(
+                        child: UserTable(
+                          users: users,
+                          selectedUser: _selectedUser,
+                          onUserSelected: _onUserSelected,
+                          onViewProfile: _viewUserProfile,
+                          onLoadDetails: _loadUserDetails,
+                          sortField: _sortField,
+                          sortAscending: _sortAscending,
+                          onSort: _onSort,
+                          isLoading: isRefreshing,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Detail panel (if user is selected)
+              if (_selectedUser != null) ...[
+                // Vertical divider
+                const VerticalDivider(width: 1, thickness: 1),
+
+                // Detail panel
+                Expanded(
+                  flex: 1,
+                  child: SizedBox(
+                    height: constraints.maxHeight,
+                    child: UserDetailPanel(
+                      user: _selectedUser!,
+                      onClose: () => _onUserSelected(null),
+                      onViewProfile: _viewUserProfile,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
-        ),
-
-        // Detail panel (if user is selected)
-        if (_selectedUser != null) ...[
-          // Vertical divider
-          const VerticalDivider(width: 1, thickness: 1),
-
-          // Detail panel
-          Expanded(
-            flex: 1,
-            child: UserDetailPanel(
-              user: _selectedUser!,
-              onClose: () => _onUserSelected(null),
-              onViewProfile: _viewUserProfile,
-            ),
-          ),
-        ],
-      ],
+        );
+      },
     );
   }
 
