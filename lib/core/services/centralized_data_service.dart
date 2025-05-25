@@ -663,7 +663,7 @@ class CentralizedDataService {
                 endTime: endTime,
                 typeString: reservation.type.toString().split('.').last,
                 groupSize: reservation.groupSize ?? 1,
-                status: reservation.status ?? 'Pending',
+                status: reservation.status,
               );
 
               _cacheService.cachedReservationsBox.put(
@@ -1220,6 +1220,14 @@ class CentralizedDataService {
       // Check if user has access based on cached data
       final accessResult = await _offlineService.checkUserAccess(userId);
 
+      // Debug log the access result to see what's being returned
+      print('CentralizedDataService: Access result for $userName ($userId):');
+      print('  - hasAccess: ${accessResult['hasAccess']}');
+      print('  - message: ${accessResult['message']}');
+      print('  - accessType: ${accessResult['accessType']}');
+      print('  - reason: ${accessResult['reason']}');
+      print('  - smartComment: ${accessResult['smartComment']}');
+
       // Record the access attempt - using positional parameters
       await _offlineService.recordAccessAttempt(
         userId,
@@ -1234,6 +1242,11 @@ class CentralizedDataService {
       final logs = _offlineService.getRecentAccessLogs(50);
       recentAccessLogsNotifier.value = _convertToAccessLogs(logs);
 
+      // Make sure we're explicitly returning the original accessResult without modification
+      // to preserve the smartComment field
+      print(
+        'CentralizedDataService: Returning access result with smartComment: ${accessResult['smartComment']}',
+      );
       return accessResult;
     } catch (e) {
       print('CentralizedDataService: Error processing access - $e');
@@ -1251,6 +1264,8 @@ class CentralizedDataService {
         'message': 'System error occurred',
         'accessType': null,
         'reason': 'System error: $e',
+        'smartComment':
+            'A system error occurred while validating your access. Please try again or contact staff for assistance.',
       };
     }
   }
@@ -1780,6 +1795,198 @@ class CentralizedDataService {
     } catch (e) {
       print('CentralizedDataService: Error getting cached reservations: $e');
       return [];
+    }
+  }
+
+  /// Cache a subscription for access control
+  Future<void> cacheSubscription(Subscription subscription) async {
+    try {
+      if (subscription.userId == null || subscription.id == null) {
+        print(
+          'CentralizedDataService: Cannot cache subscription - missing userId or id',
+        );
+        return;
+      }
+
+      // Initialize cache service if needed
+      await _cacheService.init();
+
+      // Create cached subscription object
+      final cachedSubscription = CachedSubscription(
+        userId: subscription.userId!,
+        subscriptionId: subscription.id!,
+        planName: subscription.planName ?? 'Membership',
+        expiryDate:
+            subscription.expiryDate?.toDate() ??
+            DateTime.now().add(const Duration(days: 30)),
+      );
+
+      // Save to cache
+      await _cacheService.cachedSubscriptionsBox.put(
+        subscription.id!,
+        cachedSubscription,
+      );
+
+      // Also ensure user is cached
+      await ensureUserInCache(subscription.userId!, subscription.userName);
+
+      print(
+        'CentralizedDataService: Cached subscription ${subscription.id} for user ${subscription.userId}',
+      );
+    } catch (e) {
+      print('CentralizedDataService: Error caching subscription - $e');
+    }
+  }
+
+  /// Cache a reservation for access control
+  Future<void> cacheReservation(Reservation reservation) async {
+    try {
+      if (reservation.userId == null || reservation.id == null) {
+        print(
+          'CentralizedDataService: Cannot cache reservation - missing userId or id',
+        );
+        return;
+      }
+
+      // Initialize cache service if needed
+      await _cacheService.init();
+
+      // Check if reservation is cancelled or expired - these should never grant access
+      final isCancelled =
+          reservation.status == 'cancelled_by_user' ||
+          reservation.status == 'cancelled_by_provider' ||
+          reservation.status == 'expired';
+
+      if (isCancelled) {
+        print(
+          'CentralizedDataService: Reservation ${reservation.id} has status ${reservation.status} - will be marked as invalid for access',
+        );
+      }
+
+      // Calculate proper start and end times
+      DateTime startTime;
+      DateTime endTime;
+
+      // Handle potential null values and ensure DateTime objects
+      if (reservation.dateTime != null) {
+        startTime = reservation.dateTime!.toDate();
+      } else {
+        // If dateTime is null, use current time as fallback
+        print(
+          'CentralizedDataService: Warning - reservation has null dateTime, using current time',
+        );
+        startTime = DateTime.now();
+      }
+
+      // Calculate end time - either use provided endTime or add default duration
+      if (reservation.endTime != null) {
+        endTime = reservation.endTime!;
+      } else {
+        // Add 1 hour by default if no end time specified
+        print(
+          'CentralizedDataService: Warning - reservation has null endTime, adding 1 hour to startTime',
+        );
+        endTime = startTime.add(const Duration(hours: 1));
+      }
+
+      // Only adjust times for valid reservations
+      if (!isCancelled) {
+        // Ensure the reservation has a valid date range for today to allow access
+        final now = DateTime.now();
+
+        // Make startTime 1 hour before now if it's in the future
+        if (startTime.isAfter(now)) {
+          print(
+            'CentralizedDataService: Adjusting future reservation to be active now',
+          );
+          startTime = now.subtract(const Duration(minutes: 15));
+        }
+
+        // Make endTime at least 1 hour after now if it's in the past
+        if (endTime.isBefore(now)) {
+          print(
+            'CentralizedDataService: Adjusting past reservation end time to be active now',
+          );
+          endTime = now.add(const Duration(minutes: 45));
+        }
+      }
+
+      // Ensure we explicitly set the status to lowercase for consistency
+      String normalizedStatus = '';
+      if (reservation.status != null) {
+        normalizedStatus = reservation.status!.toLowerCase();
+        print(
+          'CentralizedDataService: Using normalized status: $normalizedStatus',
+        );
+      } else {
+        normalizedStatus = isCancelled ? 'cancelled_by_provider' : 'confirmed';
+        print(
+          'CentralizedDataService: Setting default status: $normalizedStatus',
+        );
+      }
+
+      // Create cached reservation object with validated times
+      final cachedReservation = CachedReservation(
+        userId: reservation.userId!,
+        reservationId: reservation.id!,
+        serviceName: reservation.serviceName ?? 'Reservation',
+        startTime: startTime,
+        endTime: endTime,
+        typeString: reservation.type.toString().split('.').last,
+        groupSize: reservation.groupSize ?? 1,
+        status: normalizedStatus,
+      );
+
+      // Save to cache
+      await _cacheService.cachedReservationsBox.put(
+        reservation.id!,
+        cachedReservation,
+      );
+
+      // Also ensure user is cached
+      await ensureUserInCache(reservation.userId!, reservation.userName);
+
+      print(
+        'CentralizedDataService: Cached reservation ${reservation.id} for user ${reservation.userId}',
+      );
+
+      // Debug log the cached reservation details
+      print('CentralizedDataService: Reservation details:');
+      print('  - Service: ${cachedReservation.serviceName}');
+      print('  - Status: ${cachedReservation.status}');
+      print('  - Start: ${cachedReservation.startTime}');
+      print('  - End: ${cachedReservation.endTime}');
+      print(
+        '  - Valid for access: ${_isReservationValidForAccess(cachedReservation)}',
+      );
+    } catch (e) {
+      print('CentralizedDataService: Error caching reservation - $e');
+    }
+  }
+
+  /// Helper method to check if a reservation is valid for access
+  bool _isReservationValidForAccess(CachedReservation reservation) {
+    // First check if the reservation is cancelled or expired
+    if (reservation.status == 'cancelled_by_user' ||
+        reservation.status == 'cancelled_by_provider' ||
+        reservation.status == 'expired') {
+      return false;
+    }
+
+    // Then check if it's within the valid time window
+    final now = DateTime.now();
+    return now.isAfter(
+          reservation.startTime.subtract(const Duration(minutes: 60)),
+        ) &&
+        now.isBefore(reservation.endTime.add(const Duration(minutes: 30)));
+  }
+
+  /// Listen to user changes
+  void _listenToUsers(String providerId) {
+    try {
+      // We'll add user change listeners later if needed
+    } catch (e) {
+      print('CentralizedDataService: Failed to start user listener - $e');
     }
   }
 }

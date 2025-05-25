@@ -21,6 +21,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:shamil_web_app/core/constants/assets_icons.dart';
 import 'package:shamil_web_app/features/access_control/models/device_event.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/services.dart'; // For HapticFeedback
 
 /// Modern, redesigned Enterprise Access Control Screen that matches dashboard design
 /// Manages NFC and QR code readers through COM ports with configuration caching
@@ -178,64 +180,267 @@ class _EnterpriseAccessControlScreenState
   void _updateWithDashboardData(DashboardLoadSuccess dashboardState) {
     // Get access logs from dashboard state
     final logs = dashboardState.accessLogs;
+    _accessLogs = logs;
 
     // Get users with access from subscriptions and reservations
     final usersMap = <String, AppUser>{};
 
+    // Process the access logs for stats
+    _calculateAccessStats(logs);
+
     // Extract unique users from subscriptions
     for (final subscription in dashboardState.subscriptions) {
       if (subscription.userId != null && subscription.userName != null) {
-        usersMap[subscription.userId!] = AppUser(
-          userId: subscription.userId!,
-          name: subscription.userName ?? 'Unknown User',
-          userType: UserType.subscribed,
-          relatedRecords: [],
+        final userId = subscription.userId!;
+        final userName = subscription.userName ?? 'Unknown User';
+
+        // Create a record for this subscription
+        final record = RelatedRecord(
+          id: subscription.id ?? '',
+          type: RecordType.subscription,
+          name: subscription.planName ?? 'Membership',
+          status: subscription.status ?? 'Unknown',
+          date: subscription.startDate?.toDate() ?? DateTime.now(),
+          additionalData: {
+            'planName': subscription.planName,
+            'startDate': subscription.startDate?.toDate(),
+            'expiryDate': subscription.expiryDate?.toDate(),
+            'status': subscription.status,
+          },
         );
+
+        // Check if user already exists in map
+        if (usersMap.containsKey(userId)) {
+          // Update existing user
+          final records = List<RelatedRecord>.from(
+            usersMap[userId]!.relatedRecords,
+          );
+          records.add(record);
+
+          // Update user type
+          final currentType = usersMap[userId]!.userType;
+          final newType =
+              currentType == UserType.reserved
+                  ? UserType.both
+                  : UserType.subscribed;
+
+          usersMap[userId] = usersMap[userId]!.copyWith(
+            relatedRecords: records,
+            userType: newType,
+          );
+        } else {
+          // Create new user
+          usersMap[userId] = AppUser(
+            userId: userId,
+            name: userName,
+            userType: UserType.subscribed,
+            relatedRecords: [record],
+          );
+        }
       }
     }
 
     // Extract unique users from reservations
     for (final reservation in dashboardState.reservations) {
       if (reservation.userId != null && reservation.userName != null) {
+        final userId = reservation.userId!;
+        final userName = reservation.userName ?? 'Unknown User';
+
+        // Create a record for this reservation
+        final record = RelatedRecord(
+          id: reservation.id ?? '',
+          type: RecordType.reservation,
+          name: reservation.serviceName ?? 'Reservation',
+          status: reservation.status ?? 'Unknown',
+          date: reservation.dateTime?.toDate() ?? DateTime.now(),
+          additionalData: {
+            'startTime': reservation.dateTime?.toDate(),
+            'endTime': reservation.endTime,
+            'notes': reservation.notes,
+            'groupSize': reservation.groupSize,
+          },
+        );
+
         // Add user if not already in the map
-        if (!usersMap.containsKey(reservation.userId)) {
-          usersMap[reservation.userId!] = AppUser(
-            userId: reservation.userId!,
-            name: reservation.userName ?? 'Unknown User',
+        if (usersMap.containsKey(userId)) {
+          // Update existing user
+          final records = List<RelatedRecord>.from(
+            usersMap[userId]!.relatedRecords,
+          );
+          records.add(record);
+
+          // Update user type
+          final currentType = usersMap[userId]!.userType;
+          final newType =
+              currentType == UserType.subscribed
+                  ? UserType.both
+                  : UserType.reserved;
+
+          usersMap[userId] = usersMap[userId]!.copyWith(
+            relatedRecords: records,
+            userType: newType,
+          );
+        } else {
+          // Create new user
+          usersMap[userId] = AppUser(
+            userId: userId,
+            name: userName,
             userType: UserType.reserved,
-            relatedRecords: [],
+            relatedRecords: [record],
           );
         }
       }
     }
 
     // Convert map to list
-    final users = usersMap.values.toList();
+    _usersWithAccess = usersMap.values.toList();
 
-    final today = DateTime.now();
+    // Update state and log stats
+    setState(() {
+      _isLoading = false;
+      _activeUsers = _usersWithAccess.length;
+    });
+
+    print(
+      "EnterpriseAccessControlScreen: Loaded ${_usersWithAccess.length} users with access",
+    );
+    print(
+      "EnterpriseAccessControlScreen: Loaded ${_accessLogs.length} access logs",
+    );
+
+    // Start enriching user data with more details from Firestore
+    _enrichUsersWithDetails();
+  }
+
+  /// Enrich users with additional details from Firestore
+  Future<void> _enrichUsersWithDetails() async {
+    // Skip if no users to enrich
+    if (_usersWithAccess.isEmpty) return;
+
+    try {
+      print(
+        "EnterpriseAccessControlScreen: Enriching users with additional details",
+      );
+      final enrichedUsers = <AppUser>[];
+
+      // Process users in smaller batches to avoid UI freezes
+      const batchSize = 10;
+      for (var i = 0; i < _usersWithAccess.length; i += batchSize) {
+        final batch = _usersWithAccess.sublist(
+          i,
+          i + batchSize < _usersWithAccess.length
+              ? i + batchSize
+              : _usersWithAccess.length,
+        );
+
+        // Enrich each user in the batch
+        for (final user in batch) {
+          try {
+            // Use direct Firestore approach for complete user details
+            final userDoc =
+                await FirebaseFirestore.instance
+                    .collection('endUsers')
+                    .doc(user.userId)
+                    .get();
+
+            if (userDoc.exists && userDoc.data() != null) {
+              final userData = userDoc.data()!;
+
+              // Extract name from various possible fields
+              final userName =
+                  userData['displayName'] ??
+                  userData['name'] ??
+                  userData['userName'] ??
+                  userData['fullName'] ??
+                  user.name;
+
+              // Create enriched user with all available details
+              final enrichedUser = user.copyWith(
+                name:
+                    userName != 'Unknown User'
+                        ? userName.toString()
+                        : user.name,
+                email: userData['email'] as String?,
+                phone: userData['phone'] as String?,
+                profilePicUrl:
+                    userData['profilePicUrl'] ??
+                    userData['photoURL'] ??
+                    userData['image'] as String?,
+              );
+
+              enrichedUsers.add(enrichedUser);
+            } else {
+              // If direct approach fails, try using centralized data service
+              final userDetails = await _dataService.getUserById(user.userId);
+
+              if (userDetails != null) {
+                // Merge with existing records
+                enrichedUsers.add(
+                  userDetails.copyWith(
+                    relatedRecords: user.relatedRecords,
+                    userType: user.userType,
+                  ),
+                );
+              } else {
+                // Keep original if no enrichment possible
+                enrichedUsers.add(user);
+              }
+            }
+          } catch (e) {
+            print(
+              "EnterpriseAccessControlScreen: Error enriching user ${user.userId}: $e",
+            );
+            // Keep original on error
+            enrichedUsers.add(user);
+          }
+        }
+
+        // Update state with batch progress
+        if (mounted) {
+          setState(() {
+            _usersWithAccess = [
+              ...enrichedUsers,
+              ..._usersWithAccess.sublist(i + batch.length),
+            ];
+          });
+        }
+      }
+
+      // Final update with all enriched users
+      if (mounted) {
+        setState(() {
+          _usersWithAccess = enrichedUsers;
+        });
+      }
+
+      print(
+        "EnterpriseAccessControlScreen: Completed user enrichment with ${enrichedUsers.length} users",
+      );
+    } catch (e) {
+      print("EnterpriseAccessControlScreen: Error during user enrichment: $e");
+    }
+  }
+
+  void _calculateAccessStats(List<AccessLog> logs) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Filter logs for today
     final todayLogs =
         logs.where((log) {
-          final logDate = log.timestamp.toDate();
-          return logDate.year == today.year &&
-              logDate.month == today.month &&
-              logDate.day == today.day;
+          final logDate = log.timestamp?.toDate();
+          if (logDate == null) return false;
+          final logDay = DateTime(logDate.year, logDate.month, logDate.day);
+          return logDay.isAtSameMomentAs(today);
         }).toList();
 
-    // Calculate stats
-    final granted = todayLogs.where((log) => log.status == 'Granted').length;
-    final denied = todayLogs.where((log) => log.status == 'Denied').length;
-    final totalAttempts = todayLogs.length;
-    final successRate =
-        totalAttempts > 0 ? (granted / totalAttempts) * 100 : 0.0;
+    // Count granted and denied for today
+    _todayGranted = todayLogs.where((log) => log.status == 'Granted').length;
+    _todayDenied = todayLogs.where((log) => log.status == 'Denied').length;
 
-    setState(() {
-      _accessLogs = logs;
-      _usersWithAccess = users;
-      _activeUsers = users.length;
-      _todayGranted = granted;
-      _todayDenied = denied;
-      _successRate = successRate;
-    });
+    // Calculate success rate
+    final totalChecks = _todayGranted + _todayDenied;
+    _successRate = totalChecks > 0 ? (_todayGranted / totalChecks) * 100 : 0.0;
   }
 
   Future<void> _fetchDataDirectly() async {
@@ -358,8 +563,54 @@ class _EnterpriseAccessControlScreenState
     HapticFeedback.mediumImpact();
 
     try {
-      final user = await _dataService.getUserById(userId);
+      // First try to get user from dashboard state
+      final dashboardState = context.read<DashboardBloc>().state;
+      AppUser? user;
 
+      if (dashboardState is DashboardLoadSuccess) {
+        // Check users from dashboard data first
+        final subscriptionUsers = dashboardState.subscriptions
+            .where((sub) => sub.userId == userId)
+            .map(
+              (sub) => AppUser(
+                userId: sub.userId!,
+                name: sub.userName ?? 'Unknown User',
+                userType: UserType.subscribed,
+              ),
+            );
+
+        final reservationUsers = dashboardState.reservations
+            .where((res) => res.userId == userId)
+            .map(
+              (res) => AppUser(
+                userId: res.userId!,
+                name: res.userName ?? 'Unknown User',
+                userType: UserType.reserved,
+              ),
+            );
+
+        // Try to find user in our list of dashboard users
+        if (subscriptionUsers.isNotEmpty) {
+          user = subscriptionUsers.first;
+        } else if (reservationUsers.isNotEmpty) {
+          user = reservationUsers.first;
+        }
+      }
+
+      // If not found in dashboard, try other sources
+      if (user == null) {
+        // Check already loaded users in access control first
+        final existingUser =
+            _usersWithAccess.where((u) => u.userId == userId).firstOrNull;
+        if (existingUser != null) {
+          user = existingUser;
+        } else {
+          // Last resort - fetch from centralized data service
+          user = await _dataService.getUserById(userId);
+        }
+      }
+
+      // If user still not found, show error
       if (user == null) {
         _showEnterpriseAccessResult(
           false,
@@ -371,9 +622,95 @@ class _EnterpriseAccessControlScreenState
         return;
       }
 
+      // Ensure the user is properly cached before validating access
+      try {
+        await _dataService.ensureUserInCache(userId, user.name);
+        print("User cached successfully: ${user.name} (${user.userId})");
+
+        // Now also cache the user's subscriptions and reservations from dashboard data
+        if (dashboardState is DashboardLoadSuccess) {
+          // Find and cache subscriptions for this user
+          final userSubscriptions =
+              dashboardState.subscriptions
+                  .where((sub) => sub.userId == userId)
+                  .toList();
+
+          if (userSubscriptions.isNotEmpty) {
+            print(
+              "Found ${userSubscriptions.length} subscriptions to cache for this user",
+            );
+            for (final subscription in userSubscriptions) {
+              try {
+                await _dataService.cacheSubscription(subscription);
+                print(
+                  "Cached subscription: ${subscription.id} (${subscription.planName})",
+                );
+              } catch (e) {
+                print("Error caching subscription: $e");
+              }
+            }
+          }
+
+          // Find and cache reservations for this user
+          final userReservations =
+              dashboardState.reservations
+                  .where((res) => res.userId == userId)
+                  .toList();
+
+          if (userReservations.isNotEmpty) {
+            print(
+              "Found ${userReservations.length} reservations to cache for this user",
+            );
+            for (final reservation in userReservations) {
+              try {
+                await _dataService.cacheReservation(reservation);
+                print(
+                  "Cached reservation: ${reservation.id} (${reservation.serviceName})",
+                );
+              } catch (e) {
+                print("Error caching reservation: $e");
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print("Error ensuring user in cache: $e");
+        // Continue with validation even if caching fails
+      }
+
+      // Enrich user with more details if possible
+      try {
+        if (user.email == null || user.phone == null) {
+          // Try to get more complete user details from Firestore
+          final userDoc =
+              await FirebaseFirestore.instance
+                  .collection('endUsers')
+                  .doc(user.userId)
+                  .get();
+
+          if (userDoc.exists && userDoc.data() != null) {
+            final userData = userDoc.data()!;
+
+            // Update user with additional data
+            user = user.copyWith(
+              email: userData['email'] as String?,
+              phone: userData['phone'] as String?,
+              profilePicUrl:
+                  userData['profilePicUrl'] ??
+                  userData['photoURL'] ??
+                  userData['image'] as String?,
+            );
+          }
+        }
+      } catch (e) {
+        print("Error enriching user data: $e");
+        // Continue with the user data we have
+      }
+
+      // Use the offline-first access service via centralized data for validation
       final result = await _dataService.recordSmartAccess(
         userId: userId,
-        userName: user.name,
+        userName: user?.name ?? 'Unknown User',
       );
 
       final hasAccess = result['hasAccess'] == true;
@@ -391,19 +728,14 @@ class _EnterpriseAccessControlScreenState
       _showEnterpriseAccessResult(
         hasAccess,
         message,
-        user.name,
+        user?.name ?? 'Unknown User',
         smartComment: smartComment,
         accessType: accessType,
         reason: reason,
         additionalInfo: result,
       );
-
-      // Play sound based on access result
-      _playAccessSound(hasAccess);
-
-      // Refresh data in background
-      _refreshData();
     } catch (e) {
+      print("Access validation error: $e");
       _showEnterpriseAccessResult(
         false,
         'System error during validation',
@@ -419,12 +751,54 @@ class _EnterpriseAccessControlScreenState
   Future<void> _playAccessSound(bool granted) async {
     try {
       await _audioPlayer.stop();
-      final soundPath =
-          granted ? AssetsIcons.successSound : AssetsIcons.deniedSound;
-      await _audioPlayer.play(AssetSource(soundPath));
-      print("Playing sound: $soundPath");
+
+      // Try multiple file formats in sequence
+      final formats = ['mp3', 'wav', 'aac'];
+      final baseFileName = granted ? "success" : "denied";
+
+      bool soundPlayed = false;
+      String? lastError;
+
+      // Try each format until one works
+      for (final format in formats) {
+        if (soundPlayed) break;
+
+        final soundPath = "sounds/$baseFileName.$format";
+        print("Attempting to play sound: assets/$soundPath");
+
+        try {
+          await _audioPlayer.play(AssetSource(soundPath));
+          print("Sound playback initiated successfully with $format format");
+          soundPlayed = true;
+          break;
+        } catch (e) {
+          print("Failed to play $format sound: $e");
+          lastError = e.toString();
+          // Continue to next format
+        }
+      }
+
+      // If all sound formats failed, use haptic feedback
+      if (!soundPlayed) {
+        print("All sound formats failed, last error: $lastError");
+        print("Falling back to haptic feedback");
+
+        if (granted) {
+          HapticFeedback.lightImpact();
+          await Future.delayed(const Duration(milliseconds: 100));
+          HapticFeedback.mediumImpact();
+        } else {
+          HapticFeedback.heavyImpact();
+        }
+      }
     } catch (e) {
-      print("Error playing sound: $e");
+      print("Error in sound playback function: $e");
+      // Absolute fallback - just vibrate
+      try {
+        HapticFeedback.vibrate();
+      } catch (e2) {
+        print("Even haptic feedback failed: $e2");
+      }
     }
   }
 
@@ -439,7 +813,55 @@ class _EnterpriseAccessControlScreenState
   }) {
     if (!mounted) return;
 
-    HapticFeedback.heavyImpact();
+    // Debug logging for smartComment
+    print("_showEnterpriseAccessResult: Showing result for $userName");
+    print("  - hasAccess: $hasAccess");
+    print("  - message: $message");
+    print("  - smartComment present: ${smartComment != null}");
+
+    // Ensure we have a valid smart comment
+    if (smartComment == null || smartComment.trim().isEmpty) {
+      print("  - smartComment is empty, providing default");
+
+      // Generate a more contextual default message based on access result and reason
+      if (hasAccess) {
+        final serviceInfo =
+            accessType == 'subscription'
+                ? 'membership'
+                : accessType == 'confirmedReservation' ||
+                    accessType == 'pendingReservation'
+                ? 'reservation'
+                : 'access';
+
+        smartComment =
+            "Welcome $userName. Your $serviceInfo has been activated and access has been granted.";
+      } else {
+        // Use reason if available
+        if (reason != null && reason.isNotEmpty) {
+          smartComment =
+              "Hello $userName. Your access was denied: $reason. Please contact reception for assistance.";
+        } else {
+          smartComment =
+              "Hello $userName. Your access was denied because you don't have an active membership or reservation.";
+        }
+      }
+      print("  - Added default smartComment: $smartComment");
+    } else {
+      print("  - smartComment value: $smartComment");
+    }
+
+    // Provide haptic feedback
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (e) {
+      print("Error providing haptic feedback: $e");
+    }
+
+    try {
+      _playAccessSound(hasAccess);
+    } catch (e) {
+      print("Error playing sound: $e");
+    }
 
     // Define overlayEntry before using it
     late OverlayEntry overlayEntry;
@@ -451,7 +873,7 @@ class _EnterpriseAccessControlScreenState
             hasAccess: hasAccess,
             message: message,
             userName: userName,
-            smartComment: smartComment,
+            smartComment: smartComment ?? '',
             accessType: accessType,
             reason: reason,
             additionalInfo: additionalInfo,
@@ -459,6 +881,12 @@ class _EnterpriseAccessControlScreenState
             autoDismissSeconds: 5,
           ),
     );
+
+    // Store last accessed user data for refreshing
+    setState(() {
+      _lastScannedId = additionalInfo?['userId'] as String? ?? '';
+      _lastSmartComment = smartComment ?? '';
+    });
 
     // Insert overlay into the widget tree
     Overlay.of(context).insert(overlayEntry);

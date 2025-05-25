@@ -16,6 +16,7 @@ import 'package:timezone/data/latest_all.dart'
 import 'package:timezone/timezone.dart' as tz; // Keep for setup in splash
 import 'package:connectivity_plus/connectivity_plus.dart'; // Import Connectivity package
 import 'package:hive/hive.dart'; // Add Hive import
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Import project specific files (Adjust paths as necessary)
 // Core Services & Widgets
@@ -67,29 +68,33 @@ Future<void> main() async {
     print("main: Error loading .env file: $e");
   }
 
-  // Reset the Hive database completely to fix schema issues
-  try {
-    print("main: Performing complete database reset due to schema changes");
+  // Check if we need to perform a database reset
+  final prefs = await SharedPreferences.getInstance();
+  final currentVersion =
+      '1.0.1'; // Update this version number to prevent constant resets
+  final lastVersion = prefs.getString('last_db_version');
 
-    // First specifically fix the access logs box that has DateTime/String type mismatch
-    await HiveCleanup.fixAccessLogsBox();
-
-    // Then perform a full database reset
-    await HiveCleanup.resetDatabase();
-
-    // Double-check to make sure the problematic boxes are gone
-    await HiveCleanup.deleteProblematicBoxes();
-
-    print("main: Database reset completed");
-  } catch (e) {
-    print("main: Error during database reset: $e");
-    // Continue anyway as we'll initialize a fresh database
+  if (lastVersion != currentVersion) {
+    print(
+      "main: Performing complete database reset due to schema changes (old version: $lastVersion, new version: $currentVersion)",
+    );
+    await HiveCleanup.performCompleteReset();
+    // Save the new version
+    await prefs.setString('last_db_version', currentVersion);
+    print(
+      "main: Database reset completed and version updated to $currentVersion",
+    );
+  } else {
+    print(
+      "main: No schema changes detected, skipping database reset (version: $currentVersion)",
+    );
   }
 
   // Register Hive adapters early to prevent "Cannot write, unknown type" errors
   try {
     print("main: Registering Hive adapters");
 
+    // Register Hive adapters in correct order of dependencies
     if (!Hive.isAdapterRegistered(cachedUserTypeId)) {
       Hive.registerAdapter(CachedUserAdapter());
       print("main: Registered CachedUserAdapter");
@@ -109,6 +114,21 @@ Future<void> main() async {
       Hive.registerAdapter(LocalAccessLogAdapter());
       print("main: Registered LocalAccessLogAdapter");
     }
+
+    // Double-check registration status
+    print("main: Adapter registration status:");
+    print(
+      "main: CachedUserAdapter registered: ${Hive.isAdapterRegistered(cachedUserTypeId)}",
+    );
+    print(
+      "main: CachedSubscriptionAdapter registered: ${Hive.isAdapterRegistered(cachedSubscriptionTypeId)}",
+    );
+    print(
+      "main: CachedReservationAdapter registered: ${Hive.isAdapterRegistered(cachedReservationTypeId)}",
+    );
+    print(
+      "main: LocalAccessLogAdapter registered: ${Hive.isAdapterRegistered(localAccessLogTypeId)}",
+    );
 
     print("main: Hive adapters registered successfully");
   } catch (e) {

@@ -7,10 +7,12 @@ admin.initializeApp();
 // Import our access control functions
 import { validateAccess } from './access-control';
 import { syncAccessLogs, processPendingLogs } from './batch-processing';
+import { sendAccessNotification } from './notifications';
 
 // Export all functions
 export {
   validateAccess,
   syncAccessLogs,
   processPendingLogs,
+  sendAccessNotification
 }; 

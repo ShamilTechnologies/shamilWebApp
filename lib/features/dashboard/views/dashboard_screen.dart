@@ -10,6 +10,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart'; // Required for addPostFrameCallback
+import 'package:flutter/services.dart'; // Added for HapticFeedback
 import 'package:flutter_bloc/flutter_bloc.dart';
 // Needed for formatting in this file now
 import 'package:shamil_web_app/core/constants/assets_icons.dart';
@@ -391,27 +392,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
         margin: const EdgeInsets.all(15),
       ),
     );
+
+    // Improved sound playback with multiple fallbacks
     String? soundPath;
     switch (status) {
       case ValidationStatus.granted:
-        soundPath = AssetsIcons.successSound;
+        soundPath = "sounds/success.mp3";
         break;
       case ValidationStatus.denied:
-        soundPath = AssetsIcons.deniedSound;
+        soundPath = "sounds/denied.mp3";
         break;
       case ValidationStatus.error:
-        soundPath = AssetsIcons.errorSound;
+        soundPath = "sounds/error.mp3";
         break;
       default:
         break;
     }
+
     if (soundPath != null) {
+      _playFeedbackSound(soundPath);
+    }
+  }
+
+  /// Play a feedback sound with fallbacks for missing files
+  Future<void> _playFeedbackSound(String soundPath) async {
+    try {
+      print("Attempting to play sound: $soundPath");
+      await _audioPlayer.stop();
+
+      // Use AssetSource directly without the redundant "assets/" prefix
+      await _audioPlayer.play(AssetSource(soundPath));
+      print("Sound playback initiated successfully");
+    } catch (e) {
+      print("First sound playback attempt failed: $e");
+
+      // First fallback: Try without the directory
       try {
-        _audioPlayer.stop();
-        _audioPlayer.play(AssetSource(soundPath));
-        print("Playing sound: $soundPath");
-      } catch (e) {
-        print("Error playing sound $soundPath: $e");
+        final filename = soundPath.split('/').last;
+        await _audioPlayer.play(AssetSource(filename));
+        print("Sound playback succeeded with fallback filename: $filename");
+      } catch (e2) {
+        print("Second sound playback attempt failed: $e2");
+
+        // Second fallback: Try a generic sound
+        try {
+          await _audioPlayer.play(AssetSource("notification.mp3"));
+          print("Sound playback succeeded with generic notification sound");
+        } catch (e3) {
+          print("All sound playback attempts failed: $e3");
+          // Final fallback: Use haptic feedback
+          HapticFeedback.mediumImpact();
+          print("Using haptic feedback as sound fallback");
+        }
       }
     }
   }

@@ -510,116 +510,142 @@ class UserReservationsRepository {
     return null;
   }
 
-  /// Generate RelatedRecords from Reservations and Subscriptions for a user
+  /// Fetch a user's complete details from Firestore
+  Future<AppUser?> getUserCompleteDetails(String userId) async {
+    try {
+      // First try endUsers collection (main user collection)
+      final userDoc = await _firestore.collection('endUsers').doc(userId).get();
+
+      if (userDoc.exists && userDoc.data() != null) {
+        final userData = userDoc.data()!;
+
+        // Extract all available user fields
+        final userName =
+            userData['displayName'] ??
+            userData['name'] ??
+            userData['userName'] ??
+            userData['fullName'] ??
+            'Unknown User';
+
+        final email = userData['email'] as String?;
+        final phone = userData['phone'] as String?;
+        final profilePicUrl =
+            userData['profilePicUrl'] ??
+            userData['photoURL'] ??
+            userData['image'] as String?;
+
+        // Get additional fields that might be useful
+        final Map<String, dynamic> additionalFields = {};
+
+        if (userData['address'] != null)
+          additionalFields['address'] = userData['address'];
+        if (userData['birthDate'] != null)
+          additionalFields['birthDate'] = userData['birthDate'];
+        if (userData['gender'] != null)
+          additionalFields['gender'] = userData['gender'];
+        if (userData['bio'] != null) additionalFields['bio'] = userData['bio'];
+        if (userData['preferences'] != null)
+          additionalFields['preferences'] = userData['preferences'];
+
+        return AppUser(
+          userId: userId,
+          name: userName.toString(),
+          email: email,
+          phone: phone,
+          profilePicUrl: profilePicUrl,
+          accessDetails: additionalFields.isNotEmpty ? additionalFields : null,
+          relatedRecords: [], // Will be populated separately
+        );
+      }
+
+      // If not found in endUsers, try users collection (legacy)
+      final legacyUserDoc =
+          await _firestore.collection('users').doc(userId).get();
+
+      if (legacyUserDoc.exists && legacyUserDoc.data() != null) {
+        final userData = legacyUserDoc.data()!;
+
+        // Extract all available user fields from legacy collection
+        final userName =
+            userData['displayName'] ??
+            userData['name'] ??
+            userData['userName'] ??
+            'Unknown User';
+
+        return AppUser(
+          userId: userId,
+          name: userName.toString(),
+          email: userData['email'] as String?,
+          phone: userData['phoneNumber'] as String?,
+          profilePicUrl: userData['photoURL'] as String?,
+          relatedRecords: [], // Will be populated separately
+        );
+      }
+
+      // If not found in either collection, return null
+      return null;
+    } catch (e) {
+      print("Error fetching complete user details: $e");
+      return null;
+    }
+  }
+
+  /// Get all related records for a user (reservations and subscriptions)
+  /// Now also fetches complete user details
   Future<List<RelatedRecord>> getUserRelatedRecords(String userId) async {
     try {
-      // Fetch both reservations and subscriptions in parallel
-      final results = await Future.wait([
-        getUserReservations(userId),
-        getUserSubscriptions(userId),
-      ]);
+      final List<RelatedRecord> allRecords = [];
 
-      final reservations = results[0] as List<Reservation>;
-      final subscriptions = results[1] as List<Subscription>;
-
-      final List<RelatedRecord> records = [];
-
-      // Convert Reservations to RelatedRecords
+      // Fetch and process reservations
+      final reservations = await getUserReservations(userId);
       for (final reservation in reservations) {
-        records.add(
+        allRecords.add(
           RelatedRecord(
             id: reservation.id ?? '',
             type: RecordType.reservation,
             name: reservation.serviceName ?? 'Reservation',
-            status: reservation.status,
+            status: reservation.status ?? 'Unknown',
             date: reservation.dateTime.toDate(),
             additionalData: {
               'startTime': reservation.dateTime.toDate(),
               'endTime': reservation.endTime,
-              'serviceName': reservation.serviceName,
-              'groupSize': reservation.groupSize,
-              'paymentStatus': reservation.paymentStatus ?? 'Unknown',
-              'paymentMethod': reservation.paymentMethod ?? 'Card',
-              'location': reservation.typeSpecificData?['location'],
               'notes': reservation.notes,
-              'durationMinutes': reservation.durationMinutes,
-              'totalAmount': reservation.totalPrice,
-              'serviceDetails': reservation.type.toString().split('.').last,
-              'serviceType': reservation.type.toString().split('.').last,
+              'groupSize': reservation.groupSize,
               'checkInTime': reservation.checkInTime?.toDate(),
               'checkOutTime': reservation.checkOutTime?.toDate(),
-              'hasUsed': reservation.typeSpecificData?['hasUsed'] ?? false,
-              'accessLogs': reservation.typeSpecificData?['accessLogs'] ?? [],
-              'amenities': reservation.typeSpecificData?['amenities'],
-              'additionalServices':
-                  reservation.typeSpecificData?['additionalServices'],
-              'preferences': reservation.typeSpecificData?['preferences'],
-              'roomNumber': reservation.typeSpecificData?['roomNumber'],
-              'cancellationReason': reservation.cancellationReason,
-              'isUpcoming': reservation.dateTime.toDate().isAfter(
-                DateTime.now(),
-              ),
-              'isOngoing': _isDateRangeActive(
-                reservation.dateTime.toDate(),
-                reservation.endTime ??
-                    reservation.dateTime.toDate().add(
-                      Duration(minutes: reservation.durationMinutes ?? 60),
-                    ),
-              ),
+              'typeSpecificData': reservation.typeSpecificData,
             },
           ),
         );
       }
 
-      // Convert Subscriptions to RelatedRecords
+      // Fetch and process subscriptions
+      final subscriptions = await getUserSubscriptions(userId);
       for (final subscription in subscriptions) {
-        records.add(
+        allRecords.add(
           RelatedRecord(
-            id: subscription.id,
+            id: subscription.id ?? '',
             type: RecordType.subscription,
-            name: subscription.planName,
-            status: subscription.status,
+            name: subscription.planName ?? 'Subscription',
+            status: subscription.status ?? 'Unknown',
             date: subscription.startDate?.toDate() ?? DateTime.now(),
             additionalData: {
               'planName': subscription.planName,
-              'planDescription':
-                  subscription.planDescription ?? 'Subscription plan',
               'startDate': subscription.startDate?.toDate(),
-              'endDate': subscription.expiryDate?.toDate(),
-              'paymentStatus': 'Paid', // Default value
-              'paymentMethod': subscription.paymentMethodInfo ?? 'Card',
-              'amount': subscription.pricePaid ?? 0.0,
-              'autoRenew': subscription.isAutoRenewal ?? false,
-              'billingCycle': subscription.billingCycle ?? 'monthly',
-              'features': subscription.includedFeatures ?? ['Facility access'],
-              'renewalHistory': subscription.renewalHistory ?? [],
-              'nextRenewalDate': subscription.nextRenewalDate?.toDate(),
-              'usageData': subscription.usageData ?? {},
-              'isActive':
-                  subscription.expiryDate != null
-                      ? subscription.expiryDate!.toDate().isAfter(
-                        DateTime.now(),
-                      )
-                      : true,
-              'daysRemaining':
-                  subscription.expiryDate != null
-                      ? subscription.expiryDate!
-                          .toDate()
-                          .difference(DateTime.now())
-                          .inDays
-                      : null,
-              'percentRemaining': _calculatePercentRemaining(
-                subscription.startDate?.toDate(),
-                subscription.expiryDate?.toDate(),
-              ),
+              'expiryDate': subscription.expiryDate?.toDate(),
+              'isAutoRenewal': subscription.isAutoRenewal,
+              'pricePaid': subscription.pricePaid,
+              'paymentMethodInfo': subscription.paymentMethodInfo,
+              'includedFeatures': subscription.includedFeatures,
+              'usageData': subscription.usageData,
             },
           ),
         );
       }
 
-      return records;
+      return allRecords;
     } catch (e) {
-      print("Error generating user related records: $e");
+      print("Error getting user related records: $e");
       return [];
     }
   }

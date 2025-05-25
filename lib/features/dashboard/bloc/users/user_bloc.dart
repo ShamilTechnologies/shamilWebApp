@@ -278,7 +278,11 @@ class UserBloc extends Bloc<UserEvent, UserState> {
   /// Using the new UserReservationsRepository for consistent data fetching
   Future<AppUser> _enrichUserWithServiceDetails(AppUser user) async {
     try {
-      // Use our new repository to fetch all related records
+      // Get complete user details first
+      final userDetails = await _userReservationsRepository
+          .getUserCompleteDetails(user.userId);
+
+      // Use our repository to fetch all related records
       final relatedRecords = await _userReservationsRepository
           .getUserRelatedRecords(user.userId);
 
@@ -305,14 +309,42 @@ class UserBloc extends Bloc<UserEvent, UserState> {
               UserType.reserved; // Keep existing type if no related records
         }
 
-        // Return updated user with new records and possibly updated type
-        return user.copyWith(
-          relatedRecords: relatedRecords,
-          userType: userType,
+        // Merge user details with existing user data and new records
+        if (userDetails != null) {
+          // Use the details we fetched but keep the records and user type
+          return userDetails.copyWith(
+            relatedRecords: relatedRecords,
+            userType: userType,
+            // Keep any non-null fields from existing user if userDetails is missing them
+            email: userDetails.email ?? user.email,
+            phone: userDetails.phone ?? user.phone,
+            profilePicUrl: userDetails.profilePicUrl ?? user.profilePicUrl,
+            name:
+                (userDetails.name != 'Unknown User' &&
+                        userDetails.name.isNotEmpty)
+                    ? userDetails.name
+                    : user.name,
+          );
+        } else {
+          // If no details found, update existing user with records and type
+          return user.copyWith(
+            relatedRecords: relatedRecords,
+            userType: userType,
+          );
+        }
+      }
+
+      // If no records found but we have user details, use those
+      if (userDetails != null) {
+        return userDetails.copyWith(
+          // Keep the existing user type if it exists
+          userType: user.userType,
+          // Keep any existing records
+          relatedRecords: user.relatedRecords,
         );
       }
 
-      // If no records found, return user as is
+      // If neither records nor details found, return user as is
       return user;
     } catch (e) {
       print("UserBloc: Error enriching user with service details: $e");

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,6 +13,7 @@ import 'package:shamil_web_app/core/services/enhanced_offline_service.dart';
 import 'package:shamil_web_app/core/services/connectivity_service.dart';
 import 'package:shamil_web_app/core/services/unified_cache_service.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart';
+import 'package:flutter/widgets.dart';
 
 /// Service that implements offline-first access control with smart sync strategies
 /// This service is designed to minimize server requests and provide reliable
@@ -282,6 +285,73 @@ class OfflineFirstAccessService {
     );
   }
 
+  /// Find a cancelled or expired reservation for a user
+  Future<CachedReservation?> findCancelledOrExpiredReservation(
+    String userId,
+    DateTime now,
+  ) async {
+    try {
+      if (!_cacheService.cachedReservationsBox.isOpen) {
+        print("OfflineFirstAccessService: Reservation box not open");
+        return null;
+      }
+
+      // Get all reservations for this user
+      final userReservations =
+          _cacheService.cachedReservationsBox.values
+              .where((res) => res.userId == userId)
+              .toList();
+
+      if (userReservations.isEmpty) {
+        return null;
+      }
+
+      // Filter to only include cancelled or expired reservations
+      final cancelledOrExpiredReservations =
+          userReservations
+              .where(
+                (res) =>
+                    res.status == 'cancelled_by_user' ||
+                    res.status == 'cancelled_by_provider' ||
+                    res.status == 'expired',
+              )
+              .toList();
+
+      if (cancelledOrExpiredReservations.isEmpty) {
+        return null;
+      }
+
+      // Find the most recent cancelled/expired reservation that would be active now
+      // (current time is between start and end with buffer)
+      for (final reservation in cancelledOrExpiredReservations) {
+        if (now.isAfter(
+              reservation.startTime.subtract(const Duration(minutes: 60)),
+            ) && // Allow early check-in (60 min buffer)
+            now.isBefore(
+              reservation.endTime.add(const Duration(minutes: 30)),
+            )) {
+          // This reservation would be active if not cancelled/expired
+          print(
+            'OfflineFirstAccessService: Found cancelled/expired reservation that would be active now: ${reservation.reservationId}',
+          );
+          return reservation;
+        }
+      }
+
+      // If none would be active now, return the most recent one
+      cancelledOrExpiredReservations.sort(
+        (a, b) => b.startTime.compareTo(a.startTime),
+      ); // Sort by most recent first
+
+      return cancelledOrExpiredReservations.first;
+    } catch (e) {
+      print(
+        'OfflineFirstAccessService: Error finding cancelled reservation - $e',
+      );
+      return null;
+    }
+  }
+
   /// Check if a user has valid access using cached data
   /// This is optimized for offline-first operation
   Future<Map<String, dynamic>> checkUserAccess(String userId) async {
@@ -301,76 +371,387 @@ class OfflineFirstAccessService {
         };
       }
 
-      // First check if user has an active subscription - prioritize subscription access
-      final subscription = await _cacheService.findActiveSubscription(
+      print(
+        'OfflineFirstAccessService: Checking access for user $userId (${user.userName})',
+      );
+
+      // First check for cancelled/expired reservations that would be active now
+      // This gives better user feedback when they have a recently cancelled reservation
+      final cancelledReservation = await findCancelledOrExpiredReservation(
         userId,
         now,
       );
-      if (subscription != null) {
-        // Calculate days remaining until expiry
-        final daysRemaining = subscription.expiryDate.difference(now).inDays;
-        final expiryFormatted =
-            '${subscription.expiryDate.day}/${subscription.expiryDate.month}/${subscription.expiryDate.year}';
+      if (cancelledReservation != null) {
+        print(
+          'OfflineFirstAccessService: User $userId has ${cancelledReservation.status} reservation ${cancelledReservation.reservationId} - denying access',
+        );
+
+        // Record this access denial
+        await _logAccess(
+          userId: userId,
+          userName: user.userName,
+          result: false,
+          recordId: cancelledReservation.reservationId ?? '',
+          accessType: 'deniedReservation',
+          reason:
+              '${cancelledReservation.status} reservation: ${cancelledReservation.serviceName}',
+        );
+
+        final statusReason =
+            cancelledReservation.status == 'expired' ? 'expired' : 'cancelled';
 
         return {
-          'hasAccess': true,
-          'message': 'Access granted via subscription',
-          'accessType': 'Subscription',
-          'plan': subscription.planName,
-          'expiry': subscription.expiryDate,
+          'hasAccess': false,
+          'message': 'Access denied - $statusReason reservation',
+          'accessType': 'deniedReservation',
+          'reservationId': cancelledReservation.reservationId ?? '',
+          'serviceName': cancelledReservation.serviceName,
+          'userName': user.userName,
           'smartComment':
-              'Valid ${subscription.planName} subscription active until $expiryFormatted (${daysRemaining > 0 ? '$daysRemaining days remaining' : 'expires today'}).',
+              'Hello ${user.userName}. Your reservation for ${cancelledReservation.serviceName} has been $statusReason and cannot be used for access. Please contact staff for assistance.',
         };
       }
 
-      // If no subscription, check for confirmed or pending reservation
-      final confirmedReservation = await _cacheService.findActiveReservation(
+      // 1. First check for active subscriptions (highest priority)
+      final activeSubscription = await _cacheService.findActiveSubscription(
         userId,
         now,
-        statusFilter: 'Confirmed',
       );
+      if (activeSubscription != null) {
+        // Found an active subscription
+        print(
+          'OfflineFirstAccessService: User $userId has active subscription ${activeSubscription.subscriptionId}',
+        );
 
-      // If confirmed reservation found, grant access
-      if (confirmedReservation != null) {
-        return _buildReservationAccessResponse(confirmedReservation, now);
+        // Record this access
+        await _logAccess(
+          userId: userId,
+          userName: user.userName,
+          result: true,
+          recordId: activeSubscription.subscriptionId ?? '',
+          accessType: 'subscription',
+          reason: 'Active subscription: ${activeSubscription.planName}',
+        );
+
+        return {
+          'hasAccess': true,
+          'message': 'Access granted - Subscription',
+          'accessType': 'subscription',
+          'subscriptionId': activeSubscription.subscriptionId ?? '',
+          'planName': activeSubscription.planName,
+          'expiryDate': activeSubscription.expiryDate,
+          'userName': user.userName,
+          'smartComment':
+              'Welcome back ${user.userName}. Your ${activeSubscription.planName} membership is active.',
+        };
       }
 
-      // Check for pending reservation as fallback
+      // 2. Check for ACTIVE reservations (both confirmed and pending)
+      print('OfflineFirstAccessService: Checking for active reservations');
+
+      // 2.1 First try confirmed reservations
+      final activeConfirmedReservation = await _cacheService
+          .findActiveReservation(userId, now, statusFilter: 'confirmed');
+
+      // If found a confirmed reservation, first check if it's cancelled or expired
+      if (activeConfirmedReservation != null) {
+        // Check if the reservation is cancelled or expired
+        if (activeConfirmedReservation.status == 'cancelled_by_user' ||
+            activeConfirmedReservation.status == 'cancelled_by_provider' ||
+            activeConfirmedReservation.status == 'expired') {
+          print(
+            'OfflineFirstAccessService: User $userId has ${activeConfirmedReservation.status} reservation ${activeConfirmedReservation.reservationId} - denying access',
+          );
+
+          // Record this access denial
+          await _logAccess(
+            userId: userId,
+            userName: user.userName,
+            result: false,
+            recordId: activeConfirmedReservation.reservationId ?? '',
+            accessType: 'deniedReservation',
+            reason:
+                '${activeConfirmedReservation.status} reservation: ${activeConfirmedReservation.serviceName}',
+          );
+
+          final statusReason =
+              activeConfirmedReservation.status == 'expired'
+                  ? 'expired'
+                  : 'cancelled';
+
+          return {
+            'hasAccess': false,
+            'message': 'Access denied - $statusReason reservation',
+            'accessType': 'deniedReservation',
+            'reservationId': activeConfirmedReservation.reservationId ?? '',
+            'serviceName': activeConfirmedReservation.serviceName,
+            'userName': user.userName,
+            'smartComment':
+                'Hello ${user.userName}. Your reservation for ${activeConfirmedReservation.serviceName} has been $statusReason and cannot be used for access. Please contact staff for assistance.',
+          };
+        }
+
+        print(
+          'OfflineFirstAccessService: User $userId has confirmed reservation ${activeConfirmedReservation.reservationId}',
+        );
+
+        // Record this access
+        await _logAccess(
+          userId: userId,
+          userName: user.userName,
+          result: true,
+          recordId: activeConfirmedReservation.reservationId ?? '',
+          accessType: 'confirmedReservation',
+          reason:
+              'Active confirmed reservation: ${activeConfirmedReservation.serviceName}',
+        );
+
+        // Mark this reservation as "done" to prevent multiple accesses
+        await _markReservationAsUsed(activeConfirmedReservation);
+
+        // Get formatted time
+        final startTime = activeConfirmedReservation.startTime;
+        final timeStr =
+            '${startTime.hour}:${startTime.minute.toString().padLeft(2, '0')}';
+
+        // Send notification to user's mobile device
+        _sendAccessNotification(
+          userId: userId,
+          userName: user.userName,
+          serviceName: activeConfirmedReservation.serviceName,
+          reservationId: activeConfirmedReservation.reservationId ?? '',
+        );
+
+        return {
+          'hasAccess': true,
+          'message': 'Access granted - Confirmed Reservation',
+          'accessType': 'confirmedReservation',
+          'reservationId': activeConfirmedReservation.reservationId ?? '',
+          'serviceName': activeConfirmedReservation.serviceName,
+          'startTime': startTime,
+          'userName': user.userName,
+          'smartComment':
+              'Welcome ${user.userName}. Your ${activeConfirmedReservation.serviceName} at $timeStr has been activated. Your reservation is now marked as used. Enjoy your session!',
+        };
+      }
+
+      // 2.2 Check for pending reservations
       final pendingReservation = await _cacheService.findActiveReservation(
         userId,
         now,
-        statusFilter: 'Pending',
+        statusFilter: 'pending',
       );
 
-      // If pending reservation found, grant access but note it's pending
       if (pendingReservation != null) {
-        final response = _buildReservationAccessResponse(
-          pendingReservation,
-          now,
+        // Check if the reservation is cancelled or expired
+        if (pendingReservation.status == 'cancelled_by_user' ||
+            pendingReservation.status == 'cancelled_by_provider' ||
+            pendingReservation.status == 'expired') {
+          print(
+            'OfflineFirstAccessService: User $userId has ${pendingReservation.status} pending reservation ${pendingReservation.reservationId} - denying access',
+          );
+
+          // Record this access denial
+          await _logAccess(
+            userId: userId,
+            userName: user.userName,
+            result: false,
+            recordId: pendingReservation.reservationId ?? '',
+            accessType: 'deniedReservation',
+            reason:
+                '${pendingReservation.status} reservation: ${pendingReservation.serviceName}',
+          );
+
+          final statusReason =
+              pendingReservation.status == 'expired' ? 'expired' : 'cancelled';
+
+          return {
+            'hasAccess': false,
+            'message': 'Access denied - $statusReason reservation',
+            'accessType': 'deniedReservation',
+            'reservationId': pendingReservation.reservationId ?? '',
+            'serviceName': pendingReservation.serviceName,
+            'userName': user.userName,
+            'smartComment':
+                'Hello ${user.userName}. Your reservation for ${pendingReservation.serviceName} has been $statusReason and cannot be used for access. Please contact staff for assistance.',
+          };
+        }
+
+        print(
+          'OfflineFirstAccessService: User $userId has pending reservation ${pendingReservation.reservationId}',
         );
-        response['smartComment'] =
-            'PENDING: ' + (response['smartComment'] as String);
-        return response;
+
+        // Check provider policy - for now we'll grant access for pending reservations
+        // Record this access with a note about pending status
+        await _logAccess(
+          userId: userId,
+          userName: user.userName,
+          result: true,
+          recordId: pendingReservation.reservationId ?? '',
+          accessType: 'pendingReservation',
+          reason:
+              'Pending reservation allowed: ${pendingReservation.serviceName}',
+        );
+
+        // Mark this reservation as "used" as well
+        await _markReservationAsUsed(pendingReservation);
+
+        // Get formatted time
+        final startTime = pendingReservation.startTime;
+        final timeStr =
+            '${startTime.hour}:${startTime.minute.toString().padLeft(2, '0')}';
+
+        // Send notification to user's mobile device
+        _sendAccessNotification(
+          userId: userId,
+          userName: user.userName,
+          serviceName: pendingReservation.serviceName,
+          reservationId: pendingReservation.reservationId ?? '',
+        );
+
+        return {
+          'hasAccess': true,
+          'message': 'Access granted - Pending Reservation',
+          'accessType': 'pendingReservation',
+          'reservationId': pendingReservation.reservationId ?? '',
+          'serviceName': pendingReservation.serviceName,
+          'startTime': startTime,
+          'userName': user.userName,
+          'smartComment':
+              'Welcome ${user.userName}. Your pending ${pendingReservation.serviceName} reservation at $timeStr has been activated and is now marked as used. Enjoy your session!',
+        };
       }
 
-      // No valid access found, but check if the user had any historical reservations or subscriptions
-      // to provide better feedback
-      final hasHistoricalReservation = await _cacheService
-          .hasHistoricalReservation(userId);
-      final hasHistoricalSubscription = await _cacheService
-          .hasHistoricalSubscription(userId);
+      // 2.3 If nothing found yet, check for any active reservation without filtering by status
+      final anyActiveReservation = await _cacheService.findActiveReservation(
+        userId,
+        now,
+      );
 
-      String smartComment =
-          'No active subscription or reservation found for this user. ';
-      if (hasHistoricalSubscription) {
-        smartComment +=
-            'Previous subscription found but expired. Please renew your membership. ';
-      } else if (hasHistoricalReservation) {
-        smartComment +=
-            'Previous reservation found but no longer valid. Please make a new booking. ';
+      if (anyActiveReservation != null) {
+        // Check if the reservation is cancelled or expired
+        if (anyActiveReservation.status == 'cancelled_by_user' ||
+            anyActiveReservation.status == 'cancelled_by_provider' ||
+            anyActiveReservation.status == 'expired') {
+          print(
+            'OfflineFirstAccessService: User $userId has ${anyActiveReservation.status} reservation ${anyActiveReservation.reservationId} - denying access',
+          );
+
+          // Record this access denial
+          await _logAccess(
+            userId: userId,
+            userName: user.userName,
+            result: false,
+            recordId: anyActiveReservation.reservationId ?? '',
+            accessType: 'deniedReservation',
+            reason:
+                '${anyActiveReservation.status} reservation: ${anyActiveReservation.serviceName}',
+          );
+
+          final statusReason =
+              anyActiveReservation.status == 'expired'
+                  ? 'expired'
+                  : 'cancelled';
+
+          return {
+            'hasAccess': false,
+            'message': 'Access denied - $statusReason reservation',
+            'accessType': 'deniedReservation',
+            'reservationId': anyActiveReservation.reservationId ?? '',
+            'serviceName': anyActiveReservation.serviceName,
+            'userName': user.userName,
+            'smartComment':
+                'Hello ${user.userName}. Your reservation for ${anyActiveReservation.serviceName} has been $statusReason and cannot be used for access. Please contact staff for assistance.',
+          };
+        }
+
+        print(
+          'OfflineFirstAccessService: User $userId has active reservation ${anyActiveReservation.reservationId} with status ${anyActiveReservation.status}',
+        );
+
+        // Record this access
+        await _logAccess(
+          userId: userId,
+          userName: user.userName,
+          result: true,
+          recordId: anyActiveReservation.reservationId ?? '',
+          accessType: 'reservation',
+          reason:
+              'Active reservation found: ${anyActiveReservation.serviceName} (${anyActiveReservation.status})',
+        );
+
+        // Get formatted time
+        final startTime = anyActiveReservation.startTime;
+        final timeStr =
+            '${startTime.hour}:${startTime.minute.toString().padLeft(2, '0')}';
+
+        return {
+          'hasAccess': true,
+          'message': 'Access granted - Reservation',
+          'accessType': 'reservation',
+          'reservationId': anyActiveReservation.reservationId ?? '',
+          'serviceName': anyActiveReservation.serviceName,
+          'startTime': startTime,
+          'userName': user.userName,
+          'smartComment':
+              'Welcome ${user.userName}. You have a ${anyActiveReservation.serviceName} reservation at $timeStr.',
+        };
+      }
+
+      // 3. Check for future or past reservations to give better context
+      print('OfflineFirstAccessService: Checking for future/past reservations');
+
+      // 3.1 Check for upcoming reservations
+      final upcomingReservation = await _cacheService.findUpcomingReservation(
+        userId,
+        now,
+      );
+
+      // 3.2 Check for historical reservations
+      final pastReservation = await _cacheService.findHistoricalReservation(
+        userId,
+      );
+
+      // 3.3 Check for expired subscriptions
+      final expiredSubscription = await _cacheService.findExpiredSubscription(
+        userId,
+        now,
+      );
+
+      // Prepare a response when no active access is found
+      // Add context based on available data
+      String smartComment;
+
+      if (upcomingReservation != null) {
+        // User has an upcoming reservation
+        final serviceTime = _formatDateTime(upcomingReservation.startTime);
+        smartComment =
+            "Hello ${user.userName}. You don't have an active membership or reservation right now. However, you do have an upcoming ${upcomingReservation.serviceName} on $serviceTime.";
+      } else if (pastReservation != null) {
+        // User had a reservation in the past
+        final serviceTime = _formatDateTime(pastReservation.startTime);
+        smartComment =
+            "Hello ${user.userName}. You don't have an active membership or reservation right now. Your last ${pastReservation.serviceName} was on $serviceTime.";
+      } else if (expiredSubscription != null) {
+        // User had a subscription that expired
+        final expiryDate = _formatDateTime(expiredSubscription.expiryDate);
+        smartComment =
+            "Hello ${user.userName}. Your ${expiredSubscription.planName} membership expired on $expiryDate. Please renew your membership to regain access.";
       } else {
-        smartComment += 'Please verify membership status or make a booking.';
+        // No history found - generic message
+        smartComment =
+            "Hello ${user.userName}. Your access was denied because you don't have an active membership or reservation. Please visit the front desk to book a service or purchase a membership.";
       }
+
+      // Record this access denial
+      await _logAccess(
+        userId: userId,
+        userName: user.userName,
+        result: false,
+        recordId: '',
+        accessType: '',
+        reason: 'No active access',
+      );
 
       return {
         'hasAccess': false,
@@ -378,51 +759,50 @@ class OfflineFirstAccessService {
         'accessType': null,
         'reason': 'No active access',
         'smartComment': smartComment,
+        'userName': user.userName,
       };
     } catch (e) {
       print('OfflineFirstAccessService: Error checking user access - $e');
       return {
         'hasAccess': false,
-        'message': 'Error checking access: $e',
+        'message': 'Error checking access',
         'accessType': null,
-        'reason': 'System error',
+        'reason': 'System error: $e',
         'smartComment':
-            'A system error occurred while checking access status. Please try again or contact support if the issue persists.',
+            'There was a system error while checking your access. Please try again or contact staff for assistance.',
       };
     }
   }
 
-  /// Helper method to build a standardized reservation access response
-  Map<String, dynamic> _buildReservationAccessResponse(
-    CachedReservation reservation,
-    DateTime now,
-  ) {
-    // Format start and end times for better display
-    final startFormatted =
-        '${reservation.startTime.hour}:${reservation.startTime.minute.toString().padLeft(2, '0')}';
-    final endFormatted =
-        '${reservation.endTime.hour}:${reservation.endTime.minute.toString().padLeft(2, '0')}';
-    final date =
-        '${reservation.startTime.day}/${reservation.startTime.month}/${reservation.startTime.year}';
+  /// Helper to format DateTime for user-friendly messages
+  String _formatDateTime(DateTime dateTime) {
+    // Format as "May 25, 2023 at 3:30 PM"
+    final months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    final month = months[dateTime.month - 1];
+    final day = dateTime.day;
+    final year = dateTime.year;
 
-    // Calculate if early check-in (within 60 minutes before start time)
-    final isEarlyCheckIn = now.isBefore(reservation.startTime);
-    final minutesEarly =
-        isEarlyCheckIn ? reservation.startTime.difference(now).inMinutes : 0;
+    int hour = dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = hour >= 12 ? 'PM' : 'AM';
 
-    return {
-      'hasAccess': true,
-      'message': 'Access granted via reservation',
-      'accessType': 'Reservation',
-      'reservationStatus': reservation.status,
-      'service': reservation.serviceName,
-      'startTime': reservation.startTime,
-      'endTime': reservation.endTime,
-      'smartComment':
-          isEarlyCheckIn
-              ? 'Early check-in for ${reservation.serviceName} ($date, $startFormatted-$endFormatted). Access granted $minutesEarly minutes before scheduled start.'
-              : 'Active reservation for ${reservation.serviceName} ($date, $startFormatted-$endFormatted).',
-    };
+    // Convert to 12-hour format
+    hour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+
+    return '$month $day, $year at $hour:$minute $period';
   }
 
   /// Synchronize access logs with the server
@@ -749,6 +1129,500 @@ class OfflineFirstAccessService {
       }
     } catch (e) {
       print('OfflineFirstAccessService: Error saving access log - $e');
+    }
+  }
+
+  /// Log access attempt
+  Future<void> _logAccess({
+    required String userId,
+    required String userName,
+    required bool result,
+    required String recordId,
+    required String accessType,
+    required String reason,
+  }) async {
+    // Create access log
+    final log = LocalAccessLog(
+      userId: userId,
+      userName: userName,
+      timestamp: DateTime.now(),
+      status: result ? 'Granted' : 'Denied',
+      method: 'Manual',
+      denialReason: reason,
+      needsSync: true,
+    );
+
+    // Add to pending batch
+    _pendingAccessLogs.add(log);
+
+    // Increment counter
+    _pendingChanges++;
+
+    // If the batch is getting large, process immediately
+    if (_pendingAccessLogs.length >= 5) {
+      _processPendingBatches();
+    }
+
+    print(
+      'OfflineFirstAccessService: Recorded access attempt for $userName (${result ? 'Granted' : 'Denied'})',
+    );
+  }
+
+  /// Mark a reservation as used/done to prevent multiple accesses
+  Future<void> _markReservationAsUsed(CachedReservation reservation) async {
+    try {
+      // 1. First update the local cache
+      final reservationId = reservation.reservationId;
+      if (reservationId == null || reservationId.isEmpty) {
+        print(
+          'OfflineFirstAccessService: Cannot update reservation - missing ID',
+        );
+        return;
+      }
+
+      print(
+        'OfflineFirstAccessService: Marking reservation $reservationId as done (original status: ${reservation.status})',
+      );
+
+      final updatedReservation = CachedReservation(
+        userId: reservation.userId,
+        reservationId: reservationId,
+        serviceName: reservation.serviceName,
+        startTime: reservation.startTime,
+        endTime: reservation.endTime,
+        typeString: reservation.typeString,
+        groupSize: reservation.groupSize,
+        status: 'done', // Change status to "done"
+      );
+
+      // Update in local cache
+      await _cacheService.cachedReservationsBox.put(
+        reservationId,
+        updatedReservation,
+      );
+
+      print(
+        'OfflineFirstAccessService: Successfully updated local cache for reservation $reservationId',
+      );
+
+      // 2. Schedule update to server if online
+      if (_isOnline()) {
+        // Get provider ID for the update
+        final providerId = _auth.currentUser?.uid;
+        if (providerId == null) {
+          print(
+            'OfflineFirstAccessService: Cannot update reservation status - no authenticated provider',
+          );
+          return;
+        }
+
+        print(
+          'OfflineFirstAccessService: Attempting to update reservation $reservationId status in Firestore',
+        );
+
+        // Try all possible update paths in parallel for better reliability
+        final updateAttempts = <Future<bool>>[];
+
+        // 1. Try in main reservations collection
+        updateAttempts.add(
+          _updateReservationStatus(
+            'Main reservations collection',
+            _firestore.collection('reservations').doc(reservationId),
+          ),
+        );
+
+        // 2. Try in provider-specific collections
+        updateAttempts.add(
+          _updateReservationStatus(
+            'Provider confirmedReservations',
+            _firestore
+                .collection('serviceProviders')
+                .doc(providerId)
+                .collection('confirmedReservations')
+                .doc(reservationId),
+          ),
+        );
+
+        updateAttempts.add(
+          _updateReservationStatus(
+            'Provider pendingReservations',
+            _firestore
+                .collection('serviceProviders')
+                .doc(providerId)
+                .collection('pendingReservations')
+                .doc(reservationId),
+          ),
+        );
+
+        // 3. Try in endUsers collection
+        updateAttempts.add(
+          _updateReservationStatus(
+            'EndUsers reservations',
+            _firestore
+                .collection('endUsers')
+                .doc(reservation.userId)
+                .collection('reservations')
+                .doc(reservationId),
+          ),
+        );
+
+        // Wait for all update attempts and check results
+        final results = await Future.wait(updateAttempts);
+        final updateSuccess = results.contains(true);
+
+        if (updateSuccess) {
+          print(
+            'OfflineFirstAccessService: Successfully updated reservation status in at least one location',
+          );
+        } else {
+          print(
+            'OfflineFirstAccessService: Failed to update reservation status in any collection',
+          );
+          // Mark for later sync
+          _pendingChanges++;
+          await _saveSyncMetadata();
+        }
+      } else {
+        // Mark that we have changes to sync later
+        _pendingChanges++;
+        await _saveSyncMetadata();
+      }
+    } catch (e) {
+      print(
+        'OfflineFirstAccessService: Error marking reservation as used - $e',
+      );
+    }
+  }
+
+  /// Helper method to update a reservation status with error handling
+  Future<bool> _updateReservationStatus(
+    String locationName,
+    DocumentReference docRef,
+  ) async {
+    try {
+      print('OfflineFirstAccessService: Attempting update in $locationName');
+
+      // Use a Completer for thread-safe Firestore operations
+      final completer = Completer<bool>();
+
+      // Use WidgetsBinding to ensure we're on the UI thread
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          await docRef.update({
+            'status': 'done',
+            'usedAt': FieldValue.serverTimestamp(),
+            'lastUpdated': FieldValue.serverTimestamp(),
+          });
+          print(
+            'OfflineFirstAccessService: Successfully updated status in $locationName',
+          );
+          completer.complete(true);
+        } catch (e) {
+          print(
+            'OfflineFirstAccessService: Failed to update in $locationName: $e',
+          );
+          completer.complete(false);
+        }
+      });
+
+      return await completer.future;
+    } catch (e) {
+      print('OfflineFirstAccessService: Failed to update in $locationName: $e');
+      return false;
+    }
+  }
+
+  /// Thread-safe Firestore operation
+  Future<T> _safeFirestoreOperation<T>(Future<T> Function() operation) async {
+    final completer = Completer<T>();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        final result = await operation();
+        completer.complete(result);
+      } catch (e) {
+        print('OfflineFirstAccessService: Firestore operation failed: $e');
+        completer.completeError(e);
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// Create a notification log entry with thread safety
+  Future<DocumentReference?> _createNotificationLog(
+    Map<String, dynamic> notificationData,
+  ) async {
+    try {
+      return await _safeFirestoreOperation(() async {
+        return await _firestore.collection('notificationLogs').add({
+          ...notificationData,
+          'status': 'sending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      });
+    } catch (e) {
+      print('OfflineFirstAccessService: Error creating notification log: $e');
+      return null;
+    }
+  }
+
+  /// Update a notification log with thread safety
+  Future<void> _updateNotificationLog(
+    DocumentReference notificationLogRef,
+    Map<String, dynamic> updateData,
+  ) async {
+    try {
+      await _safeFirestoreOperation(() async {
+        await notificationLogRef.update(updateData);
+      });
+    } catch (e) {
+      print('OfflineFirstAccessService: Error updating notification log: $e');
+    }
+  }
+
+  /// Send a notification to the user's mobile device via OneSignal
+  Future<void> _sendAccessNotification({
+    required String userId,
+    required String userName,
+    required String serviceName,
+    required String reservationId,
+  }) async {
+    if (!_isOnline()) {
+      print(
+        'OfflineFirstAccessService: Cannot send notification - device is offline',
+      );
+      return;
+    }
+
+    try {
+      print(
+        'OfflineFirstAccessService: Preparing to send notification to user $userId for reservation $reservationId',
+      );
+
+      // Create notification data with more details for better context
+      final notificationData = {
+        'userId': userId,
+        'userName': userName,
+        'serviceName': serviceName,
+        'reservationId': reservationId,
+        'accessTime': DateTime.now().toIso8601String(),
+        'message':
+            'Your $serviceName reservation has been activated and marked as used.',
+        'providerId': _auth.currentUser?.uid ?? 'unknown',
+        'providerName': await _getProviderName(),
+        'source': 'access_control',
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'debug_device':
+            Platform.isWindows ? 'windows' : Platform.operatingSystem,
+      };
+
+      print(
+        'OfflineFirstAccessService: Notification payload: ${notificationData.toString().substring(0, min(notificationData.toString().length, 500))}',
+      );
+
+      // Log this notification attempt in Firestore for tracking using thread-safe helper
+      final notificationLogRef = await _createNotificationLog(notificationData);
+
+      // Try multiple notification delivery methods in sequence
+      bool notificationSent = false;
+      String notificationMethod = 'none';
+      String? errorMessage;
+
+      // 1. First attempt: Cloud Function
+      if (!notificationSent) {
+        try {
+          print(
+            'OfflineFirstAccessService: Attempting notification via Cloud Function',
+          );
+
+          // Use a thread-safe approach for Cloud Function calls
+          final completer = Completer<bool>();
+
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            try {
+              final callable = _functions.httpsCallable(
+                'sendAccessNotification',
+              );
+              final result = await callable.call(notificationData);
+              print(
+                'OfflineFirstAccessService: Cloud Function response: ${result.data}',
+              );
+              completer.complete(true);
+            } catch (e) {
+              print(
+                'OfflineFirstAccessService: Cloud Function notification failed: $e',
+              );
+              completer.complete(false);
+            }
+          });
+
+          notificationSent = await completer.future;
+          notificationMethod = 'cloud_function';
+        } catch (e) {
+          errorMessage = e.toString();
+          print(
+            'OfflineFirstAccessService: Cloud Function notification failed: $e',
+          );
+        }
+      }
+
+      // 2. Second attempt: Direct Firestore document
+      if (!notificationSent) {
+        try {
+          print(
+            'OfflineFirstAccessService: Attempting notification via Firestore document',
+          );
+
+          // Use our safe Firestore operation helper
+          final success = await _safeFirestoreOperation(() async {
+            await _firestore.collection('notifications').add({
+              ...notificationData,
+              'status': 'pending',
+              'type': 'reservation_access',
+              'priority': 'high',
+              'createdAt': FieldValue.serverTimestamp(),
+              'retryCount': 0,
+              'deliveryMethod': 'firestore_document',
+            });
+            return true;
+          });
+
+          notificationSent = success;
+          notificationMethod = 'firestore_document';
+          print(
+            'OfflineFirstAccessService: Firestore notification document created successfully',
+          );
+        } catch (e) {
+          errorMessage = e.toString();
+          print('OfflineFirstAccessService: Firestore notification failed: $e');
+        }
+      }
+
+      // 3. Third attempt: User notification collection
+      if (!notificationSent) {
+        try {
+          print(
+            'OfflineFirstAccessService: Attempting notification via user notification collection',
+          );
+
+          // Use our safe Firestore operation helper
+          final success = await _safeFirestoreOperation(() async {
+            await _firestore
+                .collection('endUsers')
+                .doc(userId)
+                .collection('notifications')
+                .add({
+                  ...notificationData,
+                  'status': 'unread',
+                  'type': 'access',
+                  'createdAt': FieldValue.serverTimestamp(),
+                  'deliveryMethod': 'user_collection',
+                });
+            return true;
+          });
+
+          notificationSent = success;
+          notificationMethod = 'user_notification';
+          print(
+            'OfflineFirstAccessService: User notification document created successfully',
+          );
+        } catch (e) {
+          errorMessage = e.toString();
+          print('OfflineFirstAccessService: User notification failed: $e');
+        }
+      }
+
+      // Update notification log with result
+      if (notificationLogRef != null) {
+        await _updateNotificationLog(notificationLogRef, {
+          'status': notificationSent ? 'sent' : 'failed',
+          'deliveryMethod': notificationMethod,
+          'errorMessage': errorMessage,
+          'completedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Also attempt to update the reservation in Firestore to show notification was sent
+      try {
+        final providerId = _auth.currentUser?.uid;
+        if (providerId != null) {
+          // Try multiple paths to update the reservation notification status
+          final updatePaths = [
+            _firestore.collection('reservations').doc(reservationId),
+            _firestore
+                .collection('endUsers')
+                .doc(userId)
+                .collection('reservations')
+                .doc(reservationId),
+          ];
+
+          for (final docRef in updatePaths) {
+            try {
+              // Use safe Firestore operation helper
+              final success = await _safeFirestoreOperation(() async {
+                await docRef.update({
+                  'notificationSent': notificationSent,
+                  'notificationMethod': notificationMethod,
+                  'notificationTime': FieldValue.serverTimestamp(),
+                  'lastUpdated': FieldValue.serverTimestamp(),
+                });
+                return true;
+              });
+
+              if (success) {
+                print(
+                  'OfflineFirstAccessService: Updated reservation with notification status',
+                );
+                break; // Stop after first successful update
+              }
+            } catch (e) {
+              print(
+                'OfflineFirstAccessService: Failed to update notification status at ${docRef.path}: $e',
+              );
+              // Try next path
+            }
+          }
+        }
+      } catch (updateError) {
+        print(
+          'OfflineFirstAccessService: Failed to update notification status: $updateError',
+        );
+        // Non-critical error, continue
+      }
+
+      if (notificationSent) {
+        print(
+          'OfflineFirstAccessService: Successfully sent notification via $notificationMethod',
+        );
+      } else {
+        print('OfflineFirstAccessService: All notification methods failed');
+      }
+    } catch (e) {
+      print('OfflineFirstAccessService: Error in notification process: $e');
+    }
+  }
+
+  /// Get provider name for notification context
+  Future<String> _getProviderName() async {
+    try {
+      final providerId = _auth.currentUser?.uid;
+      if (providerId == null) return 'Unknown Provider';
+
+      final providerDoc =
+          await _firestore.collection('serviceProviders').doc(providerId).get();
+
+      if (!providerDoc.exists) return 'Unknown Provider';
+
+      final data = providerDoc.data();
+      if (data == null) return 'Unknown Provider';
+
+      return data['name'] as String? ??
+          data['businessName'] as String? ??
+          'Unknown Provider';
+    } catch (e) {
+      print('OfflineFirstAccessService: Error getting provider name: $e');
+      return 'Unknown Provider';
     }
   }
 }

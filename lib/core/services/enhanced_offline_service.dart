@@ -580,6 +580,29 @@ class EnhancedOfflineService {
     syncProgressNotifier.dispose();
     offlineStatusNotifier.dispose();
   }
+
+  /// Thread-safe Firestore operation wrapper
+  Future<T> _safeFirestoreOperation<T>(Future<T> Function() operation) async {
+    try {
+      // Use a Completer to ensure the operation completes on the platform thread
+      final completer = Completer<T>();
+
+      // Schedule operation on the main isolate using scheduleMicrotask
+      scheduleMicrotask(() async {
+        try {
+          final result = await operation();
+          completer.complete(result);
+        } catch (e) {
+          completer.completeError(e);
+        }
+      });
+
+      return await completer.future;
+    } catch (e) {
+      print('EnhancedOfflineService: Error in safe Firestore operation: $e');
+      rethrow;
+    }
+  }
 }
 
 /// Enum for different data priorities

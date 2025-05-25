@@ -14,6 +14,7 @@ import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 import 'package:shamil_web_app/features/auth/data/service_provider_model.dart'
     as provider_models;
 import 'package:uuid/uuid.dart';
+import 'package:flutter/widgets.dart';
 
 // Define Box names as constants
 const String cachedUsersBoxName = 'cachedUsersBox';
@@ -1091,7 +1092,9 @@ class UnifiedCacheService {
       }
 
       // If we have a name, use it directly
-      if (userName != null && userName.isNotEmpty) {
+      if (userName != null &&
+          userName.isNotEmpty &&
+          userName != 'Unknown User') {
         await cachedUsersBox.put(
           userId,
           CachedUser(userId: userId, userName: userName),
@@ -1102,49 +1105,116 @@ class UnifiedCacheService {
       // Otherwise, fetch from Firestore
       print("UnifiedCacheService: Fetching user $userId from Firestore");
 
-      // First check in endUsers collection
-      final endUserDoc =
-          await _firestore.collection('endUsers').doc(userId).get();
+      try {
+        // First check in endUsers collection
+        final endUserDoc =
+            await _firestore.collection('endUsers').doc(userId).get();
 
-      if (endUserDoc.exists && endUserDoc.data() != null) {
-        final userData = endUserDoc.data()!;
-        final userName =
-            userData['displayName'] ?? userData['name'] ?? 'Unknown User';
+        if (endUserDoc.exists && endUserDoc.data() != null) {
+          final userData = endUserDoc.data()!;
 
-        await cachedUsersBox.put(
-          userId,
-          CachedUser(userId: userId, userName: userName as String),
-        );
-        return;
+          // Try multiple possible field names for the user's name
+          final userName =
+              userData['displayName'] ??
+              userData['name'] ??
+              userData['userName'] ??
+              userData['fullName'] ??
+              'Unknown User';
+
+          await cachedUsersBox.put(
+            userId,
+            CachedUser(userId: userId, userName: userName.toString()),
+          );
+          print(
+            "UnifiedCacheService: User $userId cached from endUsers collection",
+          );
+          return;
+        }
+      } catch (e) {
+        print("UnifiedCacheService: Error accessing endUsers collection: $e");
       }
 
-      // If not found, try legacy users collection
-      final userDoc = await _firestore.collection('users').doc(userId).get();
+      try {
+        // If not found, try legacy users collection
+        final userDoc = await _firestore.collection('users').doc(userId).get();
 
-      if (userDoc.exists && userDoc.data() != null) {
-        final userData = userDoc.data()!;
-        final userName =
-            userData['displayName'] ?? userData['name'] ?? 'Unknown User';
+        if (userDoc.exists && userDoc.data() != null) {
+          final userData = userDoc.data()!;
 
-        await cachedUsersBox.put(
-          userId,
-          CachedUser(userId: userId, userName: userName as String),
+          // Try multiple possible field names for the user's name
+          final userName =
+              userData['displayName'] ??
+              userData['name'] ??
+              userData['userName'] ??
+              userData['fullName'] ??
+              'Unknown User';
+
+          await cachedUsersBox.put(
+            userId,
+            CachedUser(userId: userId, userName: userName.toString()),
+          );
+          print(
+            "UnifiedCacheService: User $userId cached from users collection",
+          );
+          return;
+        }
+      } catch (e) {
+        print("UnifiedCacheService: Error accessing users collection: $e");
+      }
+
+      try {
+        // Also check serviceProviders collection as a final attempt
+        final providerDoc =
+            await _firestore.collection('serviceProviders').doc(userId).get();
+
+        if (providerDoc.exists && providerDoc.data() != null) {
+          final providerData = providerDoc.data()!;
+
+          // Try multiple possible field names for the provider's name
+          final providerName =
+              providerData['businessName'] ??
+              providerData['displayName'] ??
+              providerData['name'] ??
+              'Unknown Provider';
+
+          await cachedUsersBox.put(
+            userId,
+            CachedUser(userId: userId, userName: providerName.toString()),
+          );
+          print(
+            "UnifiedCacheService: User $userId cached from serviceProviders collection",
+          );
+          return;
+        }
+      } catch (e) {
+        print(
+          "UnifiedCacheService: Error accessing serviceProviders collection: $e",
         );
-      } else {
-        // Not found anywhere, use default name
+      }
+
+      // Not found anywhere, use default name with user ID prefix
+      final shortId = userId.length > 5 ? userId.substring(0, 5) : userId;
+      await cachedUsersBox.put(
+        userId,
+        CachedUser(userId: userId, userName: 'User $shortId'),
+      );
+      print(
+        "UnifiedCacheService: User $userId not found in any collection, using generic name",
+      );
+    } catch (e) {
+      print("UnifiedCacheService: Error ensuring user in cache: $e");
+
+      // Fallback - create a minimal entry so we don't keep trying to fetch this user
+      try {
         await cachedUsersBox.put(
           userId,
           CachedUser(userId: userId, userName: 'Unknown User'),
         );
+      } catch (e) {
+        print(
+          "UnifiedCacheService: Critical error creating fallback user entry: $e",
+        );
       }
-    } catch (e) {
-      print("UnifiedCacheService: Error ensuring user in cache: $e");
-
-      // Fallback
-      await cachedUsersBox.put(
-        userId,
-        CachedUser(userId: userId, userName: 'Error loading user'),
-      );
     }
   }
 
@@ -1245,42 +1315,199 @@ class UnifiedCacheService {
         return null;
       }
 
-      // Filter by status if provided
-      final filteredReservations =
-          statusFilter != null
-              ? userReservations
-                  .where((res) => res.status == statusFilter)
-                  .toList()
-              : userReservations;
+      // First filter out cancelled and expired reservations
+      final validReservations =
+          userReservations.where((res) {
+            // Exclude cancelled or expired reservations
+            if (res.status == 'cancelled_by_user' ||
+                res.status == 'cancelled_by_provider' ||
+                res.status == 'expired') {
+              print(
+                "UnifiedCacheService: Excluding reservation ${res.reservationId} with status ${res.status}",
+              );
+              return false;
+            }
+            return true;
+          }).toList();
 
-      if (filteredReservations.isEmpty) {
+      // If all reservations were cancelled/expired, return null
+      if (validReservations.isEmpty) {
+        print(
+          "UnifiedCacheService: All reservations for user $userId are cancelled or expired",
+        );
         return null;
       }
 
-      // First check for currently active reservations
+      // Then filter by status if provided
+      final filteredReservations =
+          statusFilter != null
+              ? validReservations
+                  .where(
+                    (res) =>
+                        res.status.toLowerCase() == statusFilter.toLowerCase(),
+                  )
+                  .toList()
+              : validReservations;
+
+      // Find an active reservation (current time is between start and end)
       for (final reservation in filteredReservations) {
-        if (_isReservationActive(reservation, now)) {
+        if (now.isAfter(
+              reservation.startTime.subtract(const Duration(minutes: 60)),
+            ) && // Allow early check-in (60 min buffer)
+            now.isBefore(
+              reservation.endTime.add(const Duration(minutes: 30)),
+            )) {
+          // One final check to absolutely ensure it's not cancelled or expired
+          if (reservation.status == 'cancelled_by_user' ||
+              reservation.status == 'cancelled_by_provider' ||
+              reservation.status == 'expired') {
+            print(
+              "UnifiedCacheService: Rejecting reservation ${reservation.reservationId} with status ${reservation.status}",
+            );
+            continue;
+          }
+
+          // Allow late check-out (30 min buffer)
+          print(
+            "UnifiedCacheService: Found active reservation ${reservation.reservationId} with status ${reservation.status}",
+          );
           return reservation;
         }
       }
 
-      // Check for upcoming reservations (early check-in)
-      final upcomingReservations =
-          filteredReservations.where((res) {
-            final startWithBuffer = res.startTime.subtract(
-              const Duration(minutes: 60),
-            );
-            return now.isAfter(startWithBuffer) && now.isBefore(res.startTime);
-          }).toList();
-
-      if (upcomingReservations.isNotEmpty) {
-        upcomingReservations.sort((a, b) => a.startTime.compareTo(b.startTime));
-        return upcomingReservations.first;
-      }
-
       return null;
     } catch (e) {
-      print("UnifiedCacheService: Error finding active reservation: $e");
+      print("UnifiedCacheService: Error finding active reservation - $e");
+      return null;
+    }
+  }
+
+  /// Find a historical reservation for a user (completed in the past)
+  Future<CachedReservation?> findHistoricalReservation(String userId) async {
+    if (!cachedReservationsBox.isOpen) {
+      print("UnifiedCacheService: Reservation box not open");
+      return null;
+    }
+
+    try {
+      final now = DateTime.now();
+
+      // Get all reservations for this user
+      final userReservations =
+          cachedReservationsBox.values
+              .where((res) => res.userId == userId)
+              .toList();
+
+      if (userReservations.isEmpty) {
+        return null;
+      }
+
+      // Find most recent past reservation
+      CachedReservation? mostRecentPast;
+      DateTime mostRecentTime = DateTime(1900); // Very old date
+
+      for (final res in userReservations) {
+        // Check if reservation is in the past
+        if (res.endTime.isBefore(now)) {
+          // Check if this is more recent than our current most recent
+          if (res.endTime.isAfter(mostRecentTime)) {
+            mostRecentPast = res;
+            mostRecentTime = res.endTime;
+          }
+        }
+      }
+
+      return mostRecentPast;
+    } catch (e) {
+      print("UnifiedCacheService: Error finding historical reservation - $e");
+      return null;
+    }
+  }
+
+  /// Find an upcoming reservation for a user (scheduled in the future)
+  Future<CachedReservation?> findUpcomingReservation(
+    String userId,
+    DateTime now,
+  ) async {
+    if (!cachedReservationsBox.isOpen) {
+      print("UnifiedCacheService: Reservation box not open");
+      return null;
+    }
+
+    try {
+      // Get all reservations for this user
+      final userReservations =
+          cachedReservationsBox.values
+              .where((res) => res.userId == userId)
+              .toList();
+
+      if (userReservations.isEmpty) {
+        return null;
+      }
+
+      // Find earliest upcoming reservation
+      CachedReservation? nextUpcoming;
+      DateTime? earliestTime;
+
+      for (final res in userReservations) {
+        // Check if reservation is in the future and more than 60 minutes away
+        // (to avoid conflict with findActiveReservation's early check-in buffer)
+        if (res.startTime.isAfter(now.add(const Duration(minutes: 60)))) {
+          // If this is our first upcoming or earlier than our current earliest
+          if (earliestTime == null || res.startTime.isBefore(earliestTime)) {
+            nextUpcoming = res;
+            earliestTime = res.startTime;
+          }
+        }
+      }
+
+      return nextUpcoming;
+    } catch (e) {
+      print("UnifiedCacheService: Error finding upcoming reservation - $e");
+      return null;
+    }
+  }
+
+  /// Find an expired subscription for a user
+  Future<CachedSubscription?> findExpiredSubscription(
+    String userId,
+    DateTime now,
+  ) async {
+    if (!cachedSubscriptionsBox.isOpen) {
+      print("UnifiedCacheService: Subscription box not open");
+      return null;
+    }
+
+    try {
+      // Get all subscriptions for this user
+      final userSubscriptions =
+          cachedSubscriptionsBox.values
+              .where((sub) => sub.userId == userId)
+              .toList();
+
+      if (userSubscriptions.isEmpty) {
+        return null;
+      }
+
+      // Find most recently expired subscription
+      CachedSubscription? mostRecentExpired;
+      DateTime? mostRecentExpiryDate;
+
+      for (final sub in userSubscriptions) {
+        // Check if subscription is expired
+        if (sub.expiryDate.isBefore(now)) {
+          // If this is our first expired or more recent than current most recent
+          if (mostRecentExpiryDate == null ||
+              sub.expiryDate.isAfter(mostRecentExpiryDate)) {
+            mostRecentExpired = sub;
+            mostRecentExpiryDate = sub.expiryDate;
+          }
+        }
+      }
+
+      return mostRecentExpired;
+    } catch (e) {
+      print("UnifiedCacheService: Error finding expired subscription - $e");
       return null;
     }
   }
@@ -1377,5 +1604,85 @@ class UnifiedCacheService {
         syncAllData();
       }
     });
+  }
+
+  /// Thread-safe Firestore operation wrapper
+  Future<T> _safeFirestoreOperation<T>(Future<T> Function() operation) async {
+    try {
+      // Use a Completer to ensure the operation completes on the platform thread
+      final completer = Completer<T>();
+
+      // Schedule operation on the main isolate
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          final result = await operation();
+          completer.complete(result);
+        } catch (e) {
+          completer.completeError(e);
+        }
+      });
+
+      return await completer.future;
+    } catch (e) {
+      print('UnifiedCacheService: Error in safe Firestore operation: $e');
+      rethrow;
+    }
+  }
+
+  /// Sync a specific access log to Firestore with thread safety
+  Future<bool> syncLogToFirestore(LocalAccessLog log) async {
+    try {
+      // Always run Firestore operations in a thread-safe manner
+      return await _safeFirestoreOperation(() async {
+        // Create the log data for Firestore
+        final logData = {
+          'userId': log.userId,
+          'userName': log.userName,
+          'timestamp': log.timestamp,
+          'status': log.status,
+          'method': log.method,
+          'denialReason': log.denialReason,
+          'synced': true,
+          'createdAt': FieldValue.serverTimestamp(),
+        };
+
+        // Add the document to the provider's access logs collection
+        final db = FirebaseFirestore.instance;
+        final auth = FirebaseAuth.instance;
+        final userId = auth.currentUser?.uid;
+
+        if (userId == null) {
+          print('Cannot sync access log - no authenticated user');
+          return false;
+        }
+
+        await db
+            .collection('serviceProviders')
+            .doc(userId)
+            .collection('accessLogs')
+            .add(logData);
+
+        // Create a new log instance with needsSync set to false
+        final updatedLog = log.copyWith(needsSync: false);
+
+        // Get the key used in the box
+        final key = localAccessLogsBox.keyAt(
+          localAccessLogsBox.values.toList().indexOf(log),
+        );
+
+        if (key != null) {
+          // Update in local database
+          await localAccessLogsBox.put(key, updatedLog);
+          print('Successfully marked log as synced in local database');
+        } else {
+          print('Could not find log key in local database');
+        }
+
+        return true;
+      });
+    } catch (e) {
+      print('Error syncing access log to Firestore: $e');
+      return false;
+    }
   }
 }

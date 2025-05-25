@@ -159,4 +159,24 @@ class HiveCleanup {
       print('HiveCleanup: Error during database reset: $e');
     }
   }
+
+  /// Comprehensive method that performs a complete database reset
+  /// This is the main method called from main.dart
+  static Future<void> performCompleteReset() async {
+    try {
+      // First specifically fix the access logs box that has DateTime/String type mismatch
+      await fixAccessLogsBox();
+
+      // Then perform a full database reset
+      await resetDatabase();
+
+      // Double-check to make sure the problematic boxes are gone
+      await deleteProblematicBoxes();
+
+      print('HiveCleanup: Database reset complete');
+    } catch (e) {
+      print('HiveCleanup: Error during complete database reset: $e');
+      // Continue anyway as we'll initialize a fresh database
+    }
+  }
 }
