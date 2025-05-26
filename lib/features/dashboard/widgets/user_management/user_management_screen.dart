@@ -69,261 +69,37 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }
 
   void _checkAndUseDashboardData() async {
-    // Check if DashboardBloc has already loaded data
+    // Use the new centralized data service method to get filtered users
     try {
-      final dashboardState = context.read<DashboardBloc>().state;
-      if (dashboardState is DashboardLoadSuccess) {
-        print("UserManagementScreen: Using existing data from DashboardBloc");
+      print(
+        "UserManagementScreen: Using centralized data service for filtered users",
+      );
 
-        // Extract user data from dashboard state
-        final usersMap = <String, AppUser>{};
+      // Get users who have reservations or subscriptions only
+      final filteredUsers = await _dataService
+          .getUsersWithReservationsOrSubscriptions(forceRefresh: false);
 
-        // First, collect all users from subscriptions
+      print(
+        "UserManagementScreen: Found ${filteredUsers.length} users with reservations or subscriptions",
+      );
+
+      if (filteredUsers.isNotEmpty) {
+        // Use the filtered users directly
+        _userBloc.add(UsersUpdated(filteredUsers));
+        return;
+      } else {
+        // Fallback to loading all users if no filtered users found
         print(
-          "UserManagementScreen: Processing ${dashboardState.subscriptions.length} subscriptions",
+          "UserManagementScreen: No filtered users found, loading all users",
         );
-        for (final subscription in dashboardState.subscriptions) {
-          if (subscription.userId != null) {
-            final String userId = subscription.userId!;
-            final String userName = subscription.userName ?? 'Unknown User';
-
-            // Create the record
-            final record = RelatedRecord(
-              id: subscription.id ?? '',
-              type: RecordType.subscription,
-              name: subscription.planName ?? 'Membership',
-              status: subscription.status ?? 'Unknown',
-              date: subscription.startDate?.toDate() ?? DateTime.now(),
-              additionalData: {
-                'planName': subscription.planName,
-                'startDate': subscription.startDate?.toDate(),
-                'expiryDate': subscription.expiryDate?.toDate(),
-                'status': subscription.status,
-              },
-            );
-
-            // Add to map or update existing
-            if (usersMap.containsKey(userId)) {
-              // Add record to existing user
-              final existingRecords = List<RelatedRecord>.from(
-                usersMap[userId]!.relatedRecords,
-              );
-              existingRecords.add(record);
-
-              // Update user type
-              final currentType = usersMap[userId]!.userType;
-              final newType =
-                  currentType == UserType.reserved
-                      ? UserType.both
-                      : UserType.subscribed;
-
-              usersMap[userId] = usersMap[userId]!.copyWith(
-                relatedRecords: existingRecords,
-                userType: newType,
-                name:
-                    userName != 'Unknown User'
-                        ? userName
-                        : usersMap[userId]!.name,
-              );
-            } else {
-              // Create new user
-              usersMap[userId] = AppUser(
-                userId: userId,
-                name: userName,
-                userType: UserType.subscribed,
-                relatedRecords: [record],
-              );
-            }
-          }
-        }
-
-        // Then, process reservations and add/update users
-        print(
-          "UserManagementScreen: Processing ${dashboardState.reservations.length} reservations",
-        );
-        for (final reservation in dashboardState.reservations) {
-          if (reservation.userId != null) {
-            final String userId = reservation.userId!;
-            final String userName = reservation.userName ?? 'Unknown User';
-
-            // Create the record
-            final record = RelatedRecord(
-              id: reservation.id ?? '',
-              type: RecordType.reservation,
-              name: reservation.serviceName ?? 'Reservation',
-              status: reservation.status ?? 'Unknown',
-              date: reservation.dateTime?.toDate() ?? DateTime.now(),
-              additionalData: {
-                'startTime': reservation.dateTime?.toDate(),
-                'endTime': reservation.endTime,
-                'notes': reservation.notes,
-                'groupSize': reservation.groupSize,
-              },
-            );
-
-            if (usersMap.containsKey(userId)) {
-              // Add record to existing user
-              final existingRecords = List<RelatedRecord>.from(
-                usersMap[userId]!.relatedRecords,
-              );
-              existingRecords.add(record);
-
-              // Determine user type (reserved, subscribed, or both)
-              final currentType = usersMap[userId]!.userType;
-              final newType =
-                  currentType == UserType.subscribed
-                      ? UserType.both
-                      : UserType.reserved;
-
-              usersMap[userId] = usersMap[userId]!.copyWith(
-                relatedRecords: existingRecords,
-                userType: newType,
-                name:
-                    userName != 'Unknown User'
-                        ? userName
-                        : usersMap[userId]!.name,
-              );
-            } else {
-              // Create new user
-              usersMap[userId] = AppUser(
-                userId: userId,
-                name: userName,
-                userType: UserType.reserved,
-                relatedRecords: [record],
-              );
-            }
-          }
-        }
-
-        // Note: We're intentionally skipping users from access logs that have no reservations or subscriptions
-        // per the requirement to only get users who reserved or subscribed to the service
-
-        // Convert map to list - now only contains users with reservations or subscriptions
-        final usersList = usersMap.values.toList();
-        print(
-          "UserManagementScreen: Collected ${usersList.length} users with reservations or subscriptions",
-        );
-
-        // Display the list while we enrich it (better UX)
-        _userBloc.add(UsersUpdated(usersList));
-
-        // Now enrich the users with additional details from CentralizedDataService
-        final enrichedUsers = <AppUser>[];
-
-        // Process users in smaller batches to avoid UI freezes
-        const batchSize = 10;
-        for (var i = 0; i < usersList.length; i += batchSize) {
-          final batch = usersList.sublist(
-            i,
-            i + batchSize < usersList.length ? i + batchSize : usersList.length,
-          );
-
-          print(
-            "UserManagementScreen: Enriching batch ${i ~/ batchSize + 1} of ${(usersList.length / batchSize).ceil()}",
-          );
-
-          // Enrich each user in the batch with full details
-          for (final user in batch) {
-            try {
-              // Use a more direct approach to get complete user details from Firestore
-              final userDoc =
-                  await FirebaseFirestore.instance
-                      .collection('endUsers')
-                      .doc(user.userId)
-                      .get();
-
-              // If user document exists, extract all available fields
-              if (userDoc.exists && userDoc.data() != null) {
-                final userData = userDoc.data()!;
-
-                // Extract name from various possible fields
-                final userName =
-                    userData['displayName'] ??
-                    userData['name'] ??
-                    userData['userName'] ??
-                    userData['fullName'] ??
-                    user.name;
-
-                // Create enriched user with all available details
-                final enrichedUser = user.copyWith(
-                  name:
-                      userName != 'Unknown User'
-                          ? userName.toString()
-                          : user.name,
-                  email: userData['email'] as String?,
-                  phone: userData['phone'] as String?,
-                  profilePicUrl:
-                      userData['profilePicUrl'] ??
-                      userData['photoURL'] ??
-                      userData['image'] as String?,
-                );
-
-                enrichedUsers.add(enrichedUser);
-                print(
-                  "UserManagementScreen: Successfully enriched user ${user.userId}",
-                );
-              } else {
-                // Fallback to centralized service if direct approach fails
-                final fullUserData = await _dataService.getUserById(
-                  user.userId,
-                );
-
-                if (fullUserData != null) {
-                  // Keep name from records if we have it and fullUserData has unknown name
-                  final bestName =
-                      fullUserData.name == 'Unknown User' &&
-                              user.name != 'Unknown User'
-                          ? user.name
-                          : fullUserData.name;
-
-                  // Merge the data, keeping the records we've already built
-                  final mergedUser = fullUserData.copyWith(
-                    relatedRecords: user.relatedRecords,
-                    userType: user.userType,
-                    name: bestName,
-                  );
-                  enrichedUsers.add(mergedUser);
-                } else {
-                  // If user details not found, just use what we have
-                  print(
-                    "UserManagementScreen: Could not find additional details for user ${user.userId}",
-                  );
-                  enrichedUsers.add(user);
-                }
-              }
-            } catch (e) {
-              print(
-                "UserManagementScreen: Error enriching user ${user.userId}: $e",
-              );
-              enrichedUsers.add(user);
-            }
-          }
-
-          // Update the UI with batch progress
-          if (mounted) {
-            _userBloc.add(
-              UsersUpdated([
-                ...enrichedUsers,
-                ...usersList.sublist(i + batch.length),
-              ]),
-            );
-          }
-        }
-
-        // Final update with all enriched users
-        _userBloc.add(UsersUpdated(enrichedUsers));
-        print(
-          "UserManagementScreen: Completed user enrichment with ${enrichedUsers.length} users",
-        );
+        _userBloc.add(LoadUsers());
         return;
       }
     } catch (e) {
-      print("UserManagementScreen: Error accessing dashboard data: $e");
+      print("UserManagementScreen: Error getting filtered users: $e");
+      // Fall back to normal data loading
+      _userBloc.add(LoadUsers());
     }
-
-    // If we get here, either the dashboard data wasn't available or there was an error
-    // Fall back to normal data loading (will be filtered for reservations/subscriptions in the bloc)
-    _userBloc.add(LoadUsers());
   }
 
   @override

@@ -517,7 +517,7 @@ class UserProfileDialog extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 isUserid && value.length > 20
-                    ? '${value.substring(0, 10)}...${value.substring(value.length - 4)}'
+                    ? '${value.substring(0, value.length < 10 ? value.length : 10)}...${value.length >= 4 ? value.substring(value.length - 4) : ''}'
                     : value,
                 style: TextStyle(
                   fontWeight: FontWeight.w500,

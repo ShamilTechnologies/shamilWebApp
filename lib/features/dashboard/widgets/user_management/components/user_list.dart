@@ -84,10 +84,9 @@ class UserList extends StatelessWidget {
         final user = users[index];
         return UserCard(
           user: user,
-          onViewProfile: onViewProfile,
-          onExpanded: onUserExpanded,
+          onTap: () => onViewProfile(user),
           onServiceSelected: onServiceSelected,
-          showDetailedServices: showDetailedServices,
+          showDetailedInfo: showDetailedServices,
         );
       },
     );
@@ -108,10 +107,9 @@ class UserList extends StatelessWidget {
         final user = users[index];
         return UserCard(
           user: user,
-          onViewProfile: onViewProfile,
-          onExpanded: onUserExpanded,
+          onTap: () => onViewProfile(user),
           onServiceSelected: onServiceSelected,
-          showDetailedServices: false, // Grid view always uses compact mode
+          showDetailedInfo: false, // Grid view always uses compact mode
         );
       },
     );

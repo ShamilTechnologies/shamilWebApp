@@ -414,7 +414,13 @@ class ActivityTimeline extends StatelessWidget {
   String _formatDeviceId(String deviceId) {
     // Simplify device ID for display
     if (deviceId.length > 12) {
-      return '${deviceId.substring(0, 6)}...${deviceId.substring(deviceId.length - 4)}';
+      final startLength = deviceId.length < 6 ? deviceId.length : 6;
+      final endLength = deviceId.length < 4 ? 0 : 4;
+      if (endLength > 0) {
+        return '${deviceId.substring(0, startLength)}...${deviceId.substring(deviceId.length - endLength)}';
+      } else {
+        return deviceId.substring(0, startLength);
+      }
     }
     return deviceId;
   }

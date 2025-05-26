@@ -165,9 +165,11 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         return;
       }
 
-      // Fetch all data from centralized service
+      // Fetch data from centralized service - use upcoming reservations for dashboard
       final List<dynamic> results = await Future.wait([
-        _centralizedDataService.getReservations(),
+        _centralizedDataService.getUpcomingReservationsForDashboard(
+          forceRefresh: true,
+        ),
         _centralizedDataService.getSubscriptions(),
         _fetchStats(providerId, governorateId),
         _centralizedDataService.getRecentAccessLogs(limit: 10),
@@ -177,6 +179,18 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       final List<Subscription> subscriptions = results[1];
       final DashboardStats stats = results[2];
       final List<AccessLog> accessLogs = results[3];
+
+      print(
+        "DashboardBloc: Loaded ${reservations.length} reservations, ${subscriptions.length} subscriptions, ${accessLogs.length} access logs",
+      );
+
+      // Log sample reservation details for debugging
+      if (reservations.isNotEmpty) {
+        final sample = reservations.first;
+        print(
+          "DashboardBloc: Sample reservation - ID: ${sample.id}, User: ${sample.userName}, Service: ${sample.serviceName}, Status: ${sample.status}",
+        );
+      }
 
       // Convert stats to Map<String, dynamic> for state
       final Map<String, dynamic> statsMap = {
@@ -246,9 +260,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       );
 
       if (success) {
-        // Get the updated list from centralized service for consistency
+        // Get the updated list from centralized service for consistency - use upcoming for dashboard
         final updatedReservations = await _centralizedDataService
-            .getReservations(forceRefresh: true);
+            .getUpcomingReservationsForDashboard(forceRefresh: true);
 
         // Create updated state
         final updatedState = DashboardLoadSuccess(
@@ -438,10 +452,9 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
       // Use refreshAllData which is available in CentralizedDataService
       await _centralizedDataService.refreshAllData();
 
-      // Get fresh data
-      final reservations = await _centralizedDataService.getReservations(
-        forceRefresh: true,
-      );
+      // Get fresh data - use upcoming reservations for dashboard
+      final reservations = await _centralizedDataService
+          .getUpcomingReservationsForDashboard(forceRefresh: true);
       final subscriptions = await _centralizedDataService.getSubscriptions(
         forceRefresh: true,
       );
@@ -516,11 +529,11 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         print("DashboardBloc: Initializing centralized data service");
         await _centralizedDataService.init();
       } else {
-        // If already initialized, force a data refresh
+        // If already initialized, just ensure listeners are active
         print(
-          "DashboardBloc: Centralized service already initialized, forcing data refresh",
+          "DashboardBloc: Centralized service already initialized, ensuring listeners are active",
         );
-        await _centralizedDataService.forceDataRefresh();
+        await _centralizedDataService.startRealTimeListeners();
       }
 
       // Always ensure real-time listeners are started
@@ -539,14 +552,16 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         return;
       }
 
-      // Fetch fresh data from centralized service
+      // Fetch fresh data from centralized service - use upcoming reservations for dashboard
       final List<dynamic> results = await Future.wait([
-        _centralizedDataService.getReservations(forceRefresh: true),
-        _centralizedDataService.getSubscriptions(forceRefresh: true),
+        _centralizedDataService.getUpcomingReservationsForDashboard(
+          forceRefresh: false, // Don't force refresh to prevent conflicts
+        ),
+        _centralizedDataService.getSubscriptions(forceRefresh: false),
         _fetchStats(providerId, governorateId),
         _centralizedDataService.getRecentAccessLogs(
           limit: 10,
-          forceRefresh: true,
+          forceRefresh: false,
         ),
       ]);
 

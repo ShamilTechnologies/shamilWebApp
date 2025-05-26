@@ -527,11 +527,14 @@ class _ReservationFormState extends State<ReservationForm> {
                 labelText: "Status*",
                 value: _status,
                 items:
-                    ['Pending', 'Confirmed', 'Cancelled', 'Completed']
+                    ['pending', 'confirmed', 'cancelled', 'completed']
                         .map(
                           (status) => DropdownMenuItem<String>(
                             value: status,
-                            child: Text(status),
+                            child: Text(
+                              status.substring(0, 1).toUpperCase() +
+                                  status.substring(1),
+                            ),
                           ),
                         )
                         .toList(),

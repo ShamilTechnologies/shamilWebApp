@@ -22,6 +22,7 @@ import 'package:shamil_web_app/features/auth/data/bookable_service.dart';
 import 'package:shamil_web_app/features/dashboard/data/reservation_repository.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/forms/reservation_form.dart';
 import 'package:shamil_web_app/features/dashboard/widgets/reservation_calendar.dart';
+import 'package:shamil_web_app/core/services/centralized_data_service.dart';
 
 // Import shared components
 import 'package:shamil_web_app/core/widgets/status_badge.dart';
@@ -148,6 +149,24 @@ class _ReservationManagementState extends State<ReservationManagement> {
   void _cancelReservationSubscription() {
     _reservationsSubscription?.cancel();
     _reservationsSubscription = null;
+  }
+
+  /// Get all reservations for calendar (including past, present, and future)
+  Future<List<Reservation>> _getAllReservationsForCalendar() async {
+    try {
+      // Use the centralized data service to get all reservations for calendar
+      final centralizedDataService = CentralizedDataService();
+      final allReservations = await centralizedDataService
+          .getAllReservationsForCalendar(forceRefresh: false);
+
+      print(
+        'ReservationManagement: Fetched ${allReservations.length} total reservations for calendar',
+      );
+      return allReservations;
+    } catch (e) {
+      print('ReservationManagement: Error fetching all reservations: $e');
+      return widget.reservations; // Fallback to provided reservations
+    }
   }
 
   List<Reservation> _filterReservations(List<Reservation> reservations) {
@@ -462,16 +481,31 @@ class _ReservationManagementState extends State<ReservationManagement> {
                       // Replace the calendar placeholder with the actual calendar
                       SizedBox(
                         height: 300, // Fixed height for calendar
-                        child: ReservationCalendar(
-                          reservations: widget.reservations,
-                          filterStatus: _filterStatus,
-                          onReservationTap:
-                              (reservation) => _showReservationForm(
-                                reservation: reservation,
-                              ),
-                          onDateTap: (selectedDate) {
-                            // Show reservation form with the selected date pre-filled
-                            _showReservationForm(initialDate: selectedDate);
+                        child: FutureBuilder<List<Reservation>>(
+                          future: _getAllReservationsForCalendar(),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+
+                            final allReservations =
+                                snapshot.data ?? widget.reservations;
+
+                            return ReservationCalendar(
+                              reservations: allReservations,
+                              filterStatus: _filterStatus,
+                              onReservationTap:
+                                  (reservation) => _showReservationForm(
+                                    reservation: reservation,
+                                  ),
+                              onDateTap: (selectedDate) {
+                                // Show reservation form with the selected date pre-filled
+                                _showReservationForm(initialDate: selectedDate);
+                              },
+                            );
                           },
                         ),
                       ),

@@ -24,6 +24,7 @@ class UserAccessCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 280,
+      height: 160, // Reduced height to prevent overflow
       margin: const EdgeInsets.only(right: 16, bottom: 8),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -42,11 +43,10 @@ class UserAccessCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
         children: [
           // Header with status
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
               color: isGranted ? Colors.green.shade50 : Colors.red.shade50,
               borderRadius: const BorderRadius.vertical(
@@ -89,55 +89,55 @@ class UserAccessCard extends StatelessWidget {
           ),
 
           // User info
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    _buildUserAvatar(userName),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            userName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      _buildUserAvatar(userName),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              userName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _formatUserId(userId),
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 12,
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatUserId(userId),
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 12,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
 
-                const SizedBox(height: 16),
+                  const SizedBox(height: 8),
 
-                // Access method
-                Flexible(
-                  child: Row(
+                  // Access method
+                  Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _buildMethodIcon(accessMethod),
                       const SizedBox(width: 8),
-                      Flexible(
+                      Expanded(
                         child: Text(
                           accessMethod,
                           style: TextStyle(
@@ -150,43 +150,45 @@ class UserAccessCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                ),
 
-                // Denial reason (if applicable)
-                if (!isGranted && denialReason != null) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.red.shade100),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          Icons.error_outline,
-                          color: Colors.red.shade700,
-                          size: 16,
+                  // Denial reason (if applicable)
+                  if (!isGranted && denialReason != null) ...[
+                    const SizedBox(height: 6),
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.red.shade100),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            denialReason!,
-                            style: TextStyle(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
                               color: Colors.red.shade700,
-                              fontSize: 12,
+                              size: 12,
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                denialReason!,
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontSize: 10,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],
@@ -266,7 +268,13 @@ class UserAccessCard extends StatelessWidget {
   String _formatUserId(String id) {
     // Format user ID for display
     if (id.length > 16) {
-      return '${id.substring(0, 8)}...${id.substring(id.length - 4)}';
+      final startLength = id.length < 8 ? id.length : 8;
+      final endLength = id.length < 4 ? 0 : 4;
+      if (endLength > 0) {
+        return '${id.substring(0, startLength)}...${id.substring(id.length - endLength)}';
+      } else {
+        return id.substring(0, startLength);
+      }
     }
     return id;
   }

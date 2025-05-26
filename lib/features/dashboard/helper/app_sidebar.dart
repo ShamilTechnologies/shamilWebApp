@@ -333,15 +333,19 @@ class _AppSidebarState extends State<AppSidebar>
               ),
               if (_widthAnimation.value > AppSidebar.collapsedWidth * 1.5) ...[
                 const SizedBox(width: 16),
-                Text(
-                  dest['label'] as String,
-                  style: getbodyStyle(
-                    color:
-                        isSelected
-                            ? AppColors.primaryColor
-                            : AppColors.secondaryColor,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
+                Flexible(
+                  child: Text(
+                    dest['label'] as String,
+                    style: getbodyStyle(
+                      color:
+                          isSelected
+                              ? AppColors.primaryColor
+                              : AppColors.secondaryColor,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
               ],

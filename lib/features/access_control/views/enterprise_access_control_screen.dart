@@ -12,17 +12,19 @@ import 'package:shamil_web_app/features/access_control/widgets/activity_timeline
 import 'package:shamil_web_app/features/access_control/widgets/enterprise_access_overlay.dart';
 import 'package:shamil_web_app/features/access_control/widgets/enterprise_scan_dialog.dart';
 import 'package:shamil_web_app/features/access_control/widgets/user_access_card.dart';
+import 'package:shamil_web_app/features/access_control/widgets/ai_insights_panel.dart';
+import 'package:shamil_web_app/core/services/intelligent_access_control_service.dart';
 import 'package:shamil_web_app/features/dashboard/data/dashboard_models.dart';
 import 'package:shamil_web_app/features/dashboard/data/user_models.dart';
 import 'package:shamil_web_app/core/services/centralized_data_service.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shamil_web_app/features/access_control/bloc/access_point_bloc.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:shamil_web_app/core/constants/assets_icons.dart';
 import 'package:shamil_web_app/features/access_control/models/device_event.dart';
 import 'package:shamil_web_app/features/dashboard/bloc/dashboard_bloc.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart'; // For HapticFeedback
+import 'package:shamil_web_app/core/services/sound_service.dart';
 
 /// Modern, redesigned Enterprise Access Control Screen that matches dashboard design
 /// Manages NFC and QR code readers through COM ports with configuration caching
@@ -40,7 +42,9 @@ class _EnterpriseAccessControlScreenState
   // Core Services
   final CentralizedDataService _dataService = CentralizedDataService();
   final ComPortDeviceService _comPortService = ComPortDeviceService();
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final SoundService _soundService = SoundService();
+  final IntelligentAccessControlService _intelligentService =
+      IntelligentAccessControlService();
 
   // Animation Controllers
   late AnimationController _fadeController;
@@ -79,16 +83,18 @@ class _EnterpriseAccessControlScreenState
 
   // UI state
   bool _showActivityPanel = true;
+  bool _showAIInsights = true;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   int _selectedTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _audioPlayer.setReleaseMode(ReleaseMode.stop);
+    _soundService.initialize();
     _initializeAnimations();
     _initializeFromCentralizedData();
     _initializeDeviceListeners();
+    _initializeIntelligentService();
     _startPeriodicRefresh();
   }
 
@@ -100,7 +106,7 @@ class _EnterpriseAccessControlScreenState
     _nfcTagSubscription?.cancel();
     _qrCodeSubscription?.cancel();
     _refreshTimer?.cancel();
-    _audioPlayer.dispose();
+    _soundService.dispose();
     super.dispose();
   }
 
@@ -488,6 +494,32 @@ class _EnterpriseAccessControlScreenState
     });
   }
 
+  /// Initialize intelligent access control service
+  void _initializeIntelligentService() async {
+    try {
+      print(
+        'EnterpriseAccessControl: Initializing AI-powered access control...',
+      );
+
+      await _intelligentService.initialize();
+
+      // Listen to AI comments for real-time feedback
+      _intelligentService.aiCommentsStream.listen((comment) {
+        if (mounted) {
+          setState(() {
+            _lastSmartComment = comment;
+          });
+        }
+      });
+
+      print('EnterpriseAccessControl: AI-powered access control initialized');
+    } catch (e) {
+      print(
+        'EnterpriseAccessControl: Error initializing intelligent service - $e',
+      );
+    }
+  }
+
   Future<void> _refreshData() async {
     if (_isRefreshing) return;
 
@@ -600,10 +632,9 @@ class _EnterpriseAccessControlScreenState
       // If not found in dashboard, try other sources
       if (user == null) {
         // Check already loaded users in access control first
-        final existingUser =
-            _usersWithAccess.where((u) => u.userId == userId).firstOrNull;
-        if (existingUser != null) {
-          user = existingUser;
+        final existingUsers = _usersWithAccess.where((u) => u.userId == userId);
+        if (existingUsers.isNotEmpty) {
+          user = existingUsers.first;
         } else {
           // Last resort - fetch from centralized data service
           user = await _dataService.getUserById(userId);
@@ -707,22 +738,25 @@ class _EnterpriseAccessControlScreenState
         // Continue with the user data we have
       }
 
-      // Use the offline-first access service via centralized data for validation
-      final result = await _dataService.recordSmartAccess(
+      // Use the intelligent access control service for AI-powered validation
+      final result = await _intelligentService.processIntelligentAccess(
         userId: userId,
         userName: user?.name ?? 'Unknown User',
+        method: 'NFC/QR Scan',
       );
 
       final hasAccess = result['hasAccess'] == true;
       final message =
           result['message'] as String? ?? 'Access validation completed';
-      final smartComment = result['smartComment'] as String? ?? '';
+      final aiComment = result['aiComment'] as String? ?? '';
+      final smartComment = result['smartComment'] as String? ?? aiComment;
       final accessType = result['accessType'] as String?;
       final reason = result['reason'] as String? ?? '';
+      final userInsights = result['userInsights'] as Map<String, dynamic>?;
 
       setState(() {
         _lastAccessedUser = user;
-        _lastSmartComment = smartComment;
+        _lastSmartComment = aiComment.isNotEmpty ? aiComment : smartComment;
       });
 
       _showEnterpriseAccessResult(
@@ -750,39 +784,15 @@ class _EnterpriseAccessControlScreenState
 
   Future<void> _playAccessSound(bool granted) async {
     try {
-      await _audioPlayer.stop();
-
-      // Try multiple file formats in sequence
-      final formats = ['mp3', 'wav', 'aac'];
-      final baseFileName = granted ? "success" : "denied";
-
-      bool soundPlayed = false;
-      String? lastError;
-
-      // Try each format until one works
-      for (final format in formats) {
-        if (soundPlayed) break;
-
-        final soundPath = "sounds/$baseFileName.$format";
-        print("Attempting to play sound: assets/$soundPath");
-
-        try {
-          await _audioPlayer.play(AssetSource(soundPath));
-          print("Sound playback initiated successfully with $format format");
-          soundPlayed = true;
-          break;
-        } catch (e) {
-          print("Failed to play $format sound: $e");
-          lastError = e.toString();
-          // Continue to next format
-        }
+      if (granted) {
+        await _soundService.playAccessGranted();
+      } else {
+        await _soundService.playAccessDenied();
       }
-
-      // If all sound formats failed, use haptic feedback
-      if (!soundPlayed) {
-        print("All sound formats failed, last error: $lastError");
-        print("Falling back to haptic feedback");
-
+    } catch (e) {
+      print("Error in sound playback function: $e");
+      // Fallback to haptic feedback
+      try {
         if (granted) {
           HapticFeedback.lightImpact();
           await Future.delayed(const Duration(milliseconds: 100));
@@ -790,12 +800,6 @@ class _EnterpriseAccessControlScreenState
         } else {
           HapticFeedback.heavyImpact();
         }
-      }
-    } catch (e) {
-      print("Error in sound playback function: $e");
-      // Absolute fallback - just vibrate
-      try {
-        HapticFeedback.vibrate();
       } catch (e2) {
         print("Even haptic feedback failed: $e2");
       }
@@ -818,36 +822,84 @@ class _EnterpriseAccessControlScreenState
     print("  - hasAccess: $hasAccess");
     print("  - message: $message");
     print("  - smartComment present: ${smartComment != null}");
+    print("  - reason: $reason");
+    print("  - accessType: $accessType");
+    print("  - detailedReason: ${additionalInfo?['detailedReason']}");
 
-    // Ensure we have a valid smart comment
+    // Ensure we have a valid smart comment with enhanced AI intelligence
     if (smartComment == null || smartComment.trim().isEmpty) {
-      print("  - smartComment is empty, providing default");
+      print("  - smartComment is empty, generating intelligent default");
 
-      // Generate a more contextual default message based on access result and reason
+      // Generate intelligent contextual message based on access result and detailed reason
       if (hasAccess) {
         final serviceInfo =
             accessType == 'subscription'
                 ? 'membership'
-                : accessType == 'confirmedReservation' ||
-                    accessType == 'pendingReservation'
+                : accessType == 'reservation'
                 ? 'reservation'
-                : 'access';
+                : 'access credentials';
 
         smartComment =
-            "Welcome $userName. Your $serviceInfo has been activated and access has been granted.";
+            "✅ Welcome $userName! Your $serviceInfo has been verified and access is granted. Enjoy your visit!";
       } else {
-        // Use reason if available
-        if (reason != null && reason.isNotEmpty) {
-          smartComment =
-              "Hello $userName. Your access was denied: $reason. Please contact reception for assistance.";
+        // Generate detailed denial message with AI intelligence
+        final detailedReason = additionalInfo?['detailedReason'] as String?;
+        final reservationStatus =
+            additionalInfo?['reservationStatus'] as String?;
+        final subscriptionStatus =
+            additionalInfo?['subscriptionStatus'] as String?;
+
+        if (detailedReason != null && detailedReason.isNotEmpty) {
+          // Use detailed AI-generated reason
+          smartComment = "🚫 Hi $userName, access denied. $detailedReason. ";
+
+          // Add specific guidance based on the detailed reason
+          if (detailedReason.toLowerCase().contains('no active reservation')) {
+            smartComment +=
+                "📅 Please make a reservation through our app or contact reception.";
+          } else if (detailedReason.toLowerCase().contains(
+            'no active membership',
+          )) {
+            smartComment +=
+                "💳 Please check your membership status or purchase a subscription at reception.";
+          } else if (detailedReason.toLowerCase().contains(
+            'reservation issue',
+          )) {
+            smartComment +=
+                "📋 Please verify your booking details and time slot.";
+          } else if (detailedReason.toLowerCase().contains(
+            'membership issue',
+          )) {
+            smartComment +=
+                "🔄 Please renew your membership or contact support for assistance.";
+          } else {
+            smartComment +=
+                "💬 Please contact our staff for immediate assistance.";
+          }
+        } else if (reason != null && reason.isNotEmpty) {
+          // Use basic reason with enhancement
+          smartComment = "🚫 Hi $userName, access denied: $reason. ";
+
+          if (reason.toLowerCase().contains('no active')) {
+            smartComment +=
+                "Please check your booking or membership status and try again.";
+          } else if (reason.toLowerCase().contains('expired')) {
+            smartComment +=
+                "⏰ Quick renewal options are available at the front desk.";
+          } else {
+            smartComment += "Please contact reception for assistance.";
+          }
         } else {
+          // Fallback with intelligent suggestion
           smartComment =
-              "Hello $userName. Your access was denied because you don't have an active membership or reservation.";
+              "🚫 Hi $userName, access denied. No valid booking or membership found. ";
+          smartComment +=
+              "📱 Please make a reservation or check your membership status at reception.";
         }
       }
-      print("  - Added default smartComment: $smartComment");
+      print("  - Generated intelligent smartComment: $smartComment");
     } else {
-      print("  - smartComment value: $smartComment");
+      print("  - Using provided smartComment: $smartComment");
     }
 
     // Provide haptic feedback
@@ -1361,8 +1413,8 @@ class _EnterpriseAccessControlScreenState
               // Main content (takes most of the space)
               Expanded(flex: 3, child: _buildMainContent()),
 
-              // Right activity panel (collapsible)
-              if (_showActivityPanel)
+              // Right side panels (collapsible)
+              if (_showActivityPanel || _showAIInsights)
                 AnimatedBuilder(
                   animation: _fadeAnimation,
                   builder: (context, child) {
@@ -1370,22 +1422,53 @@ class _EnterpriseAccessControlScreenState
                       opacity: _fadeAnimation,
                       child: SizedBox(
                         width: 320,
-                        child: Card(
-                          margin: const EdgeInsets.only(
-                            top: 8,
-                            right: 16,
-                            bottom: 16,
-                          ),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: ActivityTimeline(
-                            title: 'Recent Activity',
-                            accessLogs: _accessLogs,
-                            isLoading: _isLoading,
-                            recentEvents: const [],
-                          ),
+                        child: Column(
+                          children: [
+                            // AI Insights Panel
+                            if (_showAIInsights)
+                              Expanded(
+                                flex: 2,
+                                child: Container(
+                                  margin: const EdgeInsets.only(
+                                    top: 8,
+                                    right: 16,
+                                    bottom: 8,
+                                  ),
+                                  child: AIInsightsPanel(
+                                    isExpanded: _showAIInsights,
+                                    onToggle: () {
+                                      setState(
+                                        () =>
+                                            _showAIInsights = !_showAIInsights,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+
+                            // Activity Timeline Panel
+                            if (_showActivityPanel)
+                              Expanded(
+                                flex: 3,
+                                child: Card(
+                                  margin: EdgeInsets.only(
+                                    top: _showAIInsights ? 0 : 8,
+                                    right: 16,
+                                    bottom: 16,
+                                  ),
+                                  elevation: 2,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: ActivityTimeline(
+                                    title: 'Recent Activity',
+                                    accessLogs: _accessLogs,
+                                    isLoading: _isLoading,
+                                    recentEvents: const [],
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     );

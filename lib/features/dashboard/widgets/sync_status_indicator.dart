@@ -158,7 +158,7 @@ class SyncStatusIndicator extends StatelessWidget {
                 ),
               ),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 190),
+                constraints: const BoxConstraints(maxWidth: 150),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -198,7 +198,7 @@ class SyncStatusIndicator extends StatelessWidget {
                       const SizedBox(width: 4),
                       Icon(
                         Icons.refresh,
-                        size: compact ? 14 : 16,
+                        size: compact ? 12 : 14,
                         color: AppColors.mediumGrey,
                       ),
                     ],
@@ -209,7 +209,7 @@ class SyncStatusIndicator extends StatelessWidget {
                         message: 'More options',
                         child: Icon(
                           Icons.more_horiz,
-                          size: compact ? 14 : 16,
+                          size: compact ? 12 : 14,
                           color: AppColors.mediumGrey.withOpacity(0.6),
                         ),
                       ),

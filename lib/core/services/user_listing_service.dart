@@ -575,7 +575,7 @@ class UserListingService {
               userMap[userId] = userMap[userId]!.copyWith(
                 name:
                     userName.isEmpty
-                        ? 'User ${userId.substring(0, 5)}'
+                        ? 'User ${userId.length < 5 ? userId : userId.substring(0, 5)}'
                         : userName,
                 email: data['email'] as String? ?? userMap[userId]!.email,
                 phone: data['phone'] as String? ?? userMap[userId]!.phone,
@@ -616,7 +616,7 @@ class UserListingService {
               userMap[userId] = userMap[userId]!.copyWith(
                 name:
                     userName.isEmpty
-                        ? 'Business ${userId.substring(0, 5)}'
+                        ? 'Business ${userId.length < 5 ? userId : userId.substring(0, 5)}'
                         : userName,
                 email: data['email'] as String? ?? userMap[userId]!.email,
                 phone: data['phone'] as String? ?? userMap[userId]!.phone,
@@ -637,7 +637,7 @@ class UserListingService {
       for (var userId in userMap.keys) {
         if (userMap[userId]!.name == 'Unknown User') {
           userMap[userId] = userMap[userId]!.copyWith(
-            name: 'User ${userId.substring(0, 5)}',
+            name: 'User ${userId.length < 5 ? userId : userId.substring(0, 5)}',
           );
         }
       }
